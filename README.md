@@ -10,6 +10,8 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 
 The full build specification is in [docs/specification.md](docs/specification.md).
 
+Stage 1 findings on the existing ID card software: [docs/stage-1-id-card-integration.md](docs/stage-1-id-card-integration.md).
+
 | # | Section |
 |---|---|
 | 1 | Project overview |
