@@ -22,8 +22,9 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Needs attention list (unrecorded past sessions and absences), each opening the student record
 
 **Students**
-- Search by name or Student ID; filter by club and active or inactive; test records hidden unless asked for
+- Search by name or Student ID; filter by belt rank and active or inactive; test records hidden unless asked for
 - Add and edit; Student IDs are created automatically (BB0001, BB0002 ...) and never change
+- Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan. Imports match "lvl", "level" and capitals to the list
 - Warning before adding a name that already exists, and a banner listing possible duplicates
 - Deactivate and reactivate without losing history
 - Import from CSV or pasted spreadsheet rows, with a preview that skips existing students, repeats and unreadable dates
@@ -37,7 +38,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 
 **Attendance**
 - Choose a cycle and session; one tap for Present, Absent or Excused; tap another to correct it
-- Search and filter by club or status
+- Search and filter by belt rank or status
 - Select several, then mark Present, Excused, Absent or Clear, always with a confirmation; "Mark shown as present" for the filtered list
 - Nobody who isn't selected is ever marked absent
 - Import from CSV or pasted rows (Student ID or name, status, optional session), with a preview of what will change and what is skipped

@@ -85,7 +85,7 @@ try {
   await shot(page, 'dashboard-empty');
   await tab(page, 'students');
   await page.click('#addStudentBtn');
-  await page.fill('#fName', 'Alex Smith'); await page.fill('#fClub', 'Marrickville'); await page.fill('#fRank', '1st Poom'); await page.fill('#fDob', '2010-03-01');
+  await page.fill('#fName', 'Alex Smith'); await page.selectOption('#fRank', 'Cho Dan Bo'); await page.fill('#fDob', '2010-03-01');
   await shot(page, 'add-student');
   await page.click('#fSave');
   ok((await toastText(page)).includes('as BB0001'), 'student added and given Student ID BB0001');
@@ -99,23 +99,29 @@ try {
 
   await page.click('#importStudentsBtn');
   await page.fill('#impText', [
-    'First name,Last name,Club,Belt,DOB,Student ID',
-    'Jordan,Lee,Marrickville,1st Dan,12/07/2008,',
-    'Taylor,Brown,Newtown,1st Poom,20/01/2011,',
-    'Sam,Nguyen,Newtown,Red tip,31/02/2012,',
-    'alex,smith,Newtown,,,',
-    'Riley,Chen,Marrickville,1st Poom,5 Mar 2010,M-0042',
-    'Jordan,Lee,Marrickville,,,'
+    'First name,Last name,Belt,DOB,Student ID',
+    'Jordan,Lee,cho dan bo,12/07/2008,',
+    'Taylor,Brown,3rd dan lvl 2,20/01/2011,',
+    'Sam,Nguyen,Cho Dan Bo,31/02/2012,',
+    'alex,smith,,,',
+    'Riley,Chen,Cho Dan Bo,5 Mar 2010,M-0042',
+    'Jordan,Lee,,,',
+    'Kim,Park,Blue belt,,'
   ].join('\n'));
   await page.waitForSelector('#impPreview table');
   const prev = await page.textContent('#impPreview');
-  ok(prev.includes('3 to add') && prev.includes('3 skipped'), 'import preview: 3 to add, 3 skipped');
-  ok(prev.includes('not understood') && prev.includes('Already in the register') && prev.includes('Repeated in this list'), 'preview explains each skipped row (bad date, existing, repeated)');
+  ok(prev.includes('3 to add') && prev.includes('4 skipped'), 'import preview: 3 to add, 4 skipped');
+  ok(prev.includes('not understood') && prev.includes('Already in the register') && prev.includes('Repeated in this list') && prev.includes('"Blue belt" is not in the list'),
+     'preview explains each skipped row (bad date, existing, repeated, unknown belt)');
   await shot(page, 'import-preview');
   await page.click('#impGo'); await confirm(page); await settle(page);
   const imported = await q(`select student_id, full_name, dob::text from prep_students order by student_id`);
   ok(imported.length === 4 && imported.some(s => s.student_id === 'M-0042' && s.dob === '2010-03-05'), 'import kept the supplied Student ID and read "5 Mar 2010"');
   ok(imported.some(s => s.full_name === 'Jordan Lee' && s.dob === '2008-07-12'), 'import read Australian date 12/07/2008 correctly');
+  const belts = Object.fromEntries((await q(`select full_name, belt_rank from prep_students`)).map(r => [r.full_name, r.belt_rank]));
+  ok(belts['Jordan Lee'] === 'Cho Dan Bo' && belts['Taylor Brown'] === '3rd Dan Level 2', 'imported belts matched to the list ("cho dan bo", "3rd dan lvl 2")');
+  const opts = await page.$$eval('#studentBelt option', os => os.map(o => o.textContent));
+  ok(opts.slice(1, 4).join('|') === 'Cho Dan Bo|Probationary Black Belt|1st Dan Black Belt' && opts[opts.length - 1] === '5th Dan' && opts.length === 18, 'belt list is in grading order, Cho Dan Bo to 5th Dan');
   await page.click('#addStudentBtn'); await page.fill('#fName', 'Test Student'); await page.check('#fTest'); await page.click('#fSave'); await settle(page); await page.click('#sheet [data-close]');
   ok((await page.textContent('#studentList')).includes('Test Student') === false, 'test records hidden from the list by default');
   await page.check('#studentShowTest');
@@ -124,9 +130,10 @@ try {
   await page.fill('#studentSearch', 'lee');
   ok((await page.$$('#studentList [data-student]')).length === 1, 'search filters the list');
   await page.fill('#studentSearch', '');
-  await page.selectOption('#studentClub', 'Newtown');
-  ok((await page.$$('#studentList [data-student]')).length === 1, 'club filter works');
-  await page.selectOption('#studentClub', '');
+  await page.selectOption('#studentBelt', 'Cho Dan Bo');
+  ok((await page.$$('#studentList [data-student]')).length === 3, 'belt filter works');
+  await page.selectOption('#studentBelt', '');
+  ok(!(await page.textContent('#view-students')).toLowerCase().includes('club'), 'no club or school shown');
   await shot(page, 'students');
 
   await page.click('[data-student="BB0002"]');
@@ -188,12 +195,12 @@ try {
   ok((await q(`select a.status from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and a.student_id = 'BB0002'`, [c1.cycle_id]))[0].status === 'excused', 'recorded attendance can be corrected');
 
   await page.click('#attBody [data-session="2"]');
-  await page.selectOption('#attClub', 'Marrickville');
+  await page.selectOption('#attBelt', 'Cho Dan Bo');
   await page.click('#attAllPresent'); const allTxt = await confirm(page); await settle(page);
-  ok(/Mark 3 students present/.test(allTxt), '"Mark shown as present" only covers the filtered students (3 at Marrickville)');
+  ok(/Mark 3 students present/.test(allTxt), '"Mark shown as present" only covers the filtered students (3 at Cho Dan Bo)');
   const s2 = await q(`select a.student_id, a.status from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 2`, [c1.cycle_id]);
-  ok(s2.filter(r => r.status === 'present').length === 3 && s2.find(r => r.student_id === 'BB0003').status === 'not_recorded', 'student at the other club left unrecorded');
-  await page.selectOption('#attClub', '');
+  ok(s2.filter(r => r.status === 'present').length === 3 && s2.find(r => r.student_id === 'BB0003').status === 'not_recorded', 'student on another belt left unrecorded');
+  await page.selectOption('#attBelt', '');
   await shot(page, 'attendance');
 
   await page.click('#attImport');

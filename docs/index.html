@@ -278,7 +278,7 @@
     <div id="dupBanner"></div>
     <input type="search" id="studentSearch" placeholder="Search name or Student ID" aria-label="Search students">
     <div class="filters">
-      <select id="studentClub" aria-label="Club"><option value="">All clubs</option></select>
+      <select id="studentBelt" aria-label="Belt"></select>
       <select id="studentStatus" aria-label="Status">
         <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">Active and inactive</option>
       </select>
@@ -359,8 +359,17 @@ const TONE = { present: 'ok', active: 'ok', ready: 'ok', paid: 'ok', passed: 'ok
 const tag = (v, extra = '') => `<span class="tag ${TONE[v] || ''}">${esc(extra || label(v))}</span>`;
 const ROLE_NAMES = { admin: 'Admin', instructor: 'Instructor', attendance: 'Attendance recorder', payments: 'Payments',
   grading: 'Grading', certificates: 'Certificates', idcards: 'ID cards', viewer: 'Viewer' };
-const RANKS = ['White','Yellow','Yellow tip','Green','Green tip','Blue','Blue tip','Red','Red tip','Black tip','1st Poom','2nd Poom','3rd Poom','4th Poom',
-  '1st Dan','2nd Dan','3rd Dan','4th Dan','5th Dan','6th Dan','7th Dan','8th Dan','9th Dan'];
+// Belt ranks in grading order
+const BELTS = ['Cho Dan Bo', 'Probationary Black Belt', '1st Dan Black Belt', '1st Dan Level 1',
+  '2nd Dan', '2nd Dan Level 1', '2nd Dan Level 2',
+  '3rd Dan', '3rd Dan Level 1', '3rd Dan Level 2', '3rd Dan Level 3',
+  '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4', '5th Dan'];
+// Matches how people type them: "3rd dan lvl 2", "1st Dan", "probationary"
+const beltKey = b => String(b || '').toLowerCase().replace(/\blvl\b/g, 'level').replace(/black\s*belt/g, '').replace(/[^a-z0-9]/g, '');
+const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
+const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
+  (cur && !BELTS.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)} (not in list)</option>` : '') +
+  BELTS.map(b => `<option${b === cur ? ' selected' : ''}>${b}</option>`).join('');
 
 /* ---------- Dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -426,7 +435,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
   settings: {}, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
-  att: { cycle: null, session: 1, search: '', club: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
+  att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
 const canEditAttendance = () => has('instructor', 'attendance');
@@ -438,7 +447,6 @@ const cycleSessions = id => state.sessions.filter(s => s.cycle_id === id).sort((
 const enrolledIds = id => new Set(state.enrolments.filter(e => e.cycle_id === id).map(e => e.student_id));
 const summaryFor = (cid, sid) => state.summary.find(s => s.cycle_id === cid && s.student_id === sid);
 const overviewFor = (cid, sid) => state.overview.find(s => s.cycle_id === cid && s.student_id === sid);
-const clubs = () => [...new Set(state.students.map(s => s.club).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
 async function loadAll() {
   const q = (t, order) => { let x = sb.from(t).select('*'); if (order) x = x.order(order[0], { ascending: order[1] !== false }); return x; };
@@ -532,7 +540,7 @@ function renderDashboard() {
     </div>
     <h3>Needs attention</h3>
     ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}">
-      <div class="main"><div class="name">${esc(a.r.s.full_name)}</div><div class="meta">${esc([a.r.s.student_id, a.r.s.club].filter(Boolean).join(' · '))}</div></div>
+      <div class="main"><div class="name">${esc(a.r.s.full_name)}</div><div class="meta">${esc([a.r.s.student_id, a.r.s.belt_rank].filter(Boolean).join(' · '))}</div></div>
       <span class="tag ${a.tone}">${esc(a.issue)}</span></button></li>`).join('')}</ul>`
       : '<div class="card empty">Nothing needs attention for attendance.</div>'}
     <p class="hint">Readiness, payment, grading, certificate and ID card summaries are added in later build stages.</p>`;
@@ -544,19 +552,18 @@ function renderDashboard() {
 /* =========================================================================
    Students
    ========================================================================= */
-['#studentSearch', '#studentClub', '#studentStatus', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
+['#studentSearch', '#studentBelt', '#studentStatus', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
 $('#addStudentBtn').onclick = () => openStudentForm();
 $('#importStudentsBtn').onclick = () => openImportStudents();
 
 function visibleStudents() {
-  const q = $('#studentSearch').value.trim().toLowerCase(), club = $('#studentClub').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked;
+  const q = $('#studentSearch').value.trim().toLowerCase(), belt = $('#studentBelt').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked;
   return state.students.filter(s =>
-    (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!club || s.club === club) &&
+    (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!belt || s.belt_rank === belt) &&
     (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q)));
 }
 function renderStudents() {
-  const sel = $('#studentClub'), cur = sel.value;
-  sel.innerHTML = '<option value="">All clubs</option>' + clubs().map(c => `<option${c === cur ? ' selected' : ''}>${esc(c)}</option>`).join('');
+  const sel = $('#studentBelt'); if (!sel.options.length) sel.innerHTML = beltOptions('', 'All belts');
   const list = visibleStudents(), c = currentCycle();
   $('#studentCount').textContent = `${list.length}`;
   const dups = state.duplicates.filter(d => student(d.student_a)?.is_active && student(d.student_b)?.is_active);
@@ -566,7 +573,7 @@ function renderStudents() {
   $('#studentList').innerHTML = list.length ? list.map(s => {
     const sum = c && enrolled.has(s.student_id) ? summaryFor(c.cycle_id, s.student_id) : null;
     return `<li><button class="item" data-student="${esc(s.student_id)}">
-      <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.club, s.belt_rank].filter(Boolean).join(' · '))}</div></div>
+      <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}</div></div>
       ${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
@@ -592,7 +599,7 @@ function openStudent(id) {
       </dl>`;
   };
   openSheet(`<div class="body">
-    ${sheetHead(s.full_name, `${esc(s.student_id)}${s.club ? ' · ' + esc(s.club) : ''}${!s.is_active ? ' · Inactive' : ''}${s.is_test ? ' · Test record' : ''}`)}
+    ${sheetHead(s.full_name, `${esc(s.student_id)}${s.belt_rank ? ' · ' + esc(s.belt_rank) : ''}${!s.is_active ? ' · Inactive' : ''}${s.is_test ? ' · Test record' : ''}`)}
     <div class="section"><h3>Details</h3>
       <dl class="kv">
         <dt>Certificate name</dt><dd>${esc(s.certificate_name || s.full_name)}</dd>
@@ -625,12 +632,9 @@ function openStudentForm(s = null) {
     <div class="field"><label for="fName">Full name</label><input type="text" id="fName" required value="${v('full_name')}" autocomplete="off"></div>
     <div class="field"><label for="fCert">Name on certificate, if different</label><input type="text" id="fCert" value="${v('certificate_name')}" autocomplete="off"></div>
     <div class="grid2">
-      <div class="field"><label for="fClub">Club or school</label><input type="text" id="fClub" list="clubList" value="${v('club')}" autocomplete="off"></div>
-      <div class="field"><label for="fRank">Belt rank</label><input type="text" id="fRank" list="rankList" value="${v('belt_rank')}" autocomplete="off"></div>
+      <div class="field"><label for="fRank">Belt rank</label><select id="fRank">${beltOptions(s ? s.belt_rank : '')}</select></div>
+      <div class="field"><label for="fDob">Date of birth</label><input type="date" id="fDob" value="${v('dob')}"></div>
     </div>
-    <datalist id="clubList">${clubs().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
-    <datalist id="rankList">${RANKS.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
-    <div class="field"><label for="fDob">Date of birth</label><input type="date" id="fDob" value="${v('dob')}"></div>
     <div class="grid2">
       <div class="field"><label for="fEmail">Email</label><input type="email" id="fEmail" value="${v('contact_email')}"></div>
       <div class="field"><label for="fPhone">Phone</label><input type="tel" id="fPhone" value="${v('contact_phone')}"></div>
@@ -641,8 +645,8 @@ function openStudentForm(s = null) {
   </form>`);
   $('#stForm').onsubmit = async e => {
     e.preventDefault();
-    const rec = { full_name: $('#fName').value.trim(), certificate_name: $('#fCert').value.trim() || null, club: $('#fClub').value.trim() || null,
-      belt_rank: $('#fRank').value.trim() || null, dob: $('#fDob').value || null, contact_email: $('#fEmail').value.trim() || null,
+    const rec = { full_name: $('#fName').value.trim(), certificate_name: $('#fCert').value.trim() || null,
+      belt_rank: $('#fRank').value || null, dob: $('#fDob').value || null, contact_email: $('#fEmail').value.trim() || null,
       contact_phone: $('#fPhone').value.trim() || null, notes: $('#fNotes').value.trim() || null };
     if (!rec.full_name) return;
     if (!s) {
@@ -662,7 +666,7 @@ function openStudentForm(s = null) {
 
 function openDuplicates(dups) {
   openSheet(`<div class="body">${sheetHead('Possible duplicates', 'Names that match ignoring capitals, spaces and punctuation. Deactivate the extra record to hide it; its history is kept.')}
-    <ul class="list">${dups.map(d => [d.student_a, d.student_b].map(id => { const s = student(id); return `<li><button class="item" data-student="${esc(id)}"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([id, s.club, s.dob && fmt(s.dob)].filter(Boolean).join(' · '))}</div></div>${d.same_dob ? tag('warn', 'Same birth date') : ''}</button></li>`; }).join('')).join('<li style="height:8px;background:var(--bg)"></li>')}</ul></div>`);
+    <ul class="list">${dups.map(d => [d.student_a, d.student_b].map(id => { const s = student(id); return `<li><button class="item" data-student="${esc(id)}"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([id, s.belt_rank, s.dob && fmt(s.dob)].filter(Boolean).join(' · '))}</div></div>${d.same_dob ? tag('warn', 'Same birth date') : ''}</button></li>`; }).join('')).join('<li style="height:8px;background:var(--bg)"></li>')}</ul></div>`);
   sheet.querySelectorAll('[data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
 }
 
@@ -692,7 +696,6 @@ const STUDENT_HEADERS = {
   firstname: 'first', givenname: 'first', first: 'first', middlename: 'middle', middle: 'middle', lastname: 'last', surname: 'last', familyname: 'last', last: 'last',
   certificatename: 'certificate_name', nameoncertificate: 'certificate_name',
   dob: 'dob', dateofbirth: 'dob', birthdate: 'dob', birthday: 'dob',
-  club: 'club', school: 'club', clubschool: 'club', cluborschool: 'club', dojang: 'club',
   belt: 'belt_rank', beltrank: 'belt_rank', rank: 'belt_rank', grade: 'belt_rank', currentbeltrank: 'belt_rank', currentbelt: 'belt_rank',
   email: 'contact_email', emailaddress: 'contact_email', phone: 'contact_phone', mobile: 'contact_phone', phonenumber: 'contact_phone', notes: 'notes'
 };
@@ -711,7 +714,7 @@ function importSheet(title, hint, onText) {
 }
 function openImportStudents() {
   let plan = [];
-  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Date of birth, Club, Belt rank, Email, Phone, Certificate name, Notes. Existing students are skipped.', text => {
+  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Date of birth, Belt rank, Email, Phone, Certificate name, Notes. Existing students are skipped.', text => {
     const rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], STUDENT_HEADERS) : null;
     plan = [];
     if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
@@ -722,11 +725,12 @@ function openImportStudents() {
     for (const r of rows.slice(1)) {
       const o = {}; cols.forEach((k, i) => { if (k && r[i]) o[k] = r[i]; });
       const full = (o.full_name || [o.first, o.middle, o.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
-      const rec = { full_name: full, student_id: o.student_id || undefined, certificate_name: o.certificate_name || null, club: o.club || null,
-        belt_rank: o.belt_rank || null, contact_email: o.contact_email || null, contact_phone: o.contact_phone || null, notes: o.notes || null };
+      const rec = { full_name: full, student_id: o.student_id || undefined, certificate_name: o.certificate_name || null,
+        belt_rank: matchBelt(o.belt_rank), contact_email: o.contact_email || null, contact_phone: o.contact_phone || null, notes: o.notes || null };
       let why = '';
       const dob = parseDate(o.dob);
       if (dob === undefined) why = `Date of birth "${o.dob}" not understood`; else rec.dob = dob;
+      if (o.belt_rank && !rec.belt_rank) why = `Belt "${o.belt_rank}" is not in the list`;
       if (!full) why = 'No name';
       else if (rec.student_id && !/^[A-Za-z0-9-]{2,20}$/.test(rec.student_id)) why = 'Student ID can only use letters, numbers and dashes';
       else if (rec.student_id && student(rec.student_id)) why = `Student ID ${rec.student_id} already exists`;
@@ -738,8 +742,8 @@ function openImportStudents() {
     }
     const add = plan.filter(p => !p.why);
     $('#impPreview').innerHTML = `<p class="hint"><b>${add.length}</b> to add${plan.length - add.length ? `, ${plan.length - add.length} skipped` : ''}.</p>
-      <div class="preview"><table class="grid"><tr><th>Name</th><th>Club</th><th>Result</th></tr>
-      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.rec.full_name || '—')}${p.rec.student_id ? ` <span class="muted">${esc(p.rec.student_id)}</span>` : ''}</td><td>${esc(p.rec.club || '')}</td><td>${p.why ? esc(p.why) : tag('ok', 'Add')}</td></tr>`).join('')}</table></div>`;
+      <div class="preview"><table class="grid"><tr><th>Name</th><th>Belt</th><th>Result</th></tr>
+      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.rec.full_name || '—')}${p.rec.student_id ? ` <span class="muted">${esc(p.rec.student_id)}</span>` : ''}</td><td>${esc(p.rec.belt_rank || '')}</td><td>${p.why ? esc(p.why) : tag('ok', 'Add')}</td></tr>`).join('')}</table></div>`;
     $('#impGo').disabled = !add.length;
     $('#impGo').textContent = add.length ? `Import ${add.length}` : 'Import';
   });
@@ -797,7 +801,7 @@ function openNewCycle() {
       <label class="check"><input type="radio" name="ncWho" value="pick"> Choose students</label>
       <div id="ncPick" hidden>
         <input type="search" id="ncSearch" placeholder="Search" aria-label="Search students">
-        <div class="checklist" id="ncList">${pool.map(s => `<label class="check"><input type="checkbox" value="${esc(s.student_id)}"> ${esc(s.full_name)} <span class="muted small">${esc([s.student_id, s.club].filter(Boolean).join(' · '))}</span></label>`).join('')}</div>
+        <div class="checklist" id="ncList">${pool.map(s => `<label class="check"><input type="checkbox" value="${esc(s.student_id)}"> ${esc(s.full_name)} <span class="muted small">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}</span></label>`).join('')}</div>
       </div></div>
     <div class="section"><label class="check"><input type="checkbox" id="ncActivate" checked> Make this the active cycle</label>
       ${others.length ? `<p class="hint" id="ncActHint">${esc(others.map(o => o.name).join(', '))} will be marked Completed. Its records are kept.</p>` : ''}</div>
@@ -912,7 +916,7 @@ function openEnrol(id) {
   const pool = state.students.filter(s => s.is_active && !ids.has(s.student_id));
   openSheet(`<div class="body">${sheetHead('Add students to ' + c.name, 'Each student gets attendance, readiness and fee records for this cycle.')}
     <input type="search" id="enSearch" placeholder="Search" aria-label="Search students">
-    ${pool.length ? `<div class="checklist" id="enList">${pool.map(s => `<label class="check"><input type="checkbox" value="${esc(s.student_id)}"> ${esc(s.full_name)} <span class="muted small">${esc([s.student_id, s.club, s.is_test ? 'Test' : ''].filter(Boolean).join(' · '))}</span></label>`).join('')}</div>` : '<p class="hint">Every active student is already in this cycle.</p>'}
+    ${pool.length ? `<div class="checklist" id="enList">${pool.map(s => `<label class="check"><input type="checkbox" value="${esc(s.student_id)}"> ${esc(s.full_name)} <span class="muted small">${esc([s.student_id, s.belt_rank, s.is_test ? 'Test' : ''].filter(Boolean).join(' · '))}</span></label>`).join('')}</div>` : '<p class="hint">Every active student is already in this cycle.</p>'}
     <div class="dlg-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="enGo" ${pool.length ? '' : 'disabled'}>Add</button></div></div>`, () => {});
   const s = $('#enSearch'); s.oninput = () => { const q = s.value.toLowerCase(); $$('#enList .check').forEach(l => l.hidden = !l.textContent.toLowerCase().includes(q)); };
   $('#enGo').onclick = async () => {
@@ -937,7 +941,7 @@ function attRows() {
 }
 function visibleAttRows() {
   const A = state.att, q = A.search.toLowerCase();
-  return attRows().rows.filter(r => (!A.club || r.s.club === A.club) && (!A.status || r.a.status === A.status) &&
+  return attRows().rows.filter(r => (!A.belt || r.s.belt_rank === A.belt) && (!A.status || r.a.status === A.status) &&
     (!q || r.s.full_name.toLowerCase().includes(q) || r.s.student_id.toLowerCase().includes(q)));
 }
 function renderAttendance() {
@@ -965,7 +969,7 @@ function renderAttendance() {
     <div class="view" style="gap:8px;margin-top:12px">
       <input type="search" id="attSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(A.search)}">
       <div class="filters">
-        <select id="attClub" aria-label="Club"><option value="">All clubs</option>${clubs().map(c => `<option${c === A.club ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select id="attBelt" aria-label="Belt">${beltOptions(A.belt, 'All belts').replace(' (not in list)', '')}</select>
         <select id="attStatus" aria-label="Status"><option value="">Everyone</option>${['not_recorded', 'present', 'absent', 'excused'].map(s => `<option value="${s}"${s === A.status ? ' selected' : ''}>${label(s)}</option>`).join('')}</select>
       </div>
       ${editable && rows.length ? `<div class="row"><button class="btn grow" id="attSelect">${A.selecting ? 'Cancel selecting' : 'Select several'}</button><button class="btn grow" id="attAllPresent">Mark shown as present</button></div>` : ''}
@@ -975,7 +979,7 @@ function renderAttendance() {
   $$('#attBody [data-session]').forEach(b => b.onclick = () => { A.session = +b.dataset.session; A.selected.clear(); renderAttendance(); });
   const s = $('#attSearch'); s.oninput = () => { A.search = s.value; renderAttList(); };
   if (keepFocus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
-  $('#attClub').onchange = e => { A.club = e.target.value; renderAttList(); };
+  $('#attBelt').onchange = e => { A.belt = e.target.value; renderAttList(); };
   $('#attStatus').onchange = e => { A.status = e.target.value; renderAttList(); };
   const sel = $('#attSelect'); if (sel) sel.onclick = () => { A.selecting ? stopSelecting() : startSelecting(); renderAttendance(); };
   const allP = $('#attAllPresent'); if (allP) allP.onclick = () => {
@@ -989,7 +993,7 @@ function renderAttList() {
   const A = state.att, list = visibleAttRows(), editable = canEditAttendance();
   $('#attList').innerHTML = list.length ? list.map(({ s, a }) => `<li><div class="item" style="cursor:default">
     ${A.selecting ? `<input type="checkbox" data-pick="${esc(s.student_id)}" ${A.selected.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}">` : ''}
-    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.club].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
+    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
     ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}</div>`
       : tag(a.status)}
   </div></li>`).join('') : `<li><div class="empty">${attRows().rows.length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
