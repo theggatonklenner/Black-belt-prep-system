@@ -274,6 +274,7 @@
     <div class="view-head">
       <h2>Students <span class="muted small" id="studentCount"></span></h2>
       <div class="row need-admin">
+        <button class="btn sm" id="selectStudentsBtn">Select</button>
         <button class="btn sm" id="importStudentsBtn">Import</button>
         <button class="btn primary sm" id="addStudentBtn">Add student</button>
       </div>
@@ -308,6 +309,18 @@
       <button class="btn" data-bulk="excused">Excused</button>
       <button class="btn danger" data-bulk="absent">Absent</button>
       <button class="btn" data-bulk="not_recorded">Clear</button>
+    </div>
+  </div>
+</div>
+
+<div class="selbar" id="stuSelbar" hidden>
+  <div class="selbar-inner">
+    <div class="row"><b id="stuSelCount" class="grow">0 selected</b><button class="btn sm ghost" id="stuSelAll">Select all shown</button><button class="btn sm ghost" id="stuSelDone">Done</button></div>
+    <div class="acts">
+      <button class="btn" data-sbulk="enrol">Add to cycle</button>
+      <button class="btn" data-sbulk="deactivate">Deactivate</button>
+      <button class="btn" data-sbulk="reactivate">Reactivate</button>
+      <button class="btn danger" data-sbulk="delete">Delete</button>
     </div>
   </div>
 </div>
@@ -385,7 +398,7 @@ const PLAN = { upfront: 'Upfront', per_session: 'Per session' };
 const DAN_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan'];
 const nextDan = rank => (state.danCounters.find(c => c.target_rank === rank) || {}).next_number ?? null;
 const feeInfo = (cid, sid) => state.sessionFees.find(f => f.cycle_id === cid && f.student_id === sid) || null;
-const paidAt = (cid, sid, sessionId) => { const f = feeInfo(cid, sid); return !!f && (f.paid_sessions || []).includes(sessionId); };
+const paidAt = (cid, sid, sessionId) => { const f = feeInfo(cid, sid); return !!f && (!!f.prepaid || (f.paid_sessions || []).includes(sessionId)); };
 const nextBelt = b => { const i = BELTS.indexOf(b); return i >= 0 && i < BELTS.length - 1 ? BELTS[i + 1] : null; };
 const gradingRate = rank => { const r = state.gradingRates.find(x => x.target_rank === rank); return r ? Number(r.fee) : null; };
 const enrolment = (cid, sid) => state.enrolments.find(e => e.cycle_id === cid && e.student_id === sid) || {};
@@ -527,6 +540,7 @@ function showView(v) {
   $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v)));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
+  if (v !== 'students') stopStudentSelect();
   render();
   window.scrollTo(0, 0);
 }
@@ -632,11 +646,73 @@ function renderStudents() {
   $('#studentList').innerHTML = list.length ? list.map(s => {
     const sum = c && enrolled.has(s.student_id) ? summaryFor(c.cycle_id, s.student_id) : null;
     return `<li><button class="item" data-student="${esc(s.student_id)}">
+      ${stuSel.on ? `<input type="checkbox" tabindex="-1" ${stuSel.ids.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}" style="pointer-events:none">` : ''}
       <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}</div></div>
       ${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
-  $$('#studentList [data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
+  $$('#studentList [data-student]').forEach(b => b.onclick = () => {
+    if (!stuSel.on) return openStudent(b.dataset.student);
+    const id = b.dataset.student; stuSel.ids.has(id) ? stuSel.ids.delete(id) : stuSel.ids.add(id); renderStudents();
+  });
+  $('#selectStudentsBtn').textContent = stuSel.on ? 'Cancel' : 'Select';
+  updateStuSelbar();
+}
+
+/* ---------- Selecting several students ---------- */
+const stuSel = { on: false, ids: new Set() };
+function startStudentSelect() { stuSel.on = true; stuSel.ids.clear(); document.body.classList.add('selecting'); $('#stuSelbar').hidden = false; renderStudents(); }
+function stopStudentSelect() { stuSel.on = false; stuSel.ids.clear(); $('#stuSelbar').hidden = true; if (!state.att.selecting) document.body.classList.remove('selecting'); }
+function updateStuSelbar() { $('#stuSelCount').textContent = `${stuSel.ids.size} selected`; $$('#stuSelbar [data-sbulk]').forEach(b => b.disabled = !stuSel.ids.size); }
+$('#selectStudentsBtn').onclick = () => { stuSel.on ? (stopStudentSelect(), renderStudents()) : startStudentSelect(); };
+$('#stuSelDone').onclick = () => { stopStudentSelect(); renderStudents(); };
+$('#stuSelAll').onclick = () => { visibleStudents().forEach(s => stuSel.ids.add(s.student_id)); renderStudents(); };
+$$('#stuSelbar [data-sbulk]').forEach(b => b.onclick = () => bulkStudents(b.dataset.sbulk, [...stuSel.ids].map(student).filter(Boolean)));
+
+async function deleteStudents(list) {
+  const n = list.length;
+  if (!await ask(`Delete ${n === 1 ? list[0].full_name : n + ' students'} permanently? This removes ${n === 1 ? 'them' : 'them'} from every cycle, with their attendance and Dan numbers. Students with payments, grading records or certificates are skipped; deactivate those instead. This cannot be undone.`, `Delete ${n === 1 ? '' : n}`.trim(), true, 'Delete students?')) return false;
+  const { data, error } = await sb.rpc('prep_delete_students', { p_ids: list.map(s => s.student_id) });
+  if (error) { toast(/prep_delete_students|schema cache/i.test(error.message) ? 'To delete students, run supabase/prep-update-05.sql in Supabase first.' : errMsg(error), 8000); return false; }
+  const gone = data.filter(r => r.deleted), kept = data.filter(r => !r.deleted);
+  await loadAll(); render();
+  if (kept.length) openSheet(`<div class="body">${sheetHead(`${gone.length} deleted, ${kept.length} kept`, 'These students have history, so they were not deleted. Deactivate them instead if they should be hidden.')}
+    <ul class="list">${kept.map(r => `<li><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.full_name)}</div><div class="meta">${esc(r.student_id)}</div></div><span class="tag warn">${esc(r.reason)}</span></div></li>`).join('')}</ul>
+    <div class="dlg-actions"><button class="btn primary" data-close>OK</button></div></div>`);
+  else toast(`${gone.length} student${gone.length === 1 ? '' : 's'} deleted`);
+  return true;
+}
+
+async function bulkStudents(action, list) {
+  if (!list.length) return;
+  const n = list.length, word = n === 1 ? list[0].full_name : `${n} students`;
+  try {
+    if (action === 'delete') { if (await deleteStudents(list)) { stopStudentSelect(); renderStudents(); } return; }
+    if (action === 'deactivate' || action === 'reactivate') {
+      const on = action === 'reactivate', change = list.filter(s => s.is_active !== on);
+      if (!change.length) return toast(`All selected students are already ${on ? 'active' : 'inactive'}.`);
+      if (!await ask(`${on ? 'Reactivate' : 'Deactivate'} ${change.length === 1 ? change[0].full_name : change.length + ' students'}? Their records are kept.`, on ? 'Reactivate' : 'Deactivate', !on)) return;
+      await run(sb.from('prep_students').update({ is_active: on }).in('student_id', change.map(s => s.student_id)), `${change.length} ${on ? 'reactivated' : 'deactivated'}`);
+      stopStudentSelect(); await loadAll(); render(); return;
+    }
+    if (action === 'enrol') {
+      const open = state.cycles.filter(c => c.status === 'active' || c.status === 'planned');
+      if (!open.length) return toast('There is no planned or active cycle to add them to.');
+      const pick = open.length === 1 ? open[0].cycle_id : await new Promise(resolve => {
+        openSheet(`<div class="body">${sheetHead(`Add ${word} to a cycle`)}
+          <div class="field"><label for="enCycle">Cycle</label><select id="enCycle">${open.map(c => `<option value="${c.cycle_id}"${c.status === 'active' ? ' selected' : ''}>${esc(c.name)} (${label(c.status).toLowerCase()})</option>`).join('')}</select></div>
+          <div class="dlg-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="enCycleGo">Continue</button></div></div>`, () => resolve(null));
+        $('#enCycleGo').onclick = () => { const v = $('#enCycle').value; sheet.onclose = null; sheet.close(); resolve(v); };
+      });
+      if (!pick) return;
+      const c = cycle(pick), have = enrolledIds(pick);
+      const add = list.filter(s => s.is_active && !have.has(s.student_id)), skipped = n - add.length;
+      if (!add.length) return toast('All selected students are already in that cycle (or inactive).');
+      if (!await ask(`Add ${add.length === 1 ? add[0].full_name : add.length + ' students'} to ${c.name}?${skipped ? ` ${skipped} already in it or inactive will be skipped.` : ''} Each gets attendance, readiness and fee records, and a Dan number if they're going for a Dan.`, 'Add')) return;
+      await run(sb.from('prep_enrolments').insert(add.map(s => ({ cycle_id: pick, student_id: s.student_id }))), `${add.length} added to ${c.name}`);
+      stopStudentSelect(); await loadAll(); render(); return;
+    }
+  } catch (e) { toast(errMsg(e), 7000); }
 }
 
 function openStudent(id) {
@@ -677,7 +753,8 @@ function openStudent(id) {
         ${s.notes ? `<dt>Notes</dt><dd>${esc(s.notes)}</dd>` : ''}
       </dl>
       <div class="row need-admin"><button class="btn" id="stEdit">Edit</button>
-        <button class="btn ${s.is_active ? 'danger' : ''}" id="stActive">${s.is_active ? 'Deactivate' : 'Reactivate'}</button></div>
+        <button class="btn ${s.is_active ? 'danger' : ''}" id="stActive">${s.is_active ? 'Deactivate' : 'Reactivate'}</button>
+        <button class="btn danger" id="stDelete">Delete</button></div>
     </div>
     ${c ? `<div class="section"><h3>${c.status === 'active' ? 'Current cycle' : 'Latest cycle'}</h3>${cycleBlock(c)}</div>` : '<div class="section"><p class="hint">Not in any preparation cycle yet.</p></div>'}
     ${myCycles.length > 1 ? `<div class="section"><h3>History</h3>${myCycles.filter(x => x !== c).map(cy => `<div class="card" style="box-shadow:none;border:1px solid var(--line)">${cycleBlock(cy)}</div>`).join('')}</div>` : ''}
@@ -689,6 +766,8 @@ function openStudent(id) {
     try { await run(sb.from('prep_payments').update({ payment_plan: sel.value }).eq('payment_id', sel.dataset.plan), `Fee option: ${PLAN[sel.value]}`); await loadAll(); render(); openStudent(id); }
     catch (e) { toast(errMsg(e), 6000); }
   });
+  const dl = $('#stDelete');
+  if (dl) dl.onclick = async () => { if (await deleteStudents([s]) && !student(id)) sheet.close(); };
   const ac = $('#stActive');
   if (ac) ac.onclick = async () => {
     if (s.is_active && !await ask(`Deactivate ${s.full_name}? Their records are kept and they can be reactivated at any time.`, 'Deactivate', true)) return;
@@ -1094,10 +1173,10 @@ function renderAttendance() {
     <div class="seg" role="group" aria-label="Session">${sess.map(s => `<button data-session="${s.session_number}" aria-pressed="${s.session_number === A.session}">${isSignoff(s) ? 'Sign-off' : 'Session ' + s.session_number}<small>${fmt(s.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</small></button>`).join('')}</div>
     ${isSignoff(se) ? '<p class="hint" style="margin-top:10px">This is the sign-off session. Students must be marked Present here to grade.</p>' : ''}
     <div class="counts" style="margin-top:12px"><span><b>${n('present')}</b> present</span><span><b>${n('absent')}</b> absent</span><span><b>${n('excused')}</b> excused</span><span><b>${n('not_recorded')}</b> not recorded</span>${(() => {
-      const per = rows.filter(r => r.a.status === 'present' && (feeInfo(A.cycle, r.s.student_id) || {}).payment_plan === 'per_session');
+      const per = rows.filter(r => r.a.status === 'present' && feeInfo(A.cycle, r.s.student_id));
       return per.length ? `<span><b>${per.filter(r => paidAt(A.cycle, r.s.student_id, se.session_id)).length}</b> of ${per.length} paid</span>` : '';
     })()}</div>
-    ${editable && state.sessionFees.length ? `<p class="hint" style="margin-top:6px">Tap <b>$</b> when a per-session student pays ${money(cycle(A.cycle).per_session_fee)} for this session. Tap again to undo.</p>` : ''}
+    ${editable && state.sessionFees.length ? `<p class="hint" style="margin-top:6px">Tap <b>$</b> when a student pays: ${money(cycle(A.cycle).per_session_fee)} for this session, or ${money(cycle(A.cycle).upfront_fee)} upfront, which covers every session. Tap again to undo.</p>` : ''}
     <div class="view" style="gap:8px;margin-top:12px">
       <input type="search" id="attSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(A.search)}">
       <div class="filters">
@@ -1127,7 +1206,9 @@ function renderAttList() {
     ${A.selecting ? `<input type="checkbox" data-pick="${esc(s.student_id)}" ${A.selected.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}">` : ''}
     <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
     ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}${
-      (feeInfo(A.cycle, s.student_id) || {}).payment_plan === 'per_session' ? `<button class="pay" data-pay="${esc(s.student_id)}" aria-pressed="${paidAt(A.cycle, s.student_id, a.session_id)}" ${a.status === 'present' || paidAt(A.cycle, s.student_id, a.session_id) ? '' : 'disabled'} title="Paid for this session" aria-label="Paid for this session">$</button>` : ''}</div>`
+      (() => { const f = feeInfo(A.cycle, s.student_id); if (!f || !f.payment_plan) return '';
+        const paid = paidAt(A.cycle, s.student_id, a.session_id), up = f.payment_plan === 'upfront';
+        return `<button class="pay" data-pay="${esc(s.student_id)}" aria-pressed="${paid}" ${up || a.status === 'present' || paid ? '' : 'disabled'} title="${up ? (paid ? 'Paid upfront' : 'Upfront: not paid yet') : 'Paid for this session'}" aria-label="${up ? 'Paid upfront' : 'Paid for this session'}">$</button>`; })()}</div>`
       : tag(a.status)}
   </div></li>`).join('') : `<li><div class="empty">${attRows().rows.length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
   $$('#attList .att button[data-s]').forEach(b => b.onclick = () => markOne(b.dataset.id, b.dataset.s));
@@ -1144,8 +1225,17 @@ async function markOne(id, status) {
   else scheduleReload();
 }
 async function markPaid(id, paid) {
-  const { se } = attRows(), s = student(id), f = feeInfo(state.att.cycle, id);
+  const { se } = attRows(), s = student(id), f = feeInfo(state.att.cycle, id), c = cycle(state.att.cycle);
   if (!f) return;
+  if (f.payment_plan === 'upfront') {
+    if (paid && !await ask(`Record ${s.full_name}'s ${money(c.upfront_fee)} upfront payment? It covers all ${cycleSessions(c.cycle_id).length} sessions. Attendance is still recorded separately.`, 'Record payment')) return;
+    if (!paid && !await ask(`Undo ${s.full_name}'s upfront payment? The payment record is kept with a correction.`, 'Undo payment', true)) return;
+    const was = f.prepaid; f.prepaid = paid; renderAttendance();
+    const { error } = await sb.rpc('prep_record_session_payment', { p_session: se.session_id, p_student: id, p_paid: paid, p_method: 'cash' });
+    if (error) { f.prepaid = was; renderAttendance(); toast('Not saved: ' + errMsg(error), 6000); }
+    else { toast(paid ? `${s.full_name} paid ${money(c.upfront_fee)} upfront` : 'Upfront payment undone'); scheduleReload(); }
+    return;
+  }
   if (!paid && !await ask(`Undo ${s.full_name}'s payment for ${isSignoff(se) ? 'the sign-off' : 'session ' + se.session_number}? The payment record is kept with a correction.`, 'Undo payment', true)) return;
   const prev = f.paid_sessions || [];
   f.paid_sessions = paid ? [...prev, se.session_id] : prev.filter(x => x !== se.session_id);

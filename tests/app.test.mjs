@@ -27,6 +27,7 @@ await db.exec(read(join(here, '../supabase/prep-update-01.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-02.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-03.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-04.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-05.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -219,6 +220,7 @@ try {
   await page.click('.att .pay[data-pay="BB0001"]'); await settle(page);
   const paidTx = await q(`select t.amount::text a, t.method, t.notes from prep_payment_transactions t join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and t.student_id = 'BB0001'`, [c1.cycle_id]);
   ok(paidTx.length === 1 && paidTx[0].a === '60.00' && paidTx[0].notes === 'Paid at session 1', 'one tap on $ records $60 paid at that session');
+  await page.waitForFunction(() => document.querySelector('#attBody .counts')?.textContent.includes('1 of 1 paid'), null, { timeout: 5000 }).catch(() => {});
   ok(await page.getAttribute('.att .pay[data-pay="BB0001"]', 'aria-pressed') === 'true' && (await page.textContent('#attBody .counts')).includes('1 of 1 paid'), '$ shows as paid and the session count updates');
   await shot(page, 'attendance-paid');
   await page.click('.att .pay[data-pay="BB0001"]'); const undoTxt = await confirm(page); await settle(page);
@@ -359,6 +361,64 @@ try {
     await page.click('#sheet [data-close]');
     await tab(page, 'dashboard');
     ok((await page.textContent('#view-dashboard')).includes('Grading'), 'dashboard shows how many are grading');
+    await ctx.close();
+  }
+
+  console.log('\nUpfront payment from the attendance screen');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'attendance');
+    await page.click('#attBody [data-session="1"]');
+    ok(!(await page.isDisabled('.att .pay[data-pay="BB0001"]')), 'upfront student can pay before attendance is recorded');
+    await page.click('.att .pay[data-pay="BB0001"]');
+    const upTxt = await confirm(page); await settle(page);
+    ok(upTxt.includes('$200 upfront') && upTxt.includes('covers all 4 sessions'), 'tapping $ for an upfront student records the $200 upfront fee after confirming');
+    const up = (await q(`select s.amount_paid::text p, s.status from prep_payment_summary s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.student_id = 'BB0001' and s.kind = 'sessions'`))[0];
+    ok(up.p === '200.00' && up.status === 'paid', 'upfront fee paid in full');
+    for (const n of [2, 3, 4]) {
+      await page.click(`#attBody [data-session="${n}"]`);
+      if (await page.getAttribute('.att .pay[data-pay="BB0001"]', 'aria-pressed') !== 'true') { ok(false, `session ${n} shows paid`); break; }
+    }
+    ok(true, 'every session then shows as paid');
+    ok((await q(`select count(*)::int n from prep_attendance a join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and a.student_id = 'BB0001' and a.status <> 'not_recorded'`))[0].n === 0, 'attendance is left to be recorded separately');
+    await ctx.close();
+  }
+
+  console.log('\nSelect several students and delete');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'students');
+    await page.click('#importStudentsBtn');
+    await page.fill('#impText', 'Name\tBelt\nOops One\tFirst Dan\nOops Two\tThird Dan\nOops Three\tFirst Dan');
+    await page.waitForSelector('#impPreview table'); await page.click('#impGo'); await confirm(page); await settle(page);
+    await page.click('#selectStudentsBtn');
+    ok(await page.isVisible('#stuSelbar'), 'Select shows the selection bar');
+    await page.fill('#studentSearch', 'oops');
+    await page.click('#stuSelAll');
+    ok((await page.textContent('#stuSelCount')) === '3 selected', '"Select all shown" selects the filtered students');
+    await page.click('#stuSelbar [data-sbulk="enrol"]');
+    await page.waitForSelector('#askDlg[open]');
+    ok((await page.textContent('#askText')).includes('Add 3 students to Term 1 2027'), 'bulk "Add to cycle" asks first (only one open cycle, so no picker)');
+    await page.click('#askYes'); await settle(page);
+    ok((await q(`select count(*)::int n from prep_enrolments e join prep_students s using (student_id) join prep_cycles c using (cycle_id) where s.full_name like 'Oops%' and c.name = 'Term 1 2027'`))[0].n === 3, 'three students added to the cycle');
+    await page.click('#selectStudentsBtn');
+    await page.fill('#studentSearch', '');
+    for (const n of ['Oops One', 'Oops Two', 'Alex Smith']) await page.click(`#studentList .item:has-text("${n}")`);
+    ok((await page.textContent('#stuSelCount')) === '3 selected', 'tapping students selects them');
+    await shot(page, 'students-selecting');
+    await page.click('#stuSelbar [data-sbulk="delete"]');
+    const delTxt = await confirm(page); await settle(page);
+    ok(delTxt.includes('cannot be undone') && delTxt.includes('skipped'), 'delete warns it cannot be undone and that students with history are skipped');
+    await page.waitForSelector('#sheet[open]');
+    const kept = await page.textContent('#sheet');
+    ok(kept.includes('2 deleted, 1 kept') && kept.includes('Alex Smith') && kept.includes('Has payments recorded'), 'students with history are kept and listed with the reason');
+    const left = (await q(`select full_name from prep_students where full_name in ('Oops One','Oops Two','Oops Three','Alex Smith') order by 1`)).map(r => r.full_name);
+    ok(left.join() === 'Alex Smith,Oops Three', 'the two mistaken imports are gone; Alex and Oops Three remain');
+    await page.click('#sheet [data-close]');
+    await page.click('#studentList .item:has-text("Oops Three")');
+    await page.click('#stDelete'); await confirm(page); await settle(page);
+    ok((await q(`select count(*)::int n from prep_students where full_name = 'Oops Three'`))[0].n === 0 && !(await page.isVisible('#sheet[open]')), 'Delete on a student record removes them and closes the record');
+    await shot(page, 'students-select');
     await ctx.close();
   }
 

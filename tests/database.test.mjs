@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -404,6 +404,39 @@ ok(ovG.is_grading === true && ovG.grading_to === 'Probationary Black Belt' && ov
 ok((await as(ADMIN, () => rows(`select * from prep_overview where cycle_id = $1`, [cG]))).length === 4, 'overview still has one row per student');
 await as('view@ama.test', () => db.exec(`insert into prep_grading_fee_rates (target_rank, fee) values ('5th Dan', 1)`).catch(() => {}));
 ok(!(await one(`select * from prep_grading_fee_rates where target_rank = '5th Dan'`)), 'only admins set grading fees');
+
+// ---------------------------------------------------------------------------
+console.log('\nDeleting students');
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('X1','Mistake One','Cho Dan Bo'), ('X2','Mistake Two', null)`));
+await as(ADMIN, () => db.exec(`insert into prep_enrolments (cycle_id, student_id) values ('${cG}', 'X1')`));
+ok(await cnt('prep_attendance', `where student_id = 'X1'`) === 4 && await cnt('prep_dan_numbers', `where student_id = 'X1'`) === 1, 'mistaken import was added to a cycle and given a Dan number');
+await fails(() => as('grade@ama.test', () => db.query(`select * from prep_delete_students(array['X2'])`)), /Only an admin/, 'only admins can delete students');
+const del = await as(ADMIN, () => rows(`select * from prep_delete_students(array['X1','X2','G1','D1'])`));
+const dres = Object.fromEntries(del.map(r => [r.student_id, r]));
+ok(dres.X1.deleted && dres.X2.deleted, 'students with no payments, grading or certificates are deleted');
+ok(await cnt('prep_students', `where student_id in ('X1','X2')`) === 0 && await cnt('prep_attendance', `where student_id = 'X1'`) === 0 && await cnt('prep_dan_numbers', `where student_id = 'X1'`) === 0, 'their cycle places, attendance and Dan numbers go with them');
+ok(!dres.G1.deleted && dres.G1.reason === 'Has payments recorded', 'a student with payments is kept, with the reason');
+ok(await cnt('prep_students', `where student_id = 'G1'`) === 1, 'kept student is untouched');
+ok(await cnt('prep_audit_log', `where table_name = 'prep_students' and action = 'delete' and record_key = 'X1'`) === 1, 'deletion is recorded in the audit log');
+
+// ---------------------------------------------------------------------------
+console.log('\nUpfront payment from the attendance screen');
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name) values ('U1','Up Front')`));
+const cU = (await as(ADMIN, () => one(`select prep_start_new_cycle('Upfront test', null, null, null, null, null, array['U1']) id`))).id;
+await as('pay@ama.test', () => db.exec(`update prep_payments set payment_plan = 'upfront' where student_id = 'U1' and cycle_id = '${cU}'`));
+const sU = (await rows(`select session_id from prep_sessions where cycle_id = $1 order by session_number`, [cU])).map(r => r.session_id);
+let fU = (await as('att@ama.test', () => rows(`select * from prep_session_fees($1)`, [cU])))[0];
+ok(fU.payment_plan === 'upfront' && fU.prepaid === false, 'upfront student shows as not yet paid');
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'U1', true)`, [sU[0]]));
+fU = (await as('att@ama.test', () => rows(`select * from prep_session_fees($1)`, [cU])))[0];
+const sumU = await one(`select * from prep_payment_summary where student_id = 'U1' and cycle_id = $1 and kind = 'sessions'`, [cU]);
+ok(fU.prepaid === true && Number(sumU.amount_paid) === 200 && sumU.status === 'paid', 'one tap records the full $200 upfront; all sessions count as paid');
+ok(await cnt('prep_attendance', `where student_id = 'U1' and status <> 'not_recorded'`) === 0, 'paying upfront does not record any attendance');
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'U1', true)`, [sU[2]]));
+ok(Number((await one(`select amount_paid from prep_payment_summary where student_id = 'U1' and cycle_id = $1 and kind = 'sessions'`, [cU])).amount_paid) === 200, 'tapping again at a later session does not charge twice');
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'U1', false)`, [sU[0]]));
+fU = (await as('att@ama.test', () => rows(`select * from prep_session_fees($1)`, [cU])))[0];
+ok(fU.prepaid === false && fU.paid_sessions.length === 0, 'undoing the upfront payment clears it from every session');
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
