@@ -21,6 +21,7 @@ Progress:
 - Stage 1, existing ID card software: [spec/stage-1-id-card-integration.md](spec/stage-1-id-card-integration.md)
 - Stage 2, database (and why it moved from AppSheet to Supabase): [spec/stage-2-database.md](spec/stage-2-database.md)
 - Stage 3, student register, cycles and attendance screens: [spec/stage-3-app.md](spec/stage-3-app.md)
+- Stage 4, readiness and payments screens: [spec/stage-4-readiness-payments.md](spec/stage-4-readiness-payments.md)
 
 | # | Section |
 |---|---|
@@ -47,7 +48,7 @@ Progress:
 1. Inspect the existing ID card software and its integration options (done)
 2. Design the database tables and map existing student records (done)
 3. Student register, preparation cycles, individual and bulk attendance (done)
-4. Readiness tracking and payment management
+4. Readiness tracking and payment management (done)
 5. Dashboard, summary cards, filters and follow-up lists
 6. Grading management and grading list generator
 7. Certificate management and certificate list generator

@@ -59,12 +59,17 @@ async function open(email) {
     await page.fill('#loginEmail', email); await page.fill('#loginPassword', 'pw');
     await page.click('#loginBtn');
     await page.waitForFunction(() => !document.querySelector('#app').hidden || !document.querySelector('#noAccessView').hidden, null, { timeout: 8000 });
+    // Wait for the data to finish loading
+    await page.waitForFunction(() => !document.querySelector('#noAccessView').hidden || !document.querySelector('#view-dashboard').textContent.includes('Loading'), null, { timeout: 8000 });
   }
   return { ctx, page };
 }
 const shot = async (page, name) => page.screenshot({ path: join(SHOTS, `${String(++shotN).padStart(2, '0')}-${name}.png`), fullPage: false });
 const confirm = async page => { await page.waitForSelector('#askDlg[open]'); const t = await page.textContent('#askText'); await page.click('#askYes'); await page.waitForSelector('#askDlg:not([open])', { state: 'attached' }); return t; };
-const tab = (page, v) => page.click(`.tab[data-view="${v}"]`);
+const tab = async (page, v) => {
+  if (v === 'cycles' || v === 'payments') { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
+  else await page.click(`.tab[data-view="${v}"]`);
+};
 const settle = page => page.waitForTimeout(450);
 const toastText = async page => { await page.waitForSelector('#toast:not([hidden])'); return page.textContent('#toast'); };
 
@@ -405,6 +410,76 @@ try {
     await ctx.close();
   }
 
+  console.log('\nReadiness');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'readiness');
+    ok((await page.textContent('#view-readiness')).includes('Never marks anyone ready') || (await page.textContent('#view-readiness')).includes('never marks anyone ready'), 'readiness screen explains it is separate from attendance');
+    ok((await page.$$('#rdList [data-rd]')).length >= 2, 'readiness lists the students in the active cycle');
+    await page.click('#rdList [data-rd="M-0042"]'); await page.waitForSelector('#rdForm');
+    await page.check('#rdForm [name=rdStatus][value=not_ready]');
+    await page.click('#rdSave');
+    ok((await toastText(page)).includes('Choose a reason'), 'flagging not ready requires a reason');
+    await page.selectOption('#rdReason', 'technique'); await page.fill('#rdNotes', 'Poomsae timing'); await page.fill('#rdNext', 'Extra class');
+    await page.click('#rdSave'); await settle(page);
+    const rr = (await q(`select r.status, r.reason, r.notes, r.next_action, r.reviewed_by from prep_readiness r join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and r.student_id = 'M-0042'`))[0];
+    ok(rr.status === 'not_ready' && rr.reason === 'technique' && rr.notes === 'Poomsae timing' && rr.next_action === 'Extra class' && rr.reviewed_by === 'owner@ama.test', 'not ready saved with reason, notes, next action and reviewer');
+    ok((await page.textContent('#rdList')).includes('Technique requires improvement'), 'list shows the reason');
+    await tab(page, 'dashboard');
+    const d = await page.textContent('#view-dashboard');
+    ok(d.includes('Not ready for grading') && d.includes('Not ready for grading: technique requires improvement'), 'dashboard counts readiness and lists the not-ready student in Needs attention');
+    await page.click('#view-dashboard .item:has-text("Riley Chen")');
+    await page.waitForSelector('#rdForm');
+    ok((await page.textContent('#sheet')).includes('Riley Chen'), 'Needs attention opens the readiness record');
+    await page.check('#rdForm [name=rdStatus][value=on_track]'); await page.click('#rdSave'); await settle(page);
+    await tab(page, 'readiness');
+    await page.click('#rdList [data-rd="M-0042"]'); await page.waitForSelector('#rdForm');
+    ok((await page.textContent('#sheet')).includes('History'), 'readiness history is shown after changes');
+    await page.click('#sheet [data-close]');
+    await page.click('#rdSelect'); await page.click('#rdSelAll');
+    await page.click('#rdSetBtn'); await page.check('#rdForm [name=rdStatus][value=ready]'); await page.click('#rdSave');
+    const bt = await confirm(page); await settle(page);
+    ok(/Set \d+ students to "Ready for grading"/.test(bt), 'bulk readiness asks first');
+    ok((await q(`select count(*)::int n from prep_readiness r join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and r.status <> 'ready'`))[0].n === 0, 'everyone selected set to ready');
+    ok((await q(`select r.notes from prep_readiness r join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and r.student_id = 'M-0042'`))[0].notes === 'Poomsae timing', 'bulk update keeps each student\'s own notes when left blank');
+    await shot(page, 'readiness');
+    await ctx.close();
+  }
+
+  console.log('\nPayments');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'payments');
+    ok((await page.textContent('#view-payments')).includes('Outstanding'), 'Payments screen opens from More with an outstanding total');
+    await page.click('#view-payments [data-pf="all"]');
+    await page.click('#payList .item:has-text("Riley Chen")');
+    await page.waitForSelector('#sheet [data-act="payment"]');
+    ok((await page.textContent('#sheet')).includes('Paid at session 2'), 'payment record lists its transactions');
+    await page.click('#sheet [data-act="oneoff"]'); await page.fill('#ooAmt', '100'); await page.fill('#ooWhy', 'Sibling discount'); await page.click('#ooF button[type=submit]'); await settle(page);
+    let rp = (await q(`select s.* from prep_payment_summary s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.student_id = 'M-0042' and s.kind = 'sessions'`))[0];
+    ok(Number(rp.amount_due) === 100 && rp.fee_override !== null, 'one-off fee set with a reason');
+    await page.click('#sheet [data-act="payment"]'); await page.fill('#txRef', 'R-77'); await page.selectOption('#txMethod', 'bank_transfer'); await page.click('#txGo'); await settle(page);
+    rp = (await q(`select s.* from prep_payment_summary s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.student_id = 'M-0042' and s.kind = 'sessions'`))[0];
+    ok(Number(rp.amount_paid) === 100 && rp.status === 'paid', 'recording the balance ($40) makes it fully paid');
+    await page.click('#sheet [data-act="payment"]'); await page.fill('#txAmt', '5'); await page.fill('#txRef', 'r-77'); await page.click('#txGo');
+    await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('already been used'), null, { timeout: 5000 }).catch(() => {});
+    ok((await toastText(page)).includes('already been used'), 'same receipt number twice is refused with a clear message');
+    await page.click('#txCancel');
+    await page.click('#sheet [data-act="refund"]'); await page.fill('#txAmt', '10'); await page.click('#txGo');
+    ok(await page.isVisible('#txF'), 'a refund needs a note');
+    await page.fill('#txNotes', 'Missed session refunded'); await page.click('#txGo'); await settle(page);
+    rp = (await q(`select s.* from prep_payment_summary s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.student_id = 'M-0042' and s.kind = 'sessions'`))[0];
+    ok(Number(rp.amount_paid) === 90 && Number(rp.balance) === 10, 'refund reduces the amount paid');
+    await page.click('#sheet [data-act="status"]'); await page.selectOption('#stSel', 'waived'); await page.fill('#stWhy', 'Committee approved'); await page.click('#stF button[type=submit]'); await settle(page);
+    ok((await q(`select s.status from prep_payment_summary s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.student_id = 'M-0042' and s.kind = 'sessions'`))[0].status === 'waived', 'fee marked waived with a reason');
+    await shot(page, 'payment-record');
+    await page.click('#sheet [data-close]');
+    await page.click('#view-payments [data-kind="grading"]');
+    ok((await page.textContent('#payList')).includes('Grading to Probationary Black Belt'), 'grading fees can be shown on their own');
+    await shot(page, 'payments');
+    await ctx.close();
+  }
+
   console.log('\nSelect several students and delete');
   {
     const { ctx, page } = await open('owner@ama.test');
@@ -454,6 +529,9 @@ try {
     ok((await page.$$('.att .pay')).length > 0, 'attendance recorder sees the $ button for per-session students');
     await tab(page, 'more');
     ok(await page.isHidden('#setForm') || !(await page.$('#setForm')), 'attendance recorder cannot change settings');
+    ok(!(await page.$('[data-goto="payments"]')), 'attendance recorder has no Payments screen');
+    await tab(page, 'readiness');
+    ok((await page.textContent('#view-readiness')).includes('can view readiness but not change it'), 'attendance recorder sees readiness read-only');
     await ctx.close();
   }
   {

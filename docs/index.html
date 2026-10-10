@@ -228,8 +228,8 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>Students</button>
   <button class="tab" role="tab" data-view="attendance" aria-selected="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="17" rx="2"/><path d="M9 2.5v3M15 2.5v3M8.5 13l2.5 2.5 4.5-5"/></svg>Attendance</button>
-  <button class="tab" role="tab" data-view="cycles" aria-selected="false">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></svg>Cycles</button>
+  <button class="tab" role="tab" data-view="readiness" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>Readiness</button>
   <button class="tab" role="tab" data-view="more" aria-selected="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>More</button>
 </nav>
@@ -297,6 +297,12 @@
   <!-- Cycles -->
   <section class="view" id="view-cycles" hidden></section>
 
+  <!-- Readiness -->
+  <section class="view" id="view-readiness" hidden></section>
+
+  <!-- Payments -->
+  <section class="view" id="view-payments" hidden></section>
+
   <!-- More -->
   <section class="view" id="view-more" hidden></section>
 </main>
@@ -323,6 +329,13 @@
       <button class="btn" data-sbulk="reactivate">Reactivate</button>
       <button class="btn danger" data-sbulk="delete">Delete</button>
     </div>
+  </div>
+</div>
+
+<div class="selbar" id="rdSelbar" hidden>
+  <div class="selbar-inner">
+    <div class="row"><b id="rdSelCount" class="grow">0 selected</b><button class="btn sm ghost" id="rdSelAll">Select all shown</button><button class="btn sm ghost" id="rdSelDone">Done</button></div>
+    <button class="btn primary" id="rdSetBtn">Set readiness</button>
   </div>
 </div>
 
@@ -405,6 +418,10 @@ const gradingRate = rank => { const r = state.gradingRates.find(x => x.target_ra
 const enrolment = (cid, sid) => state.enrolments.find(e => e.cycle_id === cid && e.student_id === sid) || {};
 const sessionPay = (cid, sid) => state.payments.find(x => x.cycle_id === cid && x.student_id === sid && (x.kind || 'sessions') === 'sessions');
 const gradingPay = (cid, sid) => state.payments.find(x => x.cycle_id === cid && x.student_id === sid && x.kind === 'grading');
+const readinessFor = (cid, sid) => state.readiness.find(r => r.cycle_id === cid && r.student_id === sid) || null;
+const canReadiness = () => has('instructor');
+const backToMore = () => '<button class="btn ghost sm" data-back style="align-self:flex-start;padding-left:0">‹ More</button>';
+const wireBack = () => $$('[data-back]').forEach(b => b.onclick = () => showView('more'));
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
@@ -474,7 +491,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -510,6 +527,8 @@ async function loadAll() {
   const counters = await sb.from('prep_dan_counters').select('*');
   state.countersReady = !counters.error;
   state.danCounters = counters.data || [];
+  const rd = await sb.from('prep_readiness').select('*');
+  state.readiness = rd.data || [];
   // Grading fees per belt; needs supabase/prep-update-04.sql
   const rates = await sb.from('prep_grading_fee_rates').select('*');
   state.gradingReady = !rates.error;
@@ -538,10 +557,11 @@ function scheduleReload() {
 /* ---------- Navigation ---------- */
 function showView(v) {
   state.view = v;
-  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v)));
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
   if (v !== 'students') stopStudentSelect();
+  if (v !== 'readiness') stopRdSelect();
   render();
   window.scrollTo(0, 0);
 }
@@ -552,7 +572,7 @@ function render() {
   const c = currentCycle();
   $('#cyclePill').hidden = !c;
   if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
-  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, cycles: renderCycles, more: renderMore })[state.view]();
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, more: renderMore })[state.view]();
 }
 
 /* =========================================================================
@@ -586,8 +606,16 @@ function renderDashboard() {
   const grading = rows.filter(r => enrolment(c.cycle_id, r.s.student_id).is_grading);
   const gFees = has('payments') ? state.payments.filter(p => p.kind === 'grading' && p.cycle_id === c.cycle_id) : [];
   const gOwing = gFees.filter(p => Number(p.balance) > 0), gOverdue = gFees.filter(p => p.status === 'overdue');
+  const rdOf = r => (readinessFor(c.cycle_id, r.s.student_id) || {}).status || 'not_assessed';
+  const rdCount = st => rows.filter(r => [].concat(st).includes(rdOf(r))).length;
+  const sFees = has('payments') ? state.payments.filter(p => (p.kind || 'sessions') === 'sessions' && p.cycle_id === c.cycle_id) : [];
+  const sOwing = sFees.filter(p => OWING.includes(p.status)), sOverdue = sFees.filter(p => p.status === 'overdue');
+  const owingTotal = [...sFees, ...gFees].filter(p => OWING.includes(p.status)).reduce((t, p) => t + Number(p.balance), 0);
   const attention = [
-    ...gOverdue.map(p => ({ r: rows.find(r => r.s.student_id === p.student_id), issue: `Grading fee overdue (${money(p.balance)})`, tone: 'bad' })).filter(a => a.r),
+    ...rows.filter(r => ['not_ready', 'needs_preparation'].includes(rdOf(r))).map(r => { const x = readinessFor(c.cycle_id, r.s.student_id);
+      return { r, issue: `${label(x.status)}${x.reason ? ': ' + RD_REASONS[x.reason].toLowerCase() : ''}`, tone: x.status === 'not_ready' ? 'bad' : 'warn', open: 'readiness' }; }),
+    ...sOverdue.map(p => ({ r: rows.find(r => r.s.student_id === p.student_id), issue: `Session fees overdue (${money(p.balance)})`, tone: 'bad', pid: p.payment_id })).filter(a => a.r),
+    ...gOverdue.map(p => ({ r: rows.find(r => r.s.student_id === p.student_id), issue: `Grading fee overdue (${money(p.balance)})`, tone: 'bad', pid: p.payment_id })).filter(a => a.r),
     ...missedSignoff.map(r => ({ r, issue: `Missed the sign-off (${label(r.sum.signoff_status).toLowerCase()})`, tone: 'bad' })),
     ...incomplete.map(r => ({ r, issue: `${r.missing} past session${r.missing > 1 ? 's' : ''} not recorded`, tone: 'warn' })),
     ...withAbs.map(r => ({ r, issue: `${r.sum.absences} absence${r.sum.absences > 1 ? 's' : ''}`, tone: 'bad' }))
@@ -612,14 +640,31 @@ function renderDashboard() {
       ${state.gradingReady ? `<button class="stat" data-go="cycles"><span class="n">${grading.length}</span><span class="l">Grading</span></button>` : ''}
       ${has('payments') && gFees.length ? `<button class="stat ${gOverdue.length ? 'bad' : gOwing.length ? 'warn' : ''}" data-go="cycles"><span class="n">${gOwing.length}</span><span class="l">Grading fees owing${c.grading_date ? ` (due ${fmtShort(addDays(c.grading_date, -21))})` : ''}</span></button>` : ''}
     </div>
+    <h3>Readiness</h3>
+    <div class="stats">
+      <button class="stat" data-rdgo="ready"><span class="n">${rdCount('ready')}</span><span class="l">Ready for grading</span></button>
+      <button class="stat ${rdCount('needs_preparation') ? 'warn' : ''}" data-rdgo="needs_preparation"><span class="n">${rdCount('needs_preparation')}</span><span class="l">Need more preparation</span></button>
+      <button class="stat ${rdCount('not_ready') ? 'bad' : ''}" data-rdgo="not_ready"><span class="n">${rdCount('not_ready')}</span><span class="l">Not ready for grading</span></button>
+      <button class="stat" data-rdgo="not_assessed"><span class="n">${rdCount(['not_assessed', 'awaiting_review'])}</span><span class="l">Awaiting assessment or review</span></button>
+    </div>
+    ${has('payments') ? `<h3>Payments</h3>
+    <div class="stats">
+      <button class="stat ${owingTotal ? 'warn' : ''}" data-paygo="owing"><span class="n">${money(owingTotal)}</span><span class="l">Outstanding this cycle</span></button>
+      <button class="stat ${sOwing.length ? 'warn' : ''}" data-paygo="owing"><span class="n">${sOwing.length}</span><span class="l">Session fees owing</span></button>
+      <button class="stat ${sOverdue.length + gOverdue.length ? 'bad' : ''}" data-paygo="overdue"><span class="n">${sOverdue.length + gOverdue.length}</span><span class="l">Overdue</span></button>
+      <button class="stat" data-paygo="paid"><span class="n">${sFees.filter(p => p.status === 'paid').length}</span><span class="l">Session fees fully paid</span></button>
+    </div>` : ''}
     <h3>Needs attention</h3>
-    ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}">
+    ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}"${a.open ? ` data-open="${a.open}"` : ''}${a.pid ? ` data-pid="${a.pid}"` : ''}>
       <div class="main"><div class="name">${esc(a.r.s.full_name)}</div><div class="meta">${esc([a.r.s.student_id, a.r.s.belt_rank].filter(Boolean).join(' · '))}</div></div>
       <span class="tag ${a.tone}">${esc(a.issue)}</span></button></li>`).join('')}</ul>`
       : '<div class="card empty">Nothing needs attention for attendance.</div>'}
-    <p class="hint">Readiness, payment, grading, certificate and ID card summaries are added in later build stages.</p>`;
+    <p class="hint">Grading results, certificates and ID cards are added in later build stages.</p>`;
   $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
-  $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
+  $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => b.dataset.open === 'readiness' ? openReadiness(c.cycle_id, b.dataset.student)
+    : b.dataset.pid ? openPayment(b.dataset.pid) : openStudent(b.dataset.student));
+  $$('#view-dashboard [data-rdgo]').forEach(b => b.onclick = () => { state.rd.cycle = c.cycle_id; state.rd.status = b.dataset.rdgo; showView('readiness'); });
+  $$('#view-dashboard [data-paygo]').forEach(b => b.onclick = () => { state.pay.cycle = c.cycle_id; state.pay.filter = b.dataset.paygo; state.pay.kind = ''; showView('payments'); });
   const da = $('#dashAtt'); if (da) da.onclick = () => { state.att.mode = 'sessions'; state.att.cycle = c.cycle_id; state.att.session = next ? next.session_number : 1; showView('attendance'); };
 }
 
@@ -727,7 +772,8 @@ function openStudent(id) {
       <div class="row"><div class="sess-cells">${att.map((a, i) => `<span class="cell ${a}" title="${esc(sessName(sess[i]))}: ${label(a)}"${i === att.length - 1 ? ' style="outline:2px solid var(--gold);outline-offset:1px"' : ''}>${a === 'not_recorded' ? i + 1 : a[0].toUpperCase()}</span>`).join('')}</div>
       <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''} · sign-off: ${label(sum.signoff_status || 'not_recorded').toLowerCase()}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
       <dl class="kv">
-        <dt>Readiness</dt><dd>${tag(ov.readiness)}</dd>
+        <dt>Readiness</dt><dd>${tag((readinessFor(cy.cycle_id, id) || {}).status || ov.readiness)}${(() => { const x = readinessFor(cy.cycle_id, id); return x && x.reason ? ` <span class="small muted">${esc(RD_REASONS[x.reason])}</span>` : ''; })()}
+          <button class="btn sm ghost" data-rdopen="${cy.cycle_id}" style="min-height:0;padding:0 6px">${canReadiness() ? 'Update' : 'View'}</button></dd>
         ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${ov.payment_status === 'not_invoiced' && Number(ov.amount_due) === 0 && (sessionPay(cy.cycle_id, id) || {}).payment_plan === 'per_session' ? tag('', 'Nothing owed yet') : tag(ov.payment_status)} <span class="small muted">${money(ov.amount_paid)} of ${money(ov.amount_due)}</span></dd>` : ''}
         ${(() => { const p = sessionPay(cy.cycle_id, id); if (!p || !p.payment_plan) return '';
           const how = p.fee_override != null ? `one-off fee ${money(p.fee_override)}` : p.payment_plan === 'per_session' ? `${sum.attended ?? 0} × ${money(cy.per_session_fee)}` : money(cy.upfront_fee);
@@ -762,6 +808,7 @@ function openStudent(id) {
   </div>`);
   const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
   const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
+  sheet.querySelectorAll('[data-rdopen]').forEach(b => b.onclick = () => openReadiness(b.dataset.rdopen, id));
   sheet.querySelectorAll('[data-gpay]').forEach(b => b.onclick = () => openGradingPayment(state.payments.find(p => p.payment_id === b.dataset.gpay), s));
   sheet.querySelectorAll('[data-plan]').forEach(sel => sel.onchange = async () => {
     try { await run(sb.from('prep_payments').update({ payment_plan: sel.value }).eq('payment_id', sel.dataset.plan), `Fee option: ${PLAN[sel.value]}`); await loadAll(); render(); openStudent(id); }
@@ -943,13 +990,14 @@ function openImportStudents() {
 function renderCycles() {
   const v = $('#view-cycles');
   const groups = ['active', 'planned', 'completed', 'archived'].map(st => [st, state.cycles.filter(c => c.status === st)]).filter(g => g[1].length);
-  v.innerHTML = `<div class="view-head"><h2>Preparation cycles</h2>
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Preparation cycles</h2>
       <button class="btn primary sm need-admin" id="newCycleBtn">Start new preparation cycle</button></div>
     ${groups.length ? groups.map(([st, list]) => `<h3>${label(st)}</h3><ul class="list">${list.map(c => {
       const sess = cycleSessions(c.cycle_id), n = enrolledIds(c.cycle_id).size;
       return `<li><button class="item" data-cycle="${c.cycle_id}"><div class="main"><div class="name">${esc(c.name)}</div>
         <div class="meta">${cycleWhen(c)} · ${n} student${n === 1 ? '' : 's'}</div></div>${tag(c.status)}</button></li>`;
     }).join('')}</ul>`).join('') : `<div class="card empty"><p>No preparation cycles yet.</p></div>`}`;
+  wireBack();
   const nb = $('#newCycleBtn'); if (nb) nb.onclick = () => openNewCycle();
   $$('#view-cycles [data-cycle]').forEach(b => b.onclick = () => openCycle(b.dataset.cycle));
 }
@@ -1397,11 +1445,262 @@ function openImportAttendance() {
 }
 
 /* =========================================================================
+   Readiness
+   ========================================================================= */
+const RD_STATUSES = ['not_assessed', 'on_track', 'needs_preparation', 'not_ready', 'ready', 'awaiting_review'];
+const RD_REASONS = { technique: 'Technique requires improvement', fitness: 'Fitness or conditioning', attendance: 'Attendance concerns',
+  more_practice: 'Additional practice required', instructor_recommendation: 'Instructor recommendation', other: 'Other' };
+const needsReason = st => st === 'needs_preparation' || st === 'not_ready';
+state.rd = { cycle: null, status: '', search: '', belt: '' };
+const rdSel = { on: false, ids: new Set() };
+
+function rdRows() {
+  const R = state.rd, cid = R.cycle;
+  return [...enrolledIds(cid)].map(id => ({ s: student(id), r: readinessFor(cid, id), sum: summaryFor(cid, id) || {} }))
+    .filter(x => x.s && x.r).sort((a, b) => a.s.full_name.localeCompare(b.s.full_name));
+}
+function renderReadiness() {
+  const v = $('#view-readiness'), R = state.rd;
+  if (!R.cycle || !cycle(R.cycle)) R.cycle = state.att.cycle || (currentCycle() || state.cycles[0] || {}).cycle_id;
+  if (!state.cycles.length) { v.innerHTML = '<div class="view-head"><h2>Readiness</h2></div><div class="card empty">No preparation cycles yet.</div>'; return; }
+  const all = rdRows(), n = st => all.filter(x => x.r.status === st).length, edit = canReadiness();
+  const keepFocus = document.activeElement && document.activeElement.id === 'rdSearch';
+  v.innerHTML = `<div class="view-head"><h2>Readiness</h2>${edit && all.length ? `<button class="btn sm" id="rdSelect">${rdSel.on ? 'Cancel' : 'Select'}</button>` : ''}</div>
+    <div class="field"><label for="rdCycle">Preparation cycle</label><select id="rdCycle">${state.cycles.map(c => `<option value="${c.cycle_id}"${c.cycle_id === R.cycle ? ' selected' : ''}>${esc(c.name)}${c.status === 'active' ? ' (active)' : ` (${label(c.status).toLowerCase()})`}</option>`).join('')}</select></div>
+    <div class="seg" role="group" aria-label="Filter by readiness">
+      <button data-rdst="" aria-pressed="${!R.status}">All<small>${all.length}</small></button>
+      ${RD_STATUSES.map(st => `<button data-rdst="${st}" aria-pressed="${R.status === st}">${{ not_assessed: 'Not assessed', on_track: 'On track', needs_preparation: 'Needs prep', not_ready: 'Not ready', ready: 'Ready', awaiting_review: 'Awaiting review' }[st]}<small>${n(st)}</small></button>`).join('')}
+    </div>
+    <p class="hint">Readiness is separate from attendance and payment. Attending every session never marks anyone ready.</p>
+    <input type="search" id="rdSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(R.search)}">
+    <select id="rdBelt" aria-label="Belt">${beltOptions(R.belt, 'All belts').replace(' (not in list)', '')}</select>
+    <ul class="list" id="rdList"></ul>
+    ${!edit ? '<p class="hint">You can view readiness but not change it.</p>' : ''}`;
+  $('#rdCycle').onchange = e => { R.cycle = e.target.value; stopRdSelect(); renderReadiness(); };
+  $$('#view-readiness [data-rdst]').forEach(b => b.onclick = () => { R.status = b.dataset.rdst; renderReadiness(); });
+  const sr = $('#rdSearch'); sr.oninput = () => { R.search = sr.value; renderRdList(); };
+  if (keepFocus) { sr.focus(); sr.setSelectionRange(sr.value.length, sr.value.length); }
+  $('#rdBelt').onchange = e => { R.belt = e.target.value; renderRdList(); };
+  const sb2 = $('#rdSelect'); if (sb2) sb2.onclick = () => { rdSel.on ? stopRdSelect() : startRdSelect(); renderReadiness(); };
+  renderRdList();
+}
+function visibleRd() {
+  const R = state.rd, q = R.search.toLowerCase();
+  return rdRows().filter(x => (!R.status || x.r.status === R.status) && (!R.belt || x.s.belt_rank === R.belt) &&
+    (!q || x.s.full_name.toLowerCase().includes(q) || x.s.student_id.toLowerCase().includes(q)));
+}
+function renderRdList() {
+  const list = visibleRd(), sess = cycleSessions(state.rd.cycle).length;
+  $('#rdList').innerHTML = list.length ? list.map(({ s, r, sum }) => `<li><button class="item" data-rd="${esc(s.student_id)}">
+      ${rdSel.on ? `<input type="checkbox" tabindex="-1" ${rdSel.ids.has(s.student_id) ? 'checked' : ''} style="pointer-events:none" aria-label="Select ${esc(s.full_name)}">` : ''}
+      <div class="main"><div class="name">${esc(s.full_name)}</div>
+        <div class="meta">${esc([s.belt_rank, `${sum.attended ?? 0}/${sess} attended`, sum.signoff_status === 'present' ? 'signed off' : ''].filter(Boolean).join(' · '))}</div>
+        ${r.reason || r.next_action ? `<div class="meta">${esc([r.reason ? RD_REASONS[r.reason] : '', r.next_action].filter(Boolean).join(' · '))}</div>` : ''}</div>
+      ${tag(r.status)}</button></li>`).join('')
+    : `<li><div class="empty">${rdRows().length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
+  $$('#rdList [data-rd]').forEach(b => b.onclick = () => {
+    const id = b.dataset.rd;
+    if (rdSel.on) { rdSel.ids.has(id) ? rdSel.ids.delete(id) : rdSel.ids.add(id); renderRdList(); return; }
+    openReadiness(state.rd.cycle, id);
+  });
+  updateRdSelbar();
+}
+function startRdSelect() { rdSel.on = true; rdSel.ids.clear(); document.body.classList.add('selecting'); $('#rdSelbar').hidden = false; }
+function stopRdSelect() { rdSel.on = false; rdSel.ids.clear(); const b = $('#rdSelbar'); if (b) b.hidden = true; if (!state.att.selecting && !stuSel.on) document.body.classList.remove('selecting'); }
+function updateRdSelbar() { $('#rdSelCount').textContent = `${rdSel.ids.size} selected`; $('#rdSetBtn').disabled = !rdSel.ids.size; }
+
+// Edit one student's readiness, or several at once (ids.length > 1)
+async function openReadiness(cid, ids) {
+  ids = [].concat(ids);
+  const many = ids.length > 1, s = student(ids[0]), r = readinessFor(cid, ids[0]), c = cycle(cid), edit = canReadiness();
+  const cur = many ? null : r;
+  let hist = [];
+  if (!many) { const { data } = await sb.from('prep_readiness_history').select('*').eq('readiness_id', r.readiness_id).order('changed_at', { ascending: false }); hist = data || []; }
+  const sum = many ? null : summaryFor(cid, ids[0]) || {};
+  openSheet(`<form id="rdForm">
+    ${sheetHead(many ? `Readiness for ${ids.length} students` : s.full_name, many ? esc(c.name) : `${esc(c.name)} · ${esc(s.belt_rank || 'No belt')} · ${sum.attended ?? 0}/${cycleSessions(cid).length} attended${sum.signoff_status ? ' · sign-off ' + label(sum.signoff_status).toLowerCase() : ''}`)}
+    <div class="field"><span class="label">Readiness</span>
+      ${RD_STATUSES.map(st => `<label class="check"><input type="radio" name="rdStatus" value="${st}" ${(cur ? cur.status : '') === st ? 'checked' : ''} ${edit ? '' : 'disabled'}> ${label(st)}</label>`).join('')}</div>
+    <div class="field" id="rdReasonField"><label for="rdReason">Reason</label><select id="rdReason" ${edit ? '' : 'disabled'}><option value="">Choose a reason</option>${Object.entries(RD_REASONS).map(([k, t]) => `<option value="${k}"${cur && cur.reason === k ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div class="field"><label for="rdNotes">Instructor notes</label><textarea id="rdNotes" rows="3" ${edit ? '' : 'disabled'}>${esc(cur ? cur.notes || '' : '')}</textarea></div>
+    <div class="field"><label for="rdNext">Recommended next action</label><input type="text" id="rdNext" value="${esc(cur ? cur.next_action || '' : '')}" placeholder="e.g. Extra class on poomsae" ${edit ? '' : 'disabled'}></div>
+    ${many ? '<p class="hint">Notes and next action replace what each student has now. Leave them blank to keep theirs.</p>' : ''}
+    ${!many && cur.reviewed_at ? `<p class="hint">Last reviewed ${fmtTime(cur.reviewed_at)} by ${esc(cur.reviewed_by || 'unknown')}</p>` : ''}
+    ${hist.length > 1 ? `<div class="section"><h3>History</h3><table class="grid">${hist.map(h => `<tr><td>${tag(h.status)}${h.reason ? ` <span class="small muted">${esc(RD_REASONS[h.reason] || h.reason)}</span>` : ''}${h.notes ? `<div class="small">${esc(h.notes)}</div>` : ''}<div class="small muted">${fmtTime(h.changed_at)}${h.changed_by ? ' · ' + esc(h.changed_by) : ''}</div></td></tr>`).join('')}</table></div>` : ''}
+    ${edit ? `<div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="rdSave">Save</button></div>` : ''}
+  </form>`);
+  const showReason = () => { const st = (sheet.querySelector('[name=rdStatus]:checked') || {}).value; $('#rdReasonField').hidden = !needsReason(st) && !$('#rdReason').value; };
+  sheet.querySelectorAll('[name=rdStatus]').forEach(r => r.onchange = showReason); showReason();
+  if (!edit) return;
+  $('#rdForm').onsubmit = async e => {
+    e.preventDefault();
+    const st = (sheet.querySelector('[name=rdStatus]:checked') || {}).value;
+    if (!st) return toast('Choose a readiness status.');
+    const reason = $('#rdReason').value || null;
+    if (needsReason(st) && !reason) return toast('Choose a reason when flagging a student as needing preparation or not ready.', 6000);
+    const notes = $('#rdNotes').value.trim(), next = $('#rdNext').value.trim();
+    const upd = { status: st, reason: needsReason(st) || reason ? reason : null };
+    if (!many || notes) upd.notes = notes || null;
+    if (!many || next) upd.next_action = next || null;
+    if (many && !await ask(`Set ${ids.length} students to "${label(st)}"?`, 'Set readiness')) return;
+    $('#rdSave').disabled = true;
+    try {
+      await run(sb.from('prep_readiness').update(upd).eq('cycle_id', cid).in('student_id', ids), many ? `${ids.length} updated` : 'Readiness saved');
+      sheet.close(); stopRdSelect(); await loadAll(); render();
+    } catch (err) { $('#rdSave').disabled = false; toast(errMsg(err), 6000); }
+  };
+}
+
+/* =========================================================================
+   Payments (admins and the payments role)
+   ========================================================================= */
+state.pay = { cycle: null, kind: '', filter: 'owing', search: '' };
+const OWING = ['due', 'partially_paid', 'overdue'];
+const METHODS = { cash: 'Cash', bank_transfer: 'Bank transfer', card_in_person: 'Card', online: 'Online', other: 'Other' };
+const feeLabel = (p, c) => p.kind === 'grading' ? `Grading to ${p.target_rank}`
+  : p.fee_override != null ? 'Session fees · one-off fee' : p.payment_plan === 'per_session' ? `Sessions · ${money(c.per_session_fee)} per session` : `Sessions · ${money(c.upfront_fee)} upfront`;
+
+function payRows() {
+  const P = state.pay;
+  return state.payments.filter(p => p.cycle_id === P.cycle && (!P.kind || (p.kind || 'sessions') === P.kind))
+    .map(p => ({ p, s: student(p.student_id) })).filter(x => x.s).sort((a, b) => a.s.full_name.localeCompare(b.s.full_name));
+}
+function renderPayments() {
+  const v = $('#view-payments'), P = state.pay;
+  if (!has('payments')) { v.innerHTML = `${backToMore()}<div class="card empty">Only admins and the payments role can see payments.</div>`; wireBack(); return; }
+  if (!P.cycle || !cycle(P.cycle)) P.cycle = (currentCycle() || state.cycles[0] || {}).cycle_id;
+  if (!state.cycles.length) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Payments</h2></div><div class="card empty">No preparation cycles yet.</div>`; wireBack(); return; }
+  const rows = payRows(), c = cycle(P.cycle);
+  const owing = rows.filter(x => OWING.includes(x.p.status)), total = owing.reduce((t, x) => t + Number(x.p.balance), 0);
+  const paidIn = rows.reduce((t, x) => t + Number(x.p.amount_paid), 0);
+  const cnt = st => rows.filter(x => x.p.status === st).length;
+  const F = { owing: x => OWING.includes(x.p.status), overdue: x => x.p.status === 'overdue', partially_paid: x => x.p.status === 'partially_paid',
+    paid: x => x.p.status === 'paid', other: x => !OWING.includes(x.p.status) && x.p.status !== 'paid', all: () => true };
+  const keepFocus = document.activeElement && document.activeElement.id === 'paySearch';
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Payments</h2></div>
+    <div class="field"><label for="payCycle">Preparation cycle</label><select id="payCycle">${state.cycles.map(x => `<option value="${x.cycle_id}"${x.cycle_id === P.cycle ? ' selected' : ''}>${esc(x.name)}${x.status === 'active' ? ' (active)' : ` (${label(x.status).toLowerCase()})`}</option>`).join('')}</select></div>
+    <div class="seg" role="group" aria-label="Fee"><button data-kind="" aria-pressed="${!P.kind}">All fees</button><button data-kind="sessions" aria-pressed="${P.kind === 'sessions'}">Session fees</button><button data-kind="grading" aria-pressed="${P.kind === 'grading'}">Grading fees</button></div>
+    <div class="stats">
+      <div class="stat ${total ? 'warn' : ''}"><span class="n">${money(total)}</span><span class="l">Outstanding (${owing.length})</span></div>
+      <div class="stat"><span class="n">${money(paidIn)}</span><span class="l">Received</span></div>
+      <div class="stat ${cnt('overdue') ? 'bad' : ''}"><span class="n">${cnt('overdue')}</span><span class="l">Overdue</span></div>
+    </div>
+    <div class="seg" role="group" aria-label="Show">
+      ${[['owing', 'Owing', owing.length], ['overdue', 'Overdue', cnt('overdue')], ['partially_paid', 'Part paid', cnt('partially_paid')], ['paid', 'Paid', cnt('paid')], ['other', 'Other', rows.filter(F.other).length], ['all', 'All', rows.length]]
+        .map(([k, t, n]) => `<button data-pf="${k}" aria-pressed="${P.filter === k}">${t}<small>${n}</small></button>`).join('')}
+    </div>
+    <input type="search" id="paySearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(P.search)}">
+    <ul class="list" id="payList"></ul>
+    <p class="hint">"Other" covers waived fees, refunds, and per-session or grading fees with nothing owing yet. This is a register of payments made outside the app; no card or bank details are stored.</p>`;
+  wireBack();
+  $('#payCycle').onchange = e => { P.cycle = e.target.value; renderPayments(); };
+  $$('#view-payments [data-kind]').forEach(b => b.onclick = () => { P.kind = b.dataset.kind; renderPayments(); });
+  $$('#view-payments [data-pf]').forEach(b => b.onclick = () => { P.filter = b.dataset.pf; renderPayments(); });
+  const sr = $('#paySearch'); sr.oninput = () => { P.search = sr.value; list(); };
+  if (keepFocus) { sr.focus(); sr.setSelectionRange(sr.value.length, sr.value.length); }
+  const list = () => {
+    const q = P.search.toLowerCase(), shown = rows.filter(F[P.filter]).filter(x => !q || x.s.full_name.toLowerCase().includes(q) || x.s.student_id.toLowerCase().includes(q));
+    $('#payList').innerHTML = shown.length ? shown.map(({ p, s }) => `<li><button class="item" data-pid="${p.payment_id}">
+        <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc(feeLabel(p, c))} · ${money(p.amount_paid)} of ${money(p.amount_due)}${p.due_date && OWING.includes(p.status) ? ' · due ' + fmtShort(p.due_date) : ''}</div></div>
+        <div style="text-align:right">${Number(p.balance) > 0 ? `<div><b>${money(p.balance)}</b></div>` : ''}${tag(p.status, p.status === 'not_invoiced' && Number(p.amount_due) === 0 ? 'Nothing owed yet' : '')}</div></button></li>`).join('')
+      : `<li><div class="empty">${rows.length ? 'Nothing here.' : 'No fees in this cycle.'}</div></li>`;
+    $$('#payList [data-pid]').forEach(b => b.onclick = () => openPayment(b.dataset.pid));
+  };
+  list();
+}
+
+async function openPayment(pid) {
+  const p = state.payments.find(x => x.payment_id === pid); if (!p) return;
+  const s = student(p.student_id), c = cycle(p.cycle_id);
+  const { data: txs } = await sb.from('prep_payment_transactions').select('*').eq('payment_id', pid).order('created_at', { ascending: false });
+  const TYPE = { payment: 'Payment', refund: 'Refund', correction: 'Correction' };
+  openSheet(`<div class="body">
+    ${sheetHead(s.full_name, `${esc(c.name)} · ${esc(feeLabel(p, c))}`)}
+    <dl class="kv">
+      <dt>Status</dt><dd>${tag(p.status)}${p.status_overridden ? ` <span class="small muted">set by hand: ${esc(p.override_reason || '')}</span>` : ''}</dd>
+      <dt>Owed</dt><dd>${money(p.amount_due)}${p.kind !== 'grading' && p.payment_plan === 'per_session' && p.fee_override == null ? ` <span class="small muted">${(summaryFor(c.cycle_id, s.student_id) || {}).attended ?? 0} sessions present × ${money(c.per_session_fee)}</span>` : ''}${p.fee_override != null ? ' <span class="small muted">one-off fee</span>' : ''}</dd>
+      <dt>Paid</dt><dd>${money(p.amount_paid)}</dd>
+      <dt>Balance</dt><dd><b>${money(p.balance)}</b></dd>
+      ${p.due_date ? `<dt>Due</dt><dd>${fmt(p.due_date)}</dd>` : ''}
+      ${p.notes ? `<dt>Notes</dt><dd>${esc(p.notes)}</dd>` : ''}
+    </dl>
+    <div class="row"><button class="btn primary" data-act="payment">Record payment</button><button class="btn" data-act="refund">Refund</button><button class="btn" data-act="correction">Correction</button></div>
+    <div class="row">
+      ${p.kind !== 'grading' ? `<button class="btn" data-act="plan">${p.payment_plan === 'per_session' ? 'Switch to upfront' : 'Switch to per session'}</button>` : ''}
+      <button class="btn" data-act="oneoff">${p.fee_override != null ? 'Change one-off fee' : 'One-off fee'}</button>
+      <button class="btn" data-act="status">${p.status_overridden ? 'Change status' : 'Waive or set status'}</button>
+    </div>
+    <div class="section"><h3>Transactions</h3>
+      ${(txs || []).length ? `<table class="grid">${txs.map(t => `<tr><td>${TYPE[t.type]}${t.method ? ` · ${METHODS[t.method] || t.method}` : ''}${t.reference ? ` · ${esc(t.reference)}` : ''}
+        <div class="small muted">${fmt(t.paid_on)} · ${esc(t.recorded_by || '')}${t.notes ? ' · ' + esc(t.notes) : ''}</div></td>
+        <td class="num" style="white-space:nowrap"><b>${t.type === 'refund' || t.amount < 0 ? '−' : ''}${money(Math.abs(t.amount))}</b></td></tr>`).join('')}</table>`
+        : '<p class="hint">No transactions yet.</p>'}
+      <p class="hint">Transactions can't be edited or deleted. Fix a mistake with a correction.</p></div>
+  </div>`);
+  const done = async msg => { toast(msg); await loadAll(); render(); openPayment(pid); };
+  const fail = e => toast(/duplicate/i.test(errMsg(e)) ? 'That receipt number has already been used for this fee.' : errMsg(e), 7000);
+  sheet.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+    const act = b.dataset.act;
+    if (act === 'plan') return (async () => {
+      const to = p.payment_plan === 'per_session' ? 'upfront' : 'per_session';
+      if (!await ask(`Switch ${s.full_name} to ${to === 'upfront' ? `upfront (${money(c.upfront_fee)})` : `per session (${money(c.per_session_fee)} each session present)`}? Payments already recorded count towards it.`, 'Switch')) return;
+      try { await run(sb.from('prep_payments').update({ payment_plan: to }).eq('payment_id', pid)); done('Fee option changed'); } catch (e) { fail(e); }
+    })();
+    if (act === 'status') return openSheet(`<form id="stF">${sheetHead('Set status by hand', `${esc(s.full_name)} · ${esc(feeLabel(p, c))}`)}
+        <p class="hint">Normally the status is worked out from what is owed and paid. Set it by hand only for things like an approved waiver or a refund being arranged.</p>
+        <div class="field"><label for="stSel">Status</label><select id="stSel">${['waived', 'refund_pending', 'refunded', 'paid', 'due', 'overdue', 'not_invoiced'].map(x => `<option value="${x}"${p.status === x ? ' selected' : ''}>${label(x)}</option>`).join('')}</select></div>
+        <div class="field"><label for="stWhy">Reason</label><input type="text" id="stWhy" required value="${esc(p.override_reason || '')}" placeholder="e.g. Fee waived by committee"></div>
+        <div class="dlg-actions">${p.status_overridden ? '<button type="button" class="btn" id="stClear">Go back to automatic</button>' : ''}<button type="button" class="btn" id="stCancel">Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`, null) || (() => {
+        $('#stCancel').onclick = () => openPayment(pid);
+        const cl = $('#stClear'); if (cl) cl.onclick = async () => { try { await run(sb.from('prep_payments').update({ status_override: null, override_reason: null }).eq('payment_id', pid)); done('Status back to automatic'); } catch (e) { fail(e); } };
+        $('#stF').onsubmit = async e => { e.preventDefault(); try { await run(sb.from('prep_payments').update({ status_override: $('#stSel').value, override_reason: $('#stWhy').value.trim() }).eq('payment_id', pid)); done('Status set'); } catch (er) { fail(er); } };
+      })();
+    if (act === 'oneoff') return openSheet(`<form id="ooF">${sheetHead('One-off fee', `${esc(s.full_name)} · ${esc(feeLabel(p, c))}`)}
+        <p class="hint">Replaces the normal fee for this student only, e.g. a discount. Changing the cycle's fees won't affect it.</p>
+        <div class="field"><label for="ooAmt">Fee ($)</label><input type="number" id="ooAmt" min="0" step="0.01" required value="${p.fee_override != null ? Number(p.fee_override).toFixed(2) : ''}"></div>
+        <div class="field"><label for="ooWhy">Reason</label><input type="text" id="ooWhy" required value="${esc(p.notes || '')}" placeholder="e.g. Sibling discount"></div>
+        <div class="dlg-actions">${p.fee_override != null ? '<button type="button" class="btn" id="ooClear">Use normal fee</button>' : ''}<button type="button" class="btn" id="ooCancel">Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`, null) || (() => {
+        $('#ooCancel').onclick = () => openPayment(pid);
+        const cl = $('#ooClear'); if (cl) cl.onclick = async () => { try { await run(sb.from('prep_payments').update({ fee_override: null }).eq('payment_id', pid)); done('Back to the normal fee'); } catch (e) { fail(e); } };
+        $('#ooF').onsubmit = async e => { e.preventDefault(); try { await run(sb.from('prep_payments').update({ fee_override: Number($('#ooAmt').value), notes: $('#ooWhy').value.trim() }).eq('payment_id', pid)); done('One-off fee set'); } catch (er) { fail(er); } };
+      })();
+    // Payment, refund or correction
+    const T = { payment: ['Record payment', Math.max(Number(p.balance), 0)], refund: ['Refund', 0], correction: ['Correction', 0] }[act];
+    openSheet(`<form id="txF">${sheetHead(T[0], `${esc(s.full_name)} · ${esc(feeLabel(p, c))} · balance ${money(p.balance)}`)}
+      <div class="grid2">
+        <div class="field"><label for="txAmt">${act === 'correction' ? 'Amount ($, use minus to reduce)' : 'Amount ($)'}</label><input type="number" id="txAmt" step="0.01" required value="${T[1] ? T[1].toFixed(2) : ''}"></div>
+        <div class="field"><label for="txDate">Date</label><input type="date" id="txDate" required value="${today()}"></div>
+      </div>
+      ${act !== 'correction' ? `<div class="grid2"><div class="field"><label for="txMethod">Method</label><select id="txMethod">${Object.entries(METHODS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
+        <div class="field"><label for="txRef">Receipt or reference</label><input type="text" id="txRef" autocomplete="off"></div></div>` : ''}
+      <div class="field"><label for="txNotes">Notes${act === 'payment' ? ' (optional)' : ''}</label><input type="text" id="txNotes" ${act === 'payment' ? '' : 'required'} placeholder="${act === 'correction' ? 'What was wrong, e.g. entered twice' : act === 'refund' ? 'Why it was refunded' : ''}"></div>
+      <div class="dlg-actions"><button type="button" class="btn" id="txCancel">Cancel</button><button type="submit" class="btn primary" id="txGo">${T[0]}</button></div></form>`);
+    $('#txCancel').onclick = () => openPayment(pid);
+    $('#txF').onsubmit = async e => {
+      e.preventDefault();
+      const amt = Number($('#txAmt').value);
+      if (act !== 'correction' && !(amt > 0)) return toast('Enter an amount above $0.');
+      if (act === 'correction' && !amt) return toast('Enter a correction amount (not $0).');
+      $('#txGo').disabled = true;
+      try {
+        await run(sb.from('prep_payment_transactions').insert({ payment_id: pid, type: act, amount: amt, paid_on: $('#txDate').value,
+          method: act !== 'correction' ? $('#txMethod').value : null, reference: act !== 'correction' ? ($('#txRef').value.trim() || null) : null, notes: $('#txNotes').value.trim() || null }));
+        done(`${T[0]} recorded`);
+      } catch (er) { $('#txGo').disabled = false; fail(er); }
+    };
+  });
+}
+
+/* =========================================================================
    More: settings, users, audit log
    ========================================================================= */
 async function renderMore() {
   const v = $('#view-more'), S = state.settings, admin = has('admin');
   v.innerHTML = `<div class="view-head"><h2>More</h2></div>
+    <ul class="list">
+      <li><button class="item" data-goto="cycles"><div class="main"><div class="name">Preparation cycles</div><div class="meta">Start a cycle, session and grading dates, fees, who is grading</div></div><span class="muted">›</span></button></li>
+      ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
+    </ul>
     <div class="card"><div class="row"><div class="grow"><b>${esc(state.email)}</b><div class="small muted">${state.roles.map(r => ROLE_NAMES[r] || r).join(', ')}</div></div>
       <button class="btn danger" id="signOutBtn">Sign out</button></div></div>
     ${admin ? `<form class="card" id="setForm"><h3>Settings</h3>
@@ -1432,8 +1731,9 @@ async function renderMore() {
       <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
       <div id="userList" class="small muted">Loading...</div></div>
     <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
-    <p class="hint">Black Belt Prep · Stage 3 build</p>`;
+    <p class="hint">Black Belt Prep · Stage 4 build</p>`;
   $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+  $$('#view-more [data-goto]').forEach(b => b.onclick = () => showView(b.dataset.goto));
   if (!admin) return;
   $('#setForm').onsubmit = async e => {
     e.preventDefault();
@@ -1536,6 +1836,9 @@ async function start() {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleReload(); });
   }
 }
+$('#rdSelAll').onclick = () => { visibleRd().forEach(x => rdSel.ids.add(x.s.student_id)); renderRdList(); };
+$('#rdSelDone').onclick = () => { stopRdSelect(); renderReadiness(); };
+$('#rdSetBtn').onclick = () => openReadiness(state.rd.cycle, [...rdSel.ids]);
 sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') showOnly('#authView'); });
 start();
 </script>
