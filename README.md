@@ -1,6 +1,6 @@
 # Black Belt Preparation Management System
 
-A mobile-friendly system for managing Taekwondo black belt preparation cycles, built with Google AppSheet and Google Sheets. It covers the student register, four-session attendance, readiness, session payments, grading, certificates and ID card printing in one place.
+A mobile-friendly system for managing Taekwondo black belt preparation cycles, built on Supabase alongside the AMA ID Cards software, sharing its logins and database. It covers the student register, four-session attendance, readiness, session payments, grading, certificates and ID card printing in one place.
 
 ## Core principle
 
@@ -10,7 +10,9 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 
 The full build specification is in [docs/specification.md](docs/specification.md).
 
-Stage 1 findings on the existing ID card software: [docs/stage-1-id-card-integration.md](docs/stage-1-id-card-integration.md).
+Progress:
+- Stage 1, existing ID card software: [docs/stage-1-id-card-integration.md](docs/stage-1-id-card-integration.md)
+- Stage 2, database (and why it moved from AppSheet to Supabase): [docs/stage-2-database.md](docs/stage-2-database.md)
 
 | # | Section |
 |---|---|
