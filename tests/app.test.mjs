@@ -26,6 +26,7 @@ await db.exec(read(join(here, '../supabase/prep-setup.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-01.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-02.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-03.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-04.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -36,6 +37,7 @@ const server = await startServer({ db, appDir: join(here, '../docs'), users, con
 const BASE = `http://localhost:${server.address().port}`;
 const configJs = `window.PREP_CONFIG = { SUPABASE_URL: '${BASE}', SUPABASE_ANON_KEY: 'test-anon-key' };`;
 const q = server.q;
+const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 // ---------- Browser ----------
 const browser = await chromium.launch();
@@ -94,6 +96,7 @@ try {
   await shot(page, 'add-student');
   await page.click('#fSave');
   ok((await toastText(page)).includes('as BB0001'), 'student added and given Student ID BB0001');
+  await page.waitForSelector('#sheet #stEdit');
   await page.click('#sheet [data-close]');
   await page.click('#addStudentBtn');
   await page.fill('#fName', 'ALEX  smith'); await page.click('#fSave');
@@ -126,7 +129,14 @@ try {
   ok(belts['Jordan Lee'] === 'Cho Dan Bo' && belts['Taylor Brown'] === '3rd Dan Level 2', 'imported belts matched to the list ("cho dan bo", "3rd dan lvl 2")');
   const opts = await page.$$eval('#studentBelt option', os => os.map(o => o.textContent));
   ok(opts.slice(1, 4).join('|') === 'Cho Dan Bo|Probationary Black Belt|1st Dan Black Belt' && opts[opts.length - 1] === '5th Dan' && opts.length === 18, 'belt list is in grading order, Cho Dan Bo to 5th Dan');
-  await page.click('#addStudentBtn'); await page.fill('#fName', 'Test Student'); await page.check('#fTest'); await page.click('#fSave'); await settle(page); await page.click('#sheet [data-close]');
+  // The way the club's list is written: tab-separated, belts in words
+  await page.click('#importStudentsBtn');
+  await page.fill('#impText', 'Name\tBelt\nIvy Abbatantuono\tFirst Dan\nDali Connelly\tThird Dan Level 1\nPersia Dowling\tThird Dan Level 2\nMichael Esen\tThird Dan\nBillie-Rose Barton-Hall\tFirst Dan');
+  await page.waitForSelector('#impPreview table');
+  const wp = await page.textContent('#impPreview');
+  ok(wp.includes('5 to add') && !wp.includes('not in the list'), 'belts written in words ("First Dan", "Third Dan Level 1") are recognised');
+  await page.click('#sheet [data-close]');
+  await page.click('#addStudentBtn'); await page.fill('#fName', 'Test Student'); await page.check('#fTest'); await page.click('#fSave'); await page.waitForSelector('#sheet #stEdit'); await page.click('#sheet [data-close]');
   ok((await page.textContent('#studentList')).includes('Test Student') === false, 'test records hidden from the list by default');
   await page.check('#studentShowTest');
   ok((await page.textContent('#studentList')).includes('Test Student'), '"Show test records" reveals them');
@@ -324,6 +334,34 @@ try {
   await ctx.close();
 
   // ------------------------------------------------------------------
+  console.log('\nGrading fees');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'more'); await page.waitForSelector('#setForm');
+    ok((await page.$$('#setForm [data-gfee]')).length === 16, 'Settings has a grading fee for each belt (16)');
+    await page.fill('[data-gfee="Probationary Black Belt"]', '150'); await page.fill('[data-gfee="1st Dan Level 1"]', '90');
+    await page.click('#setForm button[type=submit]'); await settle(page);
+    ok((await q(`select fee::text f from prep_grading_fee_rates where target_rank = 'Probationary Black Belt'`))[0]?.f === '150.00', 'grading fee saved for Probationary Black Belt');
+    await tab(page, 'cycles'); await page.click('[data-cycle]:has-text("Term 1 2027")');
+    ok((await page.textContent('#sheet')).includes('Tick the students who are grading'), 'cycle explains how to choose who is grading');
+    await page.check('[data-grading="BB0001"]'); await settle(page);
+    const gf = (await q(`select p.amount_due::text a, p.due_date::text d, p.target_rank, c.grading_date::text g from prep_payments p join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and p.student_id = 'BB0001' and p.kind = 'grading'`))[0];
+    ok(gf && gf.a === '150.00' && gf.target_rank === 'Probationary Black Belt', 'ticking a Cho Dan Bo student charges the Probationary grading fee ($150)');
+    ok(gf && gf.d === addDaysIso(gf.g, -21), 'grading fee due 3 weeks before the grading date');
+    ok((await page.textContent('#sheet')).includes('Grading to Probationary Black Belt'), 'cycle list shows who is grading and to which belt');
+    await page.click('#sheet [data-close]');
+    await tab(page, 'students'); await page.click('[data-student="BB0001"]');
+    const rec = await page.textContent('#sheet');
+    ok(rec.includes('Yes, to Probationary Black Belt') && rec.includes('Grading fee'), 'student record shows grading and the grading fee');
+    await page.click('#sheet [data-gpay]'); await page.selectOption('#gpMethod', 'bank_transfer'); await page.click('#gpGo'); await settle(page);
+    ok((await q(`select s.status from prep_payment_summary s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.student_id = 'BB0001' and s.kind = 'grading'`))[0].status === 'paid', 'grading fee payment recorded; fee shows as paid');
+    await shot(page, 'grading-fee');
+    await page.click('#sheet [data-close]');
+    await tab(page, 'dashboard');
+    ok((await page.textContent('#view-dashboard')).includes('Grading'), 'dashboard shows how many are grading');
+    await ctx.close();
+  }
+
   console.log('\nOther roles');
   {
     const { ctx, page } = await open('att@ama.test');
@@ -345,7 +383,7 @@ try {
     await ctx.close();
   }
 } catch (e) {
-  failed++; console.log('  FAIL  stopped: ' + e.message.split('\n')[0]);
+  failed++; console.log('  FAIL  stopped: ' + e.message.split('\n').slice(0, 4).join(' / '));
 }
 
 ok(consoleErrors.length === 0, 'no errors in the browser console' + (consoleErrors.length ? ': ' + consoleErrors.slice(0, 3).join(' | ') : ''));

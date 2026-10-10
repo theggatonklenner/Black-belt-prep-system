@@ -29,6 +29,14 @@ Run `supabase/prep-update-02.sql` once (after update 01). Dan numbers now run se
 
 Run `supabase/prep-update-03.sql` once (after update 02). Per session ($60, paid at each session) becomes the normal fee option; $200 upfront is the exception, switched on the student's record. Whoever takes attendance can tap **$** next to a per-session student who is present to record that session's payment (cash), and tap again to undo it (kept as a correction). They see only paid or not paid, never balances.
 
+## Database update 04
+
+Run `supabase/prep-update-04.sql` once (after update 03). Grading fees are separate from session fees:
+- Set the fee for grading to each belt under More > Settings > Grading fees.
+- On a cycle, tick the students who are grading. Each is charged the fee for their next belt, due 3 weeks before the cycle's grading date (it moves if the grading date moves).
+- Unticking removes the fee, unless a payment has been recorded.
+- The student record shows whether they're grading, to which belt, and (for admins and the payments role) the fee, with a button to record a payment. The dashboard shows how many are grading and how many grading fees are owing.
+
 ## Giving people access
 
 People sign in with their AMA ID Cards login. Card software admins are already prep admins. To add someone else: **More > Users > Add user**, enter their email and tick their roles. If they don't have a login yet, create one in Supabase first (Authentication > Users).
@@ -45,7 +53,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Search by name or Student ID; filter by belt rank and active or inactive; test records hidden unless asked for
 - Students need only a name and belt rank (no birth date, email or phone)
 - Add and edit; Student IDs are created automatically (BB0001, BB0002 ...) and never change
-- Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan. Imports match "lvl", "level" and capitals to the list
+- Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan. Imports match belts however they are written: "First Dan", "Third Dan Level 1", "3rd dan lvl 2", "1st Dan"
 - Warning before adding a name that already exists, and a banner listing possible duplicates
 - Deactivate and reactivate without losing history
 - Import from CSV or pasted spreadsheet rows, with a preview that skips existing students, repeats and unknown belts; other columns are ignored
@@ -75,7 +83,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 86 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 96 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

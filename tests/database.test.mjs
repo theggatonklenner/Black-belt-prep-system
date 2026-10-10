@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -370,6 +370,40 @@ await fails(() => as('view@ama.test', () => db.query(`select prep_record_session
 ok((await as('view@ama.test', () => rows(`select * from prep_session_fees($1)`, [cP]))).length === 0, 'viewers see no payment information');
 const tx = await one(`select method, notes, session_id, recorded_by from prep_payment_transactions where student_id = 'S1' and type = 'payment' order by created_at desc limit 1`);
 ok(tx.method === 'cash' && tx.notes === 'Paid at session 1' && tx.session_id === sP[0] && tx.recorded_by === 'att@ama.test', 'session payment recorded as cash, linked to the session, with who took it');
+
+// ---------------------------------------------------------------------------
+console.log('\nGrading fees');
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('G1','Grade Probie','Cho Dan Bo'), ('G2','Grade Level','1st Dan Black Belt'), ('G3','Not Grading','Cho Dan Bo'), ('G4','No Belt', null)`));
+const cG = (await as(ADMIN, () => one(`select prep_start_new_cycle('Grading fee test', null, null, null, null, null, array['G1','G2','G3','G4']) id`))).id;
+await as(ADMIN, () => db.exec(`update prep_cycles set grading_date = '2026-12-20' where cycle_id = '${cG}';
+  insert into prep_grading_fee_rates (target_rank, fee) values ('Probationary Black Belt', 150), ('1st Dan Level 1', 90)`));
+const gfee = async id => one(`select * from prep_payment_summary where student_id = $1 and cycle_id = $2 and kind = 'grading'`, [id, cG]);
+ok(!(await gfee('G1')), 'nobody is charged a grading fee until they are marked as grading');
+await fails(() => as('att@ama.test', () => db.query(`select prep_set_grading($1, 'G1', true)`, [cG])), /permission/, 'only grading and admin roles choose who is grading');
+await as('grade@ama.test', () => db.exec(`select prep_set_grading('${cG}', 'G1', true); select prep_set_grading('${cG}', 'G2', true);`));
+let gf1 = await gfee('G1'), gf2 = await gfee('G2');
+ok(Number(gf1.amount_due) === 150 && gf1.target_rank === 'Probationary Black Belt', 'Cho Dan Bo grading to Probationary is charged the Probationary fee ($150)');
+ok(Number(gf2.amount_due) === 90 && gf2.target_rank === '1st Dan Level 1', 'level gradings have their own fee too (1st Dan Black Belt to 1st Dan Level 1, $90)');
+ok((await one(`select due_date::text d from prep_payments where student_id = 'G1' and cycle_id = $1 and kind = 'grading'`, [cG])).d === '2026-11-29', 'due date is exactly 21 days before 20 Dec (29 Nov)');
+ok(!(await gfee('G3')), 'students not grading are not charged');
+const sessFee = await one(`select * from prep_payment_summary where student_id = 'G1' and cycle_id = $1 and kind = 'sessions'`, [cG]);
+ok(sessFee && sessFee.payment_plan === 'per_session', 'session fees stay separate from the grading fee');
+await as(ADMIN, () => db.exec(`update prep_cycles set grading_date = '2027-01-10' where cycle_id = '${cG}'`));
+ok((await one(`select due_date::text d from prep_payments where student_id = 'G1' and cycle_id = $1 and kind = 'grading'`, [cG])).d === '2026-12-20', 'moving the grading date moves the fee due date');
+await as(ADMIN, () => db.exec(`update prep_grading_fee_rates set fee = 160 where target_rank = 'Probationary Black Belt'`));
+ok(Number((await gfee('G1')).amount_due) === 160, 'changing a grading fee updates students charged it');
+await fails(() => as('grade@ama.test', () => db.query(`select prep_set_grading($1, 'G4', true)`, [cG])), /no next belt/, 'a student with no belt cannot be put forward until their belt is set');
+await as('pay@ama.test', async () => { const pid = (await one(`select payment_id from prep_payments where student_id = 'G1' and cycle_id = $1 and kind = 'grading'`, [cG])).payment_id;
+  await db.query(`insert into prep_payment_transactions (payment_id, type, amount, method) values ($1, 'payment', 160, 'bank_transfer')`, [pid]); });
+ok((await gfee('G1')).status === 'paid', 'grading fee paid in full');
+await fails(() => as('grade@ama.test', () => db.query(`select prep_set_grading($1, 'G1', false)`, [cG])), /payment recorded/, 'cannot take someone off grading once they have paid (refund first)');
+await as('grade@ama.test', () => db.query(`select prep_set_grading($1, 'G2', false)`, [cG]));
+ok(!(await gfee('G2')) && (await one(`select is_grading from prep_enrolments where student_id = 'G2' and cycle_id = $1`, [cG])).is_grading === false, 'taking an unpaid student off grading removes their grading fee');
+const ovG = await as('view@ama.test', () => one(`select * from prep_overview where student_id = 'G1' and cycle_id = $1`, [cG]));
+ok(ovG.is_grading === true && ovG.grading_to === 'Probationary Black Belt' && ovG.grading_fee_status === null, 'overview shows who is grading; fee hidden from non-payment users');
+ok((await as(ADMIN, () => rows(`select * from prep_overview where cycle_id = $1`, [cG]))).length === 4, 'overview still has one row per student');
+await as('view@ama.test', () => db.exec(`insert into prep_grading_fee_rates (target_rank, fee) values ('5th Dan', 1)`).catch(() => {}));
+ok(!(await one(`select * from prep_grading_fee_rates where target_rank = '5th Dan'`)), 'only admins set grading fees');
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);

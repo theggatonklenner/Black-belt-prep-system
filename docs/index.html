@@ -368,7 +368,12 @@ const BELTS = ['Cho Dan Bo', 'Probationary Black Belt', '1st Dan Black Belt', '1
   '3rd Dan', '3rd Dan Level 1', '3rd Dan Level 2', '3rd Dan Level 3',
   '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4', '5th Dan'];
 // Matches how people type them: "3rd dan lvl 2", "1st Dan", "probationary"
-const beltKey = b => String(b || '').toLowerCase().replace(/\blvl\b/g, 'level').replace(/black\s*belt/g, '').replace(/[^a-z0-9]/g, '');
+const ORDINAL = { first: '1st', second: '2nd', third: '3rd', fourth: '4th', fifth: '5th', one: '1st', two: '2nd', three: '3rd', four: '4th', five: '5th',
+  '1': '1st', '2': '2nd', '3': '3rd', '4': '4th', '5': '5th' };
+// Matches how people write belts: "3rd dan lvl 2", "Third Dan Level 1", "First Dan", "1 dan", "1st Dan Black Belt", "probationary"
+const beltKey = b => String(b || '').toLowerCase().replace(/\blvl\b|\blv\b/g, 'level').replace(/black\s*belt/g, '')
+  .replace(/\b(first|second|third|fourth|fifth|one|two|three|four|five|[1-5])(?:st|nd|rd|th)?\s*dan\b/g, (m, n) => ORDINAL[n] + ' dan')
+  .replace(/[^a-z0-9]/g, '');
 // Students on these belts are going for Probationary Black Belt or a Dan, and get a Dan number
 const DAN_TARGET = { 'Cho Dan Bo': 'Probationary Black Belt', 'Probationary Black Belt': '1st Dan Black Belt', '1st Dan Level 1': '2nd Dan',
   '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan' };
@@ -381,6 +386,11 @@ const DAN_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '
 const nextDan = rank => (state.danCounters.find(c => c.target_rank === rank) || {}).next_number ?? null;
 const feeInfo = (cid, sid) => state.sessionFees.find(f => f.cycle_id === cid && f.student_id === sid) || null;
 const paidAt = (cid, sid, sessionId) => { const f = feeInfo(cid, sid); return !!f && (f.paid_sessions || []).includes(sessionId); };
+const nextBelt = b => { const i = BELTS.indexOf(b); return i >= 0 && i < BELTS.length - 1 ? BELTS[i + 1] : null; };
+const gradingRate = rank => { const r = state.gradingRates.find(x => x.target_rank === rank); return r ? Number(r.fee) : null; };
+const enrolment = (cid, sid) => state.enrolments.find(e => e.cycle_id === cid && e.student_id === sid) || {};
+const sessionPay = (cid, sid) => state.payments.find(x => x.cycle_id === cid && x.student_id === sid && (x.kind || 'sessions') === 'sessions');
+const gradingPay = (cid, sid) => state.payments.find(x => x.cycle_id === cid && x.student_id === sid && x.kind === 'grading');
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
@@ -450,7 +460,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, payments: [], sessionFees: [], danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -486,6 +496,10 @@ async function loadAll() {
   const counters = await sb.from('prep_dan_counters').select('*');
   state.countersReady = !counters.error;
   state.danCounters = counters.data || [];
+  // Grading fees per belt; needs supabase/prep-update-04.sql
+  const rates = await sb.from('prep_grading_fee_rates').select('*');
+  state.gradingReady = !rates.error;
+  state.gradingRates = rates.data || [];
   // Who pays per session and which sessions they've paid at (no amounts); needs supabase/prep-update-03.sql
   const fees = canEditAttendance() ? await sb.rpc('prep_session_fees', { p_cycle: null }) : { data: [] };
   state.sessionFees = fees.error ? [] : (fees.data || []);
@@ -554,7 +568,11 @@ function renderDashboard() {
   const lastS = sess[sess.length - 1];
   const missedSignoff = rows.filter(r => r.sum.signoff_status === 'absent' || r.sum.signoff_status === 'excused');
   const next = sess.find(s => s.session_date && s.session_date >= today());
+  const grading = rows.filter(r => enrolment(c.cycle_id, r.s.student_id).is_grading);
+  const gFees = has('payments') ? state.payments.filter(p => p.kind === 'grading' && p.cycle_id === c.cycle_id) : [];
+  const gOwing = gFees.filter(p => Number(p.balance) > 0), gOverdue = gFees.filter(p => p.status === 'overdue');
   const attention = [
+    ...gOverdue.map(p => ({ r: rows.find(r => r.s.student_id === p.student_id), issue: `Grading fee overdue (${money(p.balance)})`, tone: 'bad' })).filter(a => a.r),
     ...missedSignoff.map(r => ({ r, issue: `Missed the sign-off (${label(r.sum.signoff_status).toLowerCase()})`, tone: 'bad' })),
     ...incomplete.map(r => ({ r, issue: `${r.missing} past session${r.missing > 1 ? 's' : ''} not recorded`, tone: 'warn' })),
     ...withAbs.map(r => ({ r, issue: `${r.sum.absences} absence${r.sum.absences > 1 ? 's' : ''}`, tone: 'bad' }))
@@ -576,6 +594,8 @@ function renderDashboard() {
       <button class="stat ${incomplete.length ? 'warn' : ''}" data-go="attendance"><span class="n">${incomplete.length}</span><span class="l">Attendance not recorded</span></button>
       <button class="stat ${notMet.length ? 'warn' : ''}" data-go="attendance"><span class="n">${notMet.length}</span><span class="l">Below attendance requirement</span></button>
       ${lastS ? `<button class="stat ${missedSignoff.length ? 'bad' : ''}" data-go="attendance"><span class="n">${missedSignoff.length}</span><span class="l">Missed the sign-off</span></button>` : ''}
+      ${state.gradingReady ? `<button class="stat" data-go="cycles"><span class="n">${grading.length}</span><span class="l">Grading</span></button>` : ''}
+      ${has('payments') && gFees.length ? `<button class="stat ${gOverdue.length ? 'bad' : gOwing.length ? 'warn' : ''}" data-go="cycles"><span class="n">${gOwing.length}</span><span class="l">Grading fees owing${c.grading_date ? ` (due ${fmtShort(addDays(c.grading_date, -21))})` : ''}</span></button>` : ''}
     </div>
     <h3>Needs attention</h3>
     ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}">
@@ -631,12 +651,16 @@ function openStudent(id) {
       <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''} · sign-off: ${label(sum.signoff_status || 'not_recorded').toLowerCase()}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
       <dl class="kv">
         <dt>Readiness</dt><dd>${tag(ov.readiness)}</dd>
-        ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${ov.payment_status === 'not_invoiced' && Number(ov.amount_due) === 0 && state.payments.some(x => x.cycle_id === cy.cycle_id && x.student_id === id && x.payment_plan === 'per_session') ? tag('', 'Nothing owed yet') : tag(ov.payment_status)} <span class="small muted">${money(ov.amount_paid)} of ${money(ov.amount_due)}</span></dd>` : ''}
-        ${(() => { const p = state.payments.find(x => x.cycle_id === cy.cycle_id && x.student_id === id); if (!p || !p.payment_plan) return '';
+        ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${ov.payment_status === 'not_invoiced' && Number(ov.amount_due) === 0 && (sessionPay(cy.cycle_id, id) || {}).payment_plan === 'per_session' ? tag('', 'Nothing owed yet') : tag(ov.payment_status)} <span class="small muted">${money(ov.amount_paid)} of ${money(ov.amount_due)}</span></dd>` : ''}
+        ${(() => { const p = sessionPay(cy.cycle_id, id); if (!p || !p.payment_plan) return '';
           const how = p.fee_override != null ? `one-off fee ${money(p.fee_override)}` : p.payment_plan === 'per_session' ? `${sum.attended ?? 0} × ${money(cy.per_session_fee)}` : money(cy.upfront_fee);
           return `<dt>Fee option</dt><dd>${PLAN[p.payment_plan]} <span class="small muted">${how}</span>
             ${cy.status !== 'archived' ? `<select data-plan="${p.payment_id}" aria-label="Fee option" style="margin-top:6px;min-height:40px"><option value="upfront"${p.payment_plan === 'upfront' ? ' selected' : ''}>Upfront · ${money(cy.upfront_fee)}</option><option value="per_session"${p.payment_plan === 'per_session' ? ' selected' : ''}>Per session · ${money(cy.per_session_fee)}</option></select>` : ''}</dd>`; })()}
-        <dt>Grading</dt><dd>${ov.grading_status ? tag(ov.grading_status) : '—'}</dd>
+        ${state.gradingReady ? `<dt>Grading</dt><dd>${ov.is_grading ? `Yes, to <b>${esc(ov.grading_to || '—')}</b>` : '<span class="muted">Not grading</span>'}</dd>` : ''}
+        ${(() => { const g = gradingPay(cy.cycle_id, id); if (!g) return '';
+          return `<dt>Grading fee</dt><dd>${tag(g.status, g.status === 'not_invoiced' ? 'Fee not set' : '')} <span class="small muted">${money(g.amount_paid)} of ${money(g.amount_due)}${g.due_date ? ' · due ' + fmt(g.due_date) : ''}</span>
+            ${Number(g.balance) > 0 && cy.status !== 'archived' ? `<div><button class="btn sm" data-gpay="${g.payment_id}" style="margin-top:6px">Record grading fee payment</button></div>` : ''}</dd>`; })()}
+        ${ov.grading_status ? `<dt>Grading result</dt><dd>${tag(ov.grading_status)}</dd>` : ''}
         <dt>Certificate</dt><dd>${ov.certificate_status ? tag(ov.certificate_status) : '—'}</dd>
         <dt>ID card</dt><dd>${ov.id_card_status ? tag(ov.id_card_status) : '—'}</dd>
       </dl>`;
@@ -660,6 +684,7 @@ function openStudent(id) {
   </div>`);
   const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
   const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
+  sheet.querySelectorAll('[data-gpay]').forEach(b => b.onclick = () => openGradingPayment(state.payments.find(p => p.payment_id === b.dataset.gpay), s));
   sheet.querySelectorAll('[data-plan]').forEach(sel => sel.onchange = async () => {
     try { await run(sb.from('prep_payments').update({ payment_plan: sel.value }).eq('payment_id', sel.dataset.plan), `Fee option: ${PLAN[sel.value]}`); await loadAll(); render(); openStudent(id); }
     catch (e) { toast(errMsg(e), 6000); }
@@ -669,6 +694,25 @@ function openStudent(id) {
     if (s.is_active && !await ask(`Deactivate ${s.full_name}? Their records are kept and they can be reactivated at any time.`, 'Deactivate', true)) return;
     try { await run(sb.from('prep_students').update({ is_active: !s.is_active }).eq('student_id', s.student_id), s.is_active ? 'Deactivated' : 'Reactivated'); await loadAll(); render(); openStudent(id); }
     catch (e) { toast('Could not save: ' + errMsg(e), 6000); }
+  };
+}
+
+function openGradingPayment(g, s) {
+  openSheet(`<form id="gpForm">${sheetHead('Grading fee payment', `${esc(s.full_name)} · grading to ${esc(g.target_rank)}`)}
+    <p class="hint">${money(g.amount_paid)} paid of ${money(g.amount_due)}${g.due_date ? `, due ${fmt(g.due_date)}` : ''}.</p>
+    <div class="grid2">
+      <div class="field"><label for="gpAmt">Amount ($)</label><input type="number" id="gpAmt" min="0.01" step="0.01" required value="${Number(g.balance).toFixed(2)}"></div>
+      <div class="field"><label for="gpMethod">Method</label><select id="gpMethod"><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="card_in_person">Card</option><option value="online">Online</option><option value="other">Other</option></select></div>
+    </div>
+    <div class="field"><label for="gpRef">Receipt or reference (optional)</label><input type="text" id="gpRef" autocomplete="off"></div>
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="gpGo">Record payment</button></div></form>`);
+  $('#gpForm').onsubmit = async e => {
+    e.preventDefault(); $('#gpGo').disabled = true;
+    try {
+      await run(sb.from('prep_payment_transactions').insert({ payment_id: g.payment_id, type: 'payment', amount: Number($('#gpAmt').value), method: $('#gpMethod').value,
+        reference: $('#gpRef').value.trim() || null, notes: `Grading fee (${g.target_rank})` }), 'Grading fee payment recorded');
+      await loadAll(); render(); openStudent(s.student_id);
+    } catch (err) { $('#gpGo').disabled = false; toast(/duplicate/i.test(errMsg(err)) ? 'That receipt number has already been used for this fee.' : errMsg(err), 6000); }
   };
 }
 
@@ -903,6 +947,8 @@ function openCycle(id) {
   const people = [...ids].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
   const admin = has('admin');
   const missingDan = people.filter(s => danTarget(s) && !danFor(s));
+  const canGrade = state.gradingReady && has('grading') && c.status !== 'archived';
+  const gradingCount = people.filter(s => enrolment(id, s.student_id).is_grading).length;
   const canFill = missingDan.filter(s => nextDan(danTarget(s)) != null), noNext = [...new Set(missingDan.filter(s => nextDan(danTarget(s)) == null).map(danTarget))];
   openSheet(`<form id="cyForm">
     ${sheetHead(c.name, `${label(c.status)} · ${people.length} student${people.length === 1 ? '' : 's'} · ${cycleWhen(c)}`)}
@@ -927,14 +973,26 @@ function openCycle(id) {
     ${admin && state.danReady && missingDan.length ? `<div class="banner"><span>${missingDan.length} student${missingDan.length > 1 ? 's' : ''} going for a Dan without a Dan number</span><button type="button" class="btn sm" id="cyDan">Assign numbers</button></div>` : ''}
     <div class="section"><div class="row"><h3 class="grow">Students</h3>${admin && c.status !== 'archived' ? '<button type="button" class="btn sm" id="cyEnrol">Add students</button>' : ''}</div>
       ${people.length ? `<ul class="list">${people.map(s => { const sum = summaryFor(id, s.student_id) || {}; return `<li><div class="item" style="cursor:default">
-        <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, `${sum.attended ?? 0}/${sess.length} attended`, danMeta(s) || (danTarget(s) ? 'Dan no. missing' : '')].filter(Boolean).join(' · '))}</div></div>
+        ${canGrade ? `<input type="checkbox" data-grading="${esc(s.student_id)}" ${enrolment(id, s.student_id).is_grading ? 'checked' : ''} aria-label="${esc(s.full_name)} is grading" title="Grading">` : ''}
+        <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, `${sum.attended ?? 0}/${sess.length} attended`, danMeta(s) || (danTarget(s) ? 'Dan no. missing' : ''),
+          enrolment(id, s.student_id).is_grading ? `Grading to ${nextBelt(s.belt_rank) || '?'}` : ''].filter(Boolean).join(' · '))}</div></div>
         ${admin ? `<button type="button" class="btn sm ghost danger" data-unenrol="${esc(s.student_id)}">Remove</button>` : ''}</div></li>`; }).join('')}</ul>`
         : '<p class="hint">No students in this cycle.</p>'}
+      ${canGrade && people.length ? `<p class="hint">Tick the students who are grading (${gradingCount} so far). Each is charged the grading fee for their next belt${c.grading_date ? `, due ${fmt(addDays(c.grading_date, -21))} (3 weeks before grading)` : ', due 3 weeks before the grading date'}.</p>` : ''}
     </div>
     ${admin ? `<div class="dlg-actions"><button type="button" class="btn" data-close>Close</button><button type="submit" class="btn primary" id="cySave">Save changes</button></div>` : ''}
   </form>`);
-  if (!admin) return;
   const reopen = async msg => { if (msg) toast(msg); await loadAll(); render(); openCycle(id); };
+  sheet.querySelectorAll('[data-grading]').forEach(cb => cb.onchange = async () => {
+    const st = student(cb.dataset.grading), on = cb.checked;
+    if (on && !nextBelt(st.belt_rank)) { cb.checked = false; return toast(`Set ${st.full_name}'s belt rank first.`, 6000); }
+    try {
+      await run(sb.rpc('prep_set_grading', { p_cycle: id, p_student: st.student_id, p_grading: on }));
+      const fee = gradingRate(nextBelt(st.belt_rank));
+      reopen(on ? `${st.full_name} is grading to ${nextBelt(st.belt_rank)}${fee != null ? ` (fee ${money(fee)})` : ' (no fee set for that belt yet)'}` : `${st.full_name} is no longer grading`);
+    } catch (e) { cb.checked = !on; toast(errMsg(e), 7000); }
+  });
+  if (!admin) return;
   const fail = e => toast(errMsg(e), 7000);
   $('#cyForm').onsubmit = async e => {
     e.preventDefault();
@@ -1239,6 +1297,10 @@ async function renderMore() {
       </div>
       <div class="field"><label for="setPlan">Students start on</label><select id="setPlan"><option value="upfront"${S.default_payment_plan === 'upfront' ? ' selected' : ''}>Upfront</option><option value="per_session"${S.default_payment_plan === 'per_session' ? ' selected' : ''}>Per session</option></select></div>
       <p class="hint">These are used for new cycles. Each cycle's fees can be changed on the cycle.</p>` : ''}
+      ${state.gradingReady ? `<div class="section"><details${state.gradingRates.length ? '' : ' open'}><summary><b>Grading fees</b> <span class="muted small">${state.gradingRates.length} of ${BELTS.length - 1} set</span></summary>
+        <p class="hint" style="margin:8px 0">The fee for grading to each belt. Charged to students marked as grading in a cycle, due 3 weeks before the grading date. Leave blank if not used.</p>
+        <div class="grid2">${BELTS.slice(1).map((b, i) => `<div class="field"><label for="setGF${i}">${esc(b)}</label><input type="number" id="setGF${i}" data-gfee="${esc(b)}" min="0" step="0.01" placeholder="Not set" value="${gradingRate(b) != null ? gradingRate(b).toFixed(2) : ''}"></div>`).join('')}</div>
+      </details></div>` : ''}
       <div class="section"><h3>Next Dan numbers</h3>
       ${state.countersReady ? `<div class="grid2">${DAN_RANKS.map((r, i) => `<div class="field"><label for="setDan${i}">${esc(r.replace(' Black Belt', ''))}</label><input type="number" id="setDan${i}" data-rank="${esc(r)}" min="1" step="1" placeholder="Not set" value="${nextDan(r) ?? ''}"></div>`).join('')}</div>
       <p class="hint">Each rank has its own numbers. Students going for that rank get the next number when they join a cycle, then it goes up by one per person. Numbers are never reused, and someone repeating the same grading keeps theirs. Leave blank to stop numbering for that rank.</p>`
@@ -1269,6 +1331,13 @@ async function renderMore() {
         else if (cur == null) await run(sb.from('prep_dan_counters').insert({ target_rank: rank, next_number: want }));
         else await run(sb.from('prep_dan_counters').update({ next_number: want }).eq('target_rank', rank));
       }
+      for (const inp of $$('#setForm [data-gfee]')) {
+        const rank = inp.dataset.gfee, cur = gradingRate(rank), want = inp.value === '' ? null : Number(inp.value);
+        if (want === cur) continue;
+        if (want == null) await run(sb.from('prep_grading_fee_rates').delete().eq('target_rank', rank));
+        else if (cur == null) await run(sb.from('prep_grading_fee_rates').insert({ target_rank: rank, fee: want }));
+        else await run(sb.from('prep_grading_fee_rates').update({ fee: want }).eq('target_rank', rank));
+      }
       toast('Settings saved');
       await loadAll();
     } catch (err) { toast(errMsg(err), 6000); }
@@ -1284,7 +1353,7 @@ async function renderMore() {
     `<li><button class="item" data-user="${esc(em)}"><div class="main"><div class="name" style="font-weight:400;color:var(--fg)">${esc(em)}</div><div class="meta">${rs.map(r => ROLE_NAMES[r]).join(', ')}</div></div></button></li>`).join('')}</ul>` : 'No users.';
   $$('[data-user]').forEach(b => b.onclick = () => openUser(b.dataset.user, byEmail[b.dataset.user]));
   const TABLES = { prep_students: 'Student', prep_cycles: 'Cycle', prep_sessions: 'Session', prep_enrolments: 'Enrolment', prep_attendance: 'Attendance',
-    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
+    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_grading_fee_rates: 'Grading fee', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
   const desc = l => {
     const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
     let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;
