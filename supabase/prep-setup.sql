@@ -694,6 +694,7 @@ begin
     select cid, s.student_id from public.prep_students s
     where s.is_active and (case when coalesce(cardinality(p_student_ids), 0) = 0 then not s.is_test
                                 else s.student_id = any(p_student_ids) end)
+    order by s.full_name, s.student_id
     on conflict do nothing;
   return cid;
 end $$;

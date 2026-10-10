@@ -23,8 +23,9 @@ await db.exec(read(join(here, 'supabase-stub.sql')));
 await db.exec(`insert into auth.users (email) values ('owner@ama.test')`);
 for (const f of ['setup.sql', 'roles.sql', 'printed.sql']) await db.exec(read(join(CARD, 'supabase', f)));
 await db.exec(read(join(here, '../supabase/prep-setup.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-01.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
-  update prep_settings set default_session_fee = 120;`);
+  update prep_settings set default_session_fee = 120, next_dan_number = 501;`);
 
 const users = Object.fromEntries(['owner@ama.test', 'att@ama.test', 'view@ama.test', 'nobody@ama.test']
   .map((e, i) => [e, { id: `00000000-0000-0000-0000-00000000000${i + 1}`, password: 'pw' }]));
@@ -150,19 +151,27 @@ try {
   await tab(page, 'cycles');
   await page.click('#newCycleBtn');
   await page.fill('#ncName', 'Term 4 2026');
-  await page.fill('#ncStart', '2026-10-05'); await page.dispatchEvent('#ncStart', 'change');
-  ok(await page.inputValue('#ncS4') === '2026-10-26' && await page.inputValue('#ncEnd') === '2026-10-26', 'session dates filled in weekly from the start date');
+  ok(!(await page.$('#ncStart')) && !(await page.$('#ncEnd')), 'no cycle start or end date, only session dates');
+  ok((await page.textContent('label[for=ncS4]')).includes('Sign-off'), 'session 4 is labelled as the sign-off');
+  await page.fill('#ncS1', '2026-10-05'); await page.dispatchEvent('#ncS1', 'change');
+  ok(await page.inputValue('#ncS4') === '2026-10-26', 'sessions 2 to 4 filled in weekly from session 1');
+  await page.fill('#ncGrade', '2026-11-01');
   ok(await page.inputValue('#ncFee') === '120.00', 'fee defaults from settings');
   await shot(page, 'new-cycle');
   await page.click('#ncGo');
   const review = await confirm(page);
-  ok(review.includes('4 students enrolled') && review.includes('becomes the active cycle'), 'review step summarises the cycle before creating it');
+  ok(review.includes('4 students enrolled') && review.includes('becomes the active cycle') && review.includes('sign-off on') && review.includes('Grading on'), 'review step summarises the cycle, sign-off and grading date');
   await page.waitForSelector('#cyclePill:not([hidden])');
   ok((await page.textContent('#cyclePillText')) === 'Term 4 2026', 'new cycle is active and shown in the header');
   const c1 = (await q(`select cycle_id, status from prep_cycles where name = 'Term 4 2026'`))[0];
   ok(c1.status === 'active', 'cycle saved as active');
   ok((await q(`select count(*)::int n from prep_attendance where cycle_id = $1 and status = 'not_recorded'`, [c1.cycle_id]))[0].n === 16, 'fresh attendance created for 4 students x 4 sessions');
-  await page.click('#newCycleBtn'); await page.fill('#ncName', 'term 4 2026'); await page.fill('#ncStart', '2026-10-05'); await page.dispatchEvent('#ncStart', 'change');
+  const cyc = (await q(`select grading_date::text g, start_date::text s, end_date::text e from prep_cycles where cycle_id = $1`, [c1.cycle_id]))[0];
+  ok(cyc.g === '2026-11-01' && cyc.s === '2026-10-05' && cyc.e === '2026-10-26', 'grading date saved; cycle span taken from the session dates');
+  const dans = Object.fromEntries((await q(`select student_id, dan_number, target_rank from prep_dan_numbers`)).map(r => [r.student_id, r]));
+  ok(dans.BB0001?.dan_number === 501 && dans.BB0002?.dan_number === 502 && dans['M-0042']?.dan_number === 503 && !dans.BB0003,
+     'Dan numbers 501 to 503 given in name order to the Cho Dan Bo students; the 3rd Dan Level 2 student gets none');
+  await page.click('#newCycleBtn'); await page.fill('#ncName', 'term 4 2026'); await page.fill('#ncS1', '2026-10-05'); await page.dispatchEvent('#ncS1', 'change');
   await page.click('#ncGo');
   ok((await toastText(page)).includes('already exists'), 'starting a cycle with the same name is stopped');
   await page.click('#sheet [data-close]');
@@ -212,6 +221,10 @@ try {
   await page.click('#impGo'); await confirm(page); await settle(page);
   ok((await q(`select count(*)::int n from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and ((s.session_number = 2 and a.student_id = 'BB0003' and a.status = 'present') or (s.session_number = 3 and a.student_id = 'BB0002' and a.status = 'absent'))`, [c1.cycle_id]))[0].n === 2, 'imported attendance saved');
 
+  ok((await page.textContent('#attBody [data-session="4"]')).includes('Sign-off'), 'attendance shows session 4 as the sign-off');
+  await page.click('#attBody [data-session="4"]');
+  ok((await page.textContent('#attBody')).includes('must be marked Present here to grade'), 'sign-off session explains the rule');
+  await page.click('.att button[data-id="BB0002"][data-s="absent"]'); await settle(page);
   await page.click('#view-attendance [data-mode="summary"]');
   const sumTxt = await page.textContent('#attBody');
   ok(sumTxt.includes('present ÷ (present + absent)'), 'summary explains how the percentage is worked out');
@@ -228,6 +241,10 @@ try {
   const dash = await page.textContent('#view-dashboard');
   ok(dash.includes('Term 4 2026') && dash.includes('Needs attention'), 'dashboard shows the active cycle and a needs-attention list');
   ok(dash.includes('absence'), 'students with absences are listed for follow-up');
+  ok(dash.includes('Missed the sign-off (absent)') && dash.includes('Grading · 1 Nov'), 'dashboard flags a missed sign-off and shows the grading date');
+  await tab(page, 'students');
+  ok((await page.textContent('#studentList')).includes('Dan no. 501'), 'student list shows Dan numbers');
+  await tab(page, 'dashboard');
   await shot(page, 'dashboard');
 
   // ------------------------------------------------------------------
@@ -235,7 +252,7 @@ try {
   const before = await q(`select attendance_id, status from prep_attendance where cycle_id = $1 order by 1`, [c1.cycle_id]);
   await tab(page, 'cycles');
   await page.click('#newCycleBtn');
-  await page.fill('#ncName', 'Term 1 2027'); await page.fill('#ncStart', '2027-02-08'); await page.dispatchEvent('#ncStart', 'change');
+  await page.fill('#ncName', 'Term 1 2027'); await page.fill('#ncS1', '2027-02-08'); await page.dispatchEvent('#ncS1', 'change');
   await page.check('[name=ncWho][value=pick]');
   await page.check('#ncList input[value="BB0001"]'); await page.check('#ncList input[value="M-0042"]');
   ok((await page.textContent('#ncActHint')).includes('Term 4 2026 will be marked Completed'), 'warns that the current cycle will be completed');
@@ -261,6 +278,7 @@ try {
   console.log('\nSettings and users');
   await tab(page, 'more');
   await page.waitForSelector('#userList ul');
+  ok(await page.inputValue('#setDan') === '504', 'settings show the next Dan number (504)');
   await page.fill('#setReq', '3'); await page.click('#setForm button[type=submit]'); await settle(page);
   ok((await q(`select sessions_required from prep_settings`))[0].sessions_required === 3, 'settings saved');
   await page.click('#addUserBtn'); await page.fill('#uEmail', 'Coach@AMA.test'); await page.check('#uForm input[value="instructor"]'); await page.click('#uForm button[type=submit]'); await settle(page);

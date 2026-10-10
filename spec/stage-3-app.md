@@ -10,6 +10,16 @@ The app is a single web page (`docs/index.html`) published with GitHub Pages, in
 
 GitHub Pages on a free account needs the repository to be public. That is safe here: the code holds no member data or passwords, and the database only answers signed-in users with a prep role.
 
+## Database update 01
+
+Run `supabase/prep-update-01.sql` once in Supabase > SQL Editor (after `prep-setup.sql`). It adds:
+- **Dan numbers.** Students going for Probationary Black Belt or a Dan get the next number when they join a cycle. Set the next number under More > Settings. Numbers go up by one per person in name order, are never reused, and a student repeating the same grading keeps theirs. An admin can correct a number from the student record (with a reason).
+  Cho Dan Bo > Probationary Black Belt, Probationary Black Belt > 1st Dan Black Belt, 1st Dan Level 1 > 2nd Dan, 2nd Dan Level 2 > 3rd Dan, 3rd Dan Level 3 > 4th Dan, 4th Dan Level 4 > 5th Dan.
+- **Sign-off.** The last session of every cycle is the sign-off. A student only meets the attendance requirement if they are marked Present at it; excused does not count.
+- **Grading date** for each cycle.
+
+The app keeps working before the update is run; Dan numbers and grading dates appear once it is.
+
 ## Giving people access
 
 People sign in with their AMA ID Cards login. Card software admins are already prep admins. To add someone else: **More > Users > Add user**, enter their email and tick their roles. If they don't have a login yet, create one in Supabase first (Authentication > Users).
@@ -17,9 +27,10 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 ## What's in this stage
 
 **Dashboard**
-- Active cycle with session dates and a "Take attendance" shortcut for the next session
+- Active cycle with session dates, sign-off and grading date, and a "Take attendance" shortcut for the next session
 - Active students, students in the cycle, attended all sessions, with absences, attendance not recorded for past sessions, below the attendance requirement
-- Needs attention list (unrecorded past sessions and absences), each opening the student record
+- Missed the sign-off count
+- Needs attention list (missed sign-off, unrecorded past sessions and absences), each opening the student record
 
 **Students**
 - Search by name or Student ID; filter by belt rank and active or inactive; test records hidden unless asked for
@@ -31,9 +42,9 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Student record: details, current cycle (attendance by session plus readiness, payment, grading, certificate and ID card status) and earlier cycles
 
 **Preparation cycles**
-- Start New Preparation Cycle: name, dates, four session dates filled in weekly, fee, payment due date, all active students or chosen students, a review step, and the option to make it active (the previous active cycle is marked Completed; its records are kept)
+- Start New Preparation Cycle: name, four session dates (session 1 sets the rest weekly; session 4 is the sign-off), grading date, fee, payment due date, all active students or chosen students, a review step, and the option to make it active (the previous active cycle is marked Completed; its records are kept)
 - A cycle name can't be used twice, so pressing the button again can't create duplicates
-- Edit dates, session dates, fee and notes; add students mid-cycle; remove a student added by mistake (blocked once a payment is recorded)
+- Edit session dates, grading date, fee and notes (cycles have no separate start or end date); add students mid-cycle; remove a student added by mistake (blocked once a payment is recorded)
 - Make active, mark completed, archive and restore
 
 **Attendance**
@@ -53,7 +64,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 58 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 70 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

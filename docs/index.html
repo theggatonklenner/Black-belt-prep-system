@@ -366,6 +366,12 @@ const BELTS = ['Cho Dan Bo', 'Probationary Black Belt', '1st Dan Black Belt', '1
   '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4', '5th Dan'];
 // Matches how people type them: "3rd dan lvl 2", "1st Dan", "probationary"
 const beltKey = b => String(b || '').toLowerCase().replace(/\blvl\b/g, 'level').replace(/black\s*belt/g, '').replace(/[^a-z0-9]/g, '');
+// Students on these belts are going for Probationary Black Belt or a Dan, and get a Dan number
+const DAN_TARGET = { 'Cho Dan Bo': 'Probationary Black Belt', 'Probationary Black Belt': '1st Dan Black Belt', '1st Dan Level 1': '2nd Dan',
+  '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan' };
+const danTarget = s => s && DAN_TARGET[s.belt_rank] || null;
+const danFor = s => { const t = danTarget(s); return t ? state.danNumbers.find(d => d.student_id === s.student_id && d.target_rank === t) || null : null; };
+const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
   (cur && !BELTS.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)} (not in list)</option>` : '') +
@@ -434,7 +440,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, danNumbers: [], danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -444,6 +450,14 @@ const cycle = id => state.cycles.find(c => c.cycle_id === id);
 const activeCycles = () => state.cycles.filter(c => c.status === 'active');
 const currentCycle = () => activeCycles()[0] || null;
 const cycleSessions = id => state.sessions.filter(s => s.cycle_id === id).sort((a, b) => a.session_number - b.session_number);
+const lastSession = id => cycleSessions(id).slice(-1)[0] || null;
+const isSignoff = se => !!se && lastSession(se.cycle_id)?.session_id === se.session_id;
+const sessName = se => `Session ${se.session_number}${isSignoff(se) ? ' · Sign-off' : ''}`;
+function cycleWhen(c, long = false) {
+  const sess = cycleSessions(c.cycle_id), f = sess[0], l = sess[sess.length - 1], d = long ? fmt : fmtShort;
+  const span = f && f.session_date ? (l.session_date && l.session_date !== f.session_date ? `Sessions ${fmtShort(f.session_date)} to ${d(l.session_date)}` : `Session ${d(f.session_date)}`) : 'Session dates not set';
+  return span + (c.grading_date ? ` · Grading ${d(c.grading_date)}` : '');
+}
 const enrolledIds = id => new Set(state.enrolments.filter(e => e.cycle_id === id).map(e => e.student_id));
 const summaryFor = (cid, sid) => state.summary.find(s => s.cycle_id === cid && s.student_id === sid);
 const overviewFor = (cid, sid) => state.overview.find(s => s.cycle_id === cid && s.student_id === sid);
@@ -453,12 +467,16 @@ async function loadAll() {
   const res = await Promise.all([
     q('prep_settings'), q('prep_students', ['full_name']), q('prep_cycles', ['created_at', false]), q('prep_sessions', ['session_number']),
     q('prep_enrolments'), q('prep_attendance'), q('prep_attendance_summary'), q('prep_overview'),
-    has('admin') ? q('prep_possible_duplicates') : Promise.resolve({ data: [] })
+    has('admin') ? q('prep_possible_duplicates') : Promise.resolve({ data: [] }),
+    q('prep_dan_numbers', ['dan_number'])
   ]);
+  // Dan numbers and grading dates arrive with supabase/prep-update-01.sql; the rest works without it
+  state.danReady = !res[9].error;
+  if (res[9].error) res[9] = { data: [] };
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
-  const [settings, students, cycles, sessions, enrolments, attendance, summary, overview, dups] = res.map(r => r.data || []);
-  Object.assign(state, { settings: settings[0] || {}, students, cycles, sessions, enrolments, attendance, summary, overview, duplicates: dups, loaded: true });
+  const [settings, students, cycles, sessions, enrolments, attendance, summary, overview, dups, danNumbers] = res.map(r => r.data || []);
+  Object.assign(state, { settings: settings[0] || {}, danNumbers, students, cycles, sessions, enrolments, attendance, summary, overview, duplicates: dups, loaded: true });
   if (!state.att.cycle || !cycle(state.att.cycle)) state.att.cycle = (currentCycle() || cycles[0] || {}).cycle_id || null;
 }
 
@@ -516,8 +534,11 @@ function renderDashboard() {
   const withAbs = rows.filter(r => r.sum.absences > 0);
   const incomplete = rows.filter(r => r.missing > 0);
   const notMet = rows.filter(r => r.sum.attendance_eligible === false && r.sum.unrecorded === 0);
+  const lastS = sess[sess.length - 1];
+  const missedSignoff = rows.filter(r => r.sum.signoff_status === 'absent' || r.sum.signoff_status === 'excused');
   const next = sess.find(s => s.session_date && s.session_date >= today());
   const attention = [
+    ...missedSignoff.map(r => ({ r, issue: `Missed the sign-off (${label(r.sum.signoff_status).toLowerCase()})`, tone: 'bad' })),
     ...incomplete.map(r => ({ r, issue: `${r.missing} past session${r.missing > 1 ? 's' : ''} not recorded`, tone: 'warn' })),
     ...withAbs.map(r => ({ r, issue: `${r.sum.absences} absence${r.sum.absences > 1 ? 's' : ''}`, tone: 'bad' }))
   ].sort((a, b) => a.r.s.full_name.localeCompare(b.r.s.full_name));
@@ -526,9 +547,9 @@ function renderDashboard() {
     <div class="card">
       <div class="row"><h3 class="grow">${esc(c.name)}</h3>${tag('active')}</div>
       <div class="belt-rule"></div>
-      <div class="counts"><span>${fmt(c.start_date)} to ${fmt(c.end_date)}</span>${next ? `<span>Next session: <b>${next.session_number} · ${fmt(next.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</b></span>` : ''}</div>
-      <div class="sess-cells" style="gap:6px;flex-wrap:wrap">${sess.map(s => `<span class="tag ${s.session_date && s.session_date < today() ? '' : 'info'}">S${s.session_number} · ${fmtShort(s.session_date)}</span>`).join('')}</div>
-      ${canEditAttendance() ? `<button class="btn primary" id="dashAtt">Take attendance${next ? ' for session ' + next.session_number : ''}</button>` : ''}
+      <div class="counts"><span>${cycleWhen(c, true)}</span>${next ? `<span>Next: <b>${isSignoff(next) ? 'sign-off' : 'session ' + next.session_number} · ${fmt(next.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</b></span>` : ''}</div>
+      <div class="sess-cells" style="gap:6px;flex-wrap:wrap">${sess.map(s => `<span class="tag ${isSignoff(s) ? 'gold' : s.session_date && s.session_date < today() ? '' : 'info'}">${isSignoff(s) ? 'Sign-off' : 'S' + s.session_number} · ${fmtShort(s.session_date)}</span>`).join('')}${c.grading_date ? `<span class="tag ok">Grading · ${fmtShort(c.grading_date)}</span>` : ''}</div>
+      ${canEditAttendance() ? `<button class="btn primary" id="dashAtt">Take attendance${next ? (isSignoff(next) ? ' for the sign-off' : ' for session ' + next.session_number) : ''}</button>` : ''}
     </div>
     <div class="stats">
       <button class="stat" data-go="students"><span class="n">${active.length}</span><span class="l">Active students</span></button>
@@ -537,6 +558,7 @@ function renderDashboard() {
       <button class="stat ${withAbs.length ? 'bad' : ''}" data-go="attendance"><span class="n">${withAbs.length}</span><span class="l">With absences</span></button>
       <button class="stat ${incomplete.length ? 'warn' : ''}" data-go="attendance"><span class="n">${incomplete.length}</span><span class="l">Attendance not recorded</span></button>
       <button class="stat ${notMet.length ? 'warn' : ''}" data-go="attendance"><span class="n">${notMet.length}</span><span class="l">Below attendance requirement</span></button>
+      ${lastS ? `<button class="stat ${missedSignoff.length ? 'bad' : ''}" data-go="attendance"><span class="n">${missedSignoff.length}</span><span class="l">Missed the sign-off</span></button>` : ''}
     </div>
     <h3>Needs attention</h3>
     ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}">
@@ -546,7 +568,7 @@ function renderDashboard() {
     <p class="hint">Readiness, payment, grading, certificate and ID card summaries are added in later build stages.</p>`;
   $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
   $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
-  const da = $('#dashAtt'); if (da) da.onclick = () => { state.att.cycle = c.cycle_id; state.att.session = next ? next.session_number : 1; showView('attendance'); };
+  const da = $('#dashAtt'); if (da) da.onclick = () => { state.att.mode = 'sessions'; state.att.cycle = c.cycle_id; state.att.session = next ? next.session_number : 1; showView('attendance'); };
 }
 
 /* =========================================================================
@@ -573,7 +595,7 @@ function renderStudents() {
   $('#studentList').innerHTML = list.length ? list.map(s => {
     const sum = c && enrolled.has(s.student_id) ? summaryFor(c.cycle_id, s.student_id) : null;
     return `<li><button class="item" data-student="${esc(s.student_id)}">
-      <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}</div></div>
+      <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}</div></div>
       ${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
@@ -588,8 +610,8 @@ function openStudent(id) {
     const sess = cycleSessions(cy.cycle_id), sum = summaryFor(cy.cycle_id, id) || {}, ov = overviewFor(cy.cycle_id, id) || {};
     const att = sess.map(se => (state.attendance.find(a => a.session_id === se.session_id && a.student_id === id) || {}).status || 'not_recorded');
     return `<div class="row"><b class="grow">${esc(cy.name)}</b>${tag(cy.status)}</div>
-      <div class="row"><div class="sess-cells">${att.map((a, i) => `<span class="cell ${a}" title="Session ${i + 1}: ${label(a)}">${a === 'not_recorded' ? i + 1 : a[0].toUpperCase()}</span>`).join('')}</div>
-      <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
+      <div class="row"><div class="sess-cells">${att.map((a, i) => `<span class="cell ${a}" title="${esc(sessName(sess[i]))}: ${label(a)}"${i === att.length - 1 ? ' style="outline:2px solid var(--gold);outline-offset:1px"' : ''}>${a === 'not_recorded' ? i + 1 : a[0].toUpperCase()}</span>`).join('')}</div>
+      <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''} · sign-off: ${label(sum.signoff_status || 'not_recorded').toLowerCase()}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
       <dl class="kv">
         <dt>Readiness</dt><dd>${tag(ov.readiness)}</dd>
         ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${tag(ov.payment_status)} <span class="small muted">$${Number(ov.amount_paid || 0).toFixed(2)} of $${Number(ov.amount_due || 0).toFixed(2)}</span></dd>` : ''}
@@ -604,6 +626,8 @@ function openStudent(id) {
       <dl class="kv">
         <dt>Certificate name</dt><dd>${esc(s.certificate_name || s.full_name)}</dd>
         <dt>Belt rank</dt><dd>${esc(s.belt_rank || '—')}</dd>
+        ${danTarget(s) ? `<dt>Going for</dt><dd>${esc(danTarget(s))}</dd><dt>Dan number</dt><dd>${danFor(s) ? `<b>${danFor(s).dan_number}</b>` : '<span class="muted">Not assigned yet</span>'}
+          ${danFor(s) ? '<button class="btn sm ghost need-admin" id="stDan" style="min-height:0;padding:0 6px">Change</button>' : ''}</dd>` : ''}
         <dt>Date of birth</dt><dd>${fmt(s.dob)}</dd>
         <dt>Email</dt><dd>${esc(s.contact_email || '—')}</dd>
         <dt>Phone</dt><dd>${esc(s.contact_phone || '—')}</dd>
@@ -617,11 +641,28 @@ function openStudent(id) {
     ${myCycles.length > 1 ? `<div class="section"><h3>History</h3>${myCycles.filter(x => x !== c).map(cy => `<div class="card" style="box-shadow:none;border:1px solid var(--line)">${cycleBlock(cy)}</div>`).join('')}</div>` : ''}
   </div>`);
   const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
+  const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
   const ac = $('#stActive');
   if (ac) ac.onclick = async () => {
     if (s.is_active && !await ask(`Deactivate ${s.full_name}? Their records are kept and they can be reactivated at any time.`, 'Deactivate', true)) return;
     try { await run(sb.from('prep_students').update({ is_active: !s.is_active }).eq('student_id', s.student_id), s.is_active ? 'Deactivated' : 'Reactivated'); await loadAll(); render(); openStudent(id); }
     catch (e) { toast('Could not save: ' + errMsg(e), 6000); }
+  };
+}
+
+function openDanEdit(s) {
+  const d = danFor(s);
+  openSheet(`<form id="danForm">${sheetHead('Change Dan number', `${esc(s.full_name)} · going for ${esc(d.target_rank)}`)}
+    <div class="field"><label for="danNo">Dan number</label><input type="number" id="danNo" min="1" step="1" required value="${d.dan_number}"></div>
+    <div class="field"><label for="danNote">Reason</label><input type="text" id="danNote" required placeholder="e.g. Number already issued on paper"></div>
+    <p class="hint">Each number can only belong to one student. This does not change the next number in Settings.</p>
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`);
+  $('#danForm').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await run(sb.from('prep_dan_numbers').update({ dan_number: +$('#danNo').value, notes: $('#danNote').value.trim() }).eq('dan_number', d.dan_number), 'Dan number changed');
+      await loadAll(); render(); openStudent(s.student_id);
+    } catch (err) { toast(/duplicate|unique/i.test(errMsg(err)) ? `Dan number ${$('#danNo').value} already belongs to another student.` : errMsg(err), 6000); }
   };
 }
 
@@ -772,7 +813,7 @@ function renderCycles() {
     ${groups.length ? groups.map(([st, list]) => `<h3>${label(st)}</h3><ul class="list">${list.map(c => {
       const sess = cycleSessions(c.cycle_id), n = enrolledIds(c.cycle_id).size;
       return `<li><button class="item" data-cycle="${c.cycle_id}"><div class="main"><div class="name">${esc(c.name)}</div>
-        <div class="meta">${fmt(c.start_date)} to ${fmt(c.end_date)} · ${sess.length} sessions · ${n} student${n === 1 ? '' : 's'}</div></div>${tag(c.status)}</button></li>`;
+        <div class="meta">${cycleWhen(c)} · ${n} student${n === 1 ? '' : 's'}</div></div>${tag(c.status)}</button></li>`;
     }).join('')}</ul>`).join('') : `<div class="card empty"><p>No preparation cycles yet.</p></div>`}`;
   const nb = $('#newCycleBtn'); if (nb) nb.onclick = () => openNewCycle();
   $$('#view-cycles [data-cycle]').forEach(b => b.onclick = () => openCycle(b.dataset.cycle));
@@ -785,12 +826,9 @@ function openNewCycle() {
   openSheet(`<form id="ncForm">
     ${sheetHead('Start new preparation cycle', 'Creates fresh attendance, readiness and fee records. Earlier cycles are not changed.')}
     <div class="field"><label for="ncName">Cycle name</label><input type="text" id="ncName" required placeholder="e.g. Term 4 2026" autocomplete="off"></div>
-    <div class="grid2">
-      <div class="field"><label for="ncStart">Start date</label><input type="date" id="ncStart" required></div>
-      <div class="field"><label for="ncEnd">End date</label><input type="date" id="ncEnd" required></div>
-    </div>
-    <div class="section"><h3>Sessions</h3><p class="hint">Filled in weekly from the start date. Change any date if needed.</p>
-      <div class="grid2">${[1, 2, 3, 4].map(i => `<div class="field"><label for="ncS${i}">Session ${i}</label><input type="date" id="ncS${i}" required></div>`).join('')}</div></div>
+    <div class="section"><h3>Sessions</h3><p class="hint">Pick session 1 and the rest fill in weekly. Change any date if needed. Session 4 is the sign-off: students must be present at it to grade.</p>
+      <div class="grid2">${[1, 2, 3, 4].map(i => `<div class="field"><label for="ncS${i}">${i === 4 ? 'Session 4 · Sign-off' : 'Session ' + i}</label><input type="date" id="ncS${i}" required></div>`).join('')}</div>
+      ${state.danReady ? '<div class="field"><label for="ncGrade">Grading date</label><input type="date" id="ncGrade"></div>' : ''}</div>
     <div class="section"><h3>Fee</h3>
       <div class="grid2">
         <div class="field"><label for="ncFee">Session fee ($)</label><input type="number" id="ncFee" min="0" step="0.01" required value="${fee.toFixed(2)}"></div>
@@ -807,14 +845,13 @@ function openNewCycle() {
       ${others.length ? `<p class="hint" id="ncActHint">${esc(others.map(o => o.name).join(', '))} will be marked Completed. Its records are kept.</p>` : ''}</div>
     <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="ncGo">Review</button></div>
   </form>`);
-  const start = $('#ncStart');
-  start.onchange = () => {
+  const start = $('#ncS1');
+  start.addEventListener('change', () => {
     if (!start.value) return;
-    [1, 2, 3, 4].forEach(i => { if (!$('#ncS' + i).dataset.touched) $('#ncS' + i).value = addDays(start.value, (i - 1) * 7); });
-    if (!$('#ncEnd').dataset.touched) $('#ncEnd').value = addDays(start.value, 21);
+    [2, 3, 4].forEach(i => { if (!$('#ncS' + i).dataset.touched) $('#ncS' + i).value = addDays(start.value, (i - 1) * 7); });
     if (!$('#ncDue').dataset.touched) $('#ncDue').value = addDays(start.value, 7);
-  };
-  ['#ncS1', '#ncS2', '#ncS3', '#ncS4', '#ncEnd', '#ncDue'].forEach(s => $(s).addEventListener('input', e => e.target.dataset.touched = '1'));
+  });
+  ['#ncS2', '#ncS3', '#ncS4', '#ncDue', '#ncGrade'].forEach(s => { const el = $(s); if (el) el.addEventListener('input', e => e.target.dataset.touched = '1'); });
   sheet.querySelectorAll('[name=ncWho]').forEach(r => r.onchange = () => $('#ncPick').hidden = r.value !== 'pick' || !r.checked);
   $('#ncSearch').oninput = e => { const q = e.target.value.toLowerCase(); $$('#ncList .check').forEach(l => l.hidden = !l.textContent.toLowerCase().includes(q)); };
   const act = $('#ncActivate'), hint = $('#ncActHint'); if (hint) act.onchange = () => hint.hidden = !act.checked;
@@ -823,19 +860,22 @@ function openNewCycle() {
     const name = $('#ncName').value.trim();
     if (state.cycles.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) return toast(`A cycle called "${name}" already exists.`, 5000);
     const dates = [1, 2, 3, 4].map(i => $('#ncS' + i).value);
-    if ($('#ncEnd').value < start.value) return toast('The end date is before the start date.', 5000);
+    if (dates.some((d, i) => i && d < dates[i - 1])) return toast('Session dates must be in order.', 5000);
+    const grading = $('#ncGrade') ? $('#ncGrade').value : '';
+    if (grading && grading < dates[3]) return toast('The grading date is before the sign-off.', 5000);
     const pick = sheet.querySelector('[name=ncWho]:checked').value === 'pick';
     const ids = pick ? $$('#ncList input:checked').map(i => i.value) : [];
     if (pick && !ids.length) return toast('Choose at least one student, or pick "All active students".', 5000);
     const count = pick ? ids.length : pool.length, feeV = Number($('#ncFee').value || 0), activate = act.checked;
-    const msg = `${name}: ${fmt(start.value)} to ${fmt($('#ncEnd').value)}, sessions on ${dates.map(fmtShort).join(', ')}. ` +
+    const msg = `${name}: sessions on ${dates.slice(0, 3).map(fmtShort).join(', ')}, sign-off on ${fmt(dates[3])}. ${grading ? `Grading on ${fmt(grading)}. ` : 'No grading date yet. '}` +
       `Fee $${feeV.toFixed(2)}. ${count} student${count === 1 ? '' : 's'} enrolled.` +
       (activate ? ` It becomes the active cycle${others.length ? ' and ' + others.map(o => o.name).join(', ') + ' is marked Completed' : ''}.` : ' It stays Planned until you activate it.');
     if (!await ask(msg, 'Start cycle', false, 'Start this cycle?')) return;
     $('#ncGo').disabled = true;
     try {
-      const id = await run(sb.rpc('prep_start_new_cycle', { p_name: name, p_start: start.value, p_end: $('#ncEnd').value, p_session_dates: dates,
+      const id = await run(sb.rpc('prep_start_new_cycle', { p_name: name, p_start: dates[0], p_end: dates[3], p_session_dates: dates,
         p_fee: feeV, p_payment_due: $('#ncDue').value || null, p_student_ids: pick ? ids : null, p_notes: null }));
+      if (grading) await run(sb.from('prep_cycles').update({ grading_date: grading }).eq('cycle_id', id));
       if (activate) await run(sb.rpc('prep_activate_cycle', { p_cycle: id, p_complete_current: true }));
       sheet.close(); toast(`${name} started`); await loadAll(); state.att.cycle = id; render();
     } catch (err) { $('#ncGo').disabled = false; toast('Could not start the cycle: ' + errMsg(err), 7000); await loadAll(); render(); }
@@ -847,14 +887,12 @@ function openCycle(id) {
   const sess = cycleSessions(id), ids = enrolledIds(id);
   const people = [...ids].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
   const admin = has('admin');
+  const missingDan = people.filter(s => danTarget(s) && !danFor(s));
   openSheet(`<form id="cyForm">
-    ${sheetHead(c.name, `${label(c.status)} · ${people.length} student${people.length === 1 ? '' : 's'}`)}
+    ${sheetHead(c.name, `${label(c.status)} · ${people.length} student${people.length === 1 ? '' : 's'} · ${cycleWhen(c)}`)}
     <div class="field"><label for="cyName">Name</label><input type="text" id="cyName" value="${esc(c.name)}" ${admin ? '' : 'disabled'}></div>
-    <div class="grid2">
-      <div class="field"><label for="cyStart">Start date</label><input type="date" id="cyStart" value="${esc(c.start_date || '')}" ${admin ? '' : 'disabled'}></div>
-      <div class="field"><label for="cyEnd">End date</label><input type="date" id="cyEnd" value="${esc(c.end_date || '')}" ${admin ? '' : 'disabled'}></div>
-    </div>
-    <div class="grid2">${sess.map(s => `<div class="field"><label for="cySess${s.session_number}">Session ${s.session_number}</label><input type="date" id="cySess${s.session_number}" data-sid="${s.session_id}" value="${esc(s.session_date || '')}" ${admin ? '' : 'disabled'}></div>`).join('')}</div>
+    <div class="grid2">${sess.map(s => `<div class="field"><label for="cySess${s.session_number}">${esc(sessName(s))}</label><input type="date" id="cySess${s.session_number}" data-sid="${s.session_id}" value="${esc(s.session_date || '')}" ${admin ? '' : 'disabled'}></div>`).join('')}</div>
+    ${state.danReady ? `<div class="field"><label for="cyGrade">Grading date</label><input type="date" id="cyGrade" value="${esc(c.grading_date || '')}" ${admin ? '' : 'disabled'}></div>` : ''}
     <div class="grid2">
       <div class="field"><label for="cyFee">Session fee ($)</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
       <div class="field"><label for="cyDue">Payment due</label><input type="date" id="cyDue" value="${esc(c.payment_due_date || '')}" ${admin ? '' : 'disabled'}></div>
@@ -867,9 +905,10 @@ function openCycle(id) {
       ${c.status === 'completed' ? '<button type="button" class="btn" id="cyArchive">Archive</button>' : ''}
       ${c.status === 'archived' ? '<button type="button" class="btn" id="cyUnarchive">Restore from archive</button>' : ''}
     </div>` : ''}
+    ${admin && state.danReady && missingDan.length ? `<div class="banner"><span>${missingDan.length} student${missingDan.length > 1 ? 's' : ''} going for a Dan without a Dan number</span><button type="button" class="btn sm" id="cyDan">Assign numbers</button></div>` : ''}
     <div class="section"><div class="row"><h3 class="grow">Students</h3>${admin && c.status !== 'archived' ? '<button type="button" class="btn sm" id="cyEnrol">Add students</button>' : ''}</div>
       ${people.length ? `<ul class="list">${people.map(s => { const sum = summaryFor(id, s.student_id) || {}; return `<li><div class="item" style="cursor:default">
-        <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc(s.student_id)} · ${sum.attended ?? 0}/${sess.length} attended</div></div>
+        <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, `${sum.attended ?? 0}/${sess.length} attended`, danMeta(s) || (danTarget(s) ? 'Dan no. missing' : '')].filter(Boolean).join(' · '))}</div></div>
         ${admin ? `<button type="button" class="btn sm ghost danger" data-unenrol="${esc(s.student_id)}">Remove</button>` : ''}</div></li>`; }).join('')}</ul>`
         : '<p class="hint">No students in this cycle.</p>'}
     </div>
@@ -881,7 +920,12 @@ function openCycle(id) {
   $('#cyForm').onsubmit = async e => {
     e.preventDefault();
     try {
-      await run(sb.from('prep_cycles').update({ name: $('#cyName').value.trim(), start_date: $('#cyStart').value || null, end_date: $('#cyEnd').value || null,
+      const dates = $$('#cyForm [data-sid]').map(i => i.value).filter(Boolean);
+      if (dates.some((d, i) => i && d < dates[i - 1])) return toast('Session dates must be in order.', 5000);
+      const grading = $('#cyGrade') ? $('#cyGrade').value : '';
+      if (grading && dates.length && grading < dates[dates.length - 1]) return toast('The grading date is before the sign-off.', 5000);
+      await run(sb.from('prep_cycles').update({ name: $('#cyName').value.trim(), start_date: dates[0] || null, end_date: dates[dates.length - 1] || null,
+        ...(state.danReady ? { grading_date: grading || null } : {}),
         session_fee: Number($('#cyFee').value || 0), payment_due_date: $('#cyDue').value || null, notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
       for (const inp of $$('#cyForm [data-sid]')) {
         const s = sess.find(x => x.session_id === inp.dataset.sid);
@@ -903,6 +947,11 @@ function openCycle(id) {
   btn('#cyArchive', async () => { try { await run(sb.from('prep_cycles').update({ status: 'archived' }).eq('cycle_id', id)); reopen('Archived'); } catch (e) { fail(e); } });
   btn('#cyUnarchive', async () => { try { await run(sb.from('prep_cycles').update({ status: 'completed' }).eq('cycle_id', id)); reopen('Restored'); } catch (e) { fail(e); } });
   btn('#cyEnrol', () => openEnrol(id));
+  btn('#cyDan', async () => {
+    if (!state.settings.next_dan_number) return toast('Set the next Dan number under More > Settings first.', 6000);
+    if (!await ask(`Give ${missingDan.length} student${missingDan.length > 1 ? 's' : ''} Dan numbers, starting at ${state.settings.next_dan_number}, in name order?`, 'Assign')) return;
+    try { const n = await run(sb.rpc('prep_assign_missing_dan_numbers', { p_cycle: id })); reopen(`${n} Dan number${n === 1 ? '' : 's'} assigned`); } catch (e) { fail(e); }
+  });
   sheet.querySelectorAll('[data-unenrol]').forEach(b => b.onclick = async () => {
     const s = student(b.dataset.unenrol);
     if (!await ask(`Remove ${s.full_name} from ${c.name}? Their attendance, readiness and fee record for this cycle are removed. This is only allowed if no payment has been recorded.`, 'Remove', true)) return;
@@ -964,7 +1013,8 @@ function renderAttendance() {
   const body = $('#attBody');
   if (A.mode === 'summary') return renderAttSummary(body);
   body.innerHTML = `
-    <div class="seg" role="group" aria-label="Session">${sess.map(s => `<button data-session="${s.session_number}" aria-pressed="${s.session_number === A.session}">Session ${s.session_number}<small>${fmt(s.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</small></button>`).join('')}</div>
+    <div class="seg" role="group" aria-label="Session">${sess.map(s => `<button data-session="${s.session_number}" aria-pressed="${s.session_number === A.session}">${isSignoff(s) ? 'Sign-off' : 'Session ' + s.session_number}<small>${fmt(s.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</small></button>`).join('')}</div>
+    ${isSignoff(se) ? '<p class="hint" style="margin-top:10px">This is the sign-off session. Students must be marked Present here to grade.</p>' : ''}
     <div class="counts" style="margin-top:12px"><span><b>${n('present')}</b> present</span><span><b>${n('absent')}</b> absent</span><span><b>${n('excused')}</b> excused</span><span><b>${n('not_recorded')}</b> not recorded</span></div>
     <div class="view" style="gap:8px;margin-top:12px">
       <input type="search" id="attSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(A.search)}">
@@ -993,7 +1043,7 @@ function renderAttList() {
   const A = state.att, list = visibleAttRows(), editable = canEditAttendance();
   $('#attList').innerHTML = list.length ? list.map(({ s, a }) => `<li><div class="item" style="cursor:default">
     ${A.selecting ? `<input type="checkbox" data-pick="${esc(s.student_id)}" ${A.selected.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}">` : ''}
-    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
+    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
     ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}</div>`
       : tag(a.status)}
   </div></li>`).join('') : `<li><div class="empty">${attRows().rows.length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
@@ -1032,12 +1082,12 @@ function renderAttSummary(body) {
   const rows = [...enrolledIds(cid)].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
   const req = state.settings.sessions_required ?? 4;
   body.innerHTML = `<p class="hint" style="margin-bottom:10px">Attendance % = present ÷ (present + absent). Excused and not-yet-recorded sessions are left out.
-      Requirement: ${req} session${req === 1 ? '' : 's'} present${state.settings.excused_counts_as_attended ? ' (excused counts)' : ''}.</p>
+      Requirement: ${req} session${req === 1 ? '' : 's'} present${state.settings.excused_counts_as_attended ? ' (excused counts)' : ''}, including the sign-off (the last session, outlined in gold). Excused does not count for the sign-off.</p>
     ${rows.length ? `<div class="card scroll" style="padding:8px 10px"><table class="grid"><tr><th>Student</th><th>Sessions</th><th class="num">Att.</th><th class="num">%</th></tr>
     ${rows.map(s => { const sum = summaryFor(cid, s.student_id) || {};
       const cells = sess.map(se => (state.attendance.find(a => a.session_id === se.session_id && a.student_id === s.student_id) || {}).status || 'not_recorded');
       return `<tr><td><button class="btn ghost sm" style="padding:0;min-height:0;font-weight:600;text-align:left;white-space:normal" data-student="${esc(s.student_id)}">${esc(s.full_name)}</button></td>
-        <td><div class="sess-cells">${cells.map((a, i) => `<span class="cell ${a}" title="Session ${i + 1}: ${label(a)}">${a === 'not_recorded' ? '–' : a[0].toUpperCase()}</span>`).join('')}</div></td>
+        <td><div class="sess-cells">${cells.map((a, i) => `<span class="cell ${a}" title="${esc(sessName(sess[i]))}: ${label(a)}"${i === cells.length - 1 ? ' style="outline:2px solid var(--gold);outline-offset:1px"' : ''}>${a === 'not_recorded' ? '–' : a[0].toUpperCase()}</span>`).join('')}</div></td>
         <td class="num">${sum.attended ?? 0}/${sess.length}${sum.attendance_eligible ? ' ✓' : ''}</td><td class="num">${sum.attendance_pct ?? '—'}</td></tr>`; }).join('')}</table></div>
     <div class="counts" style="margin-top:8px"><span><span class="cell present" style="display:inline-grid">P</span> Present</span><span><span class="cell absent" style="display:inline-grid">A</span> Absent</span><span><span class="cell excused" style="display:inline-grid">E</span> Excused</span><span><span class="cell" style="display:inline-grid">–</span> Not recorded</span><span>✓ meets requirement</span></div>`
     : '<div class="card empty">No students in this cycle.</div>'}`;
@@ -1107,10 +1157,13 @@ async function renderMore() {
         <div class="field"><label for="setReq">Sessions required for grading</label><input type="number" id="setReq" min="0" max="20" value="${S.sessions_required ?? 4}"></div>
         <div class="field"><label for="setFee">Default session fee ($)</label><input type="number" id="setFee" min="0" step="0.01" value="${Number(S.default_session_fee || 0).toFixed(2)}"></div>
       </div>
+      <div class="field"><label for="setDan">Next Dan number</label><input type="number" id="setDan" min="1" step="1" placeholder="e.g. 1001" value="${S.next_dan_number ?? ''}" ${state.danReady ? '' : 'disabled'}></div>
+      <p class="hint">${state.danReady ? 'Students going for Probationary Black Belt or a Dan get this number when they join a cycle, then it goes up by one for each person. Numbers are never reused, and someone repeating the same grading keeps theirs.'
+        : 'To use Dan numbers, run supabase/prep-update-01.sql in Supabase &gt; SQL Editor, then reload.'}</p>
       <label class="check"><input type="checkbox" id="setExc" ${S.excused_counts_as_attended ? 'checked' : ''}> Excused sessions count towards the requirement</label>
       <label class="check"><input type="checkbox" id="setInv" ${S.invoice_on_enrol ? 'checked' : ''}> Fees are due as soon as a student joins a cycle</label>
       <label class="check"><input type="checkbox" id="setMulti" ${S.allow_multiple_active ? 'checked' : ''}> Allow more than one active cycle</label>
-      <p class="hint">The attendance requirement only informs the grading decision. It never marks anyone ready or eligible.</p>
+      <p class="hint">Students must also be present at the sign-off (the last session of a cycle). The attendance requirement only informs the grading decision. It never marks anyone ready or eligible.</p>
       <div class="row"><button class="btn primary" type="submit">Save settings</button></div></form>
     <div class="card"><div class="row"><h3 class="grow">Users</h3><button class="btn sm" id="addUserBtn">Add user</button></div>
       <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
@@ -1123,7 +1176,8 @@ async function renderMore() {
     e.preventDefault();
     try {
       await run(sb.from('prep_settings').update({ sessions_required: +$('#setReq').value, default_session_fee: Number($('#setFee').value || 0),
-        excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked }).eq('id', 1), 'Settings saved');
+        excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked,
+        ...(state.danReady ? { next_dan_number: $('#setDan').value ? +$('#setDan').value : null } : {}) }).eq('id', 1), 'Settings saved');
       await loadAll();
     } catch (err) { toast(errMsg(err), 6000); }
   };
@@ -1138,7 +1192,7 @@ async function renderMore() {
     `<li><button class="item" data-user="${esc(em)}"><div class="main"><div class="name" style="font-weight:400;color:var(--fg)">${esc(em)}</div><div class="meta">${rs.map(r => ROLE_NAMES[r]).join(', ')}</div></div></button></li>`).join('')}</ul>` : 'No users.';
   $$('[data-user]').forEach(b => b.onclick = () => openUser(b.dataset.user, byEmail[b.dataset.user]));
   const TABLES = { prep_students: 'Student', prep_cycles: 'Cycle', prep_sessions: 'Session', prep_enrolments: 'Enrolment', prep_attendance: 'Attendance',
-    prep_settings: 'Settings', prep_roles: 'User role', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
+    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
   const desc = l => {
     const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
     let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;

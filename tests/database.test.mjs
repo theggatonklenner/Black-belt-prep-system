@@ -39,6 +39,9 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
+const DAN = read(join(here, '../supabase/prep-update-01.sql'));
+await db.exec(DAN); await db.exec(DAN);
+ok(true, 'prep-update-01.sql runs twice without errors');
 
 const ADMIN = 'owner@ama.test';
 ok((await one(`select role from prep_roles where email = $1`, [ADMIN]))?.role === 'admin', 'card software admin becomes prep admin');
@@ -251,6 +254,56 @@ ok((await as('inst@ama.test', () => rows(`select * from prep_audit_log`))).lengt
 await fails(() => as(ADMIN, () => db.exec(`delete from prep_enrolments where student_id = 'BB0002' and cycle_id = '${c1}'`)), /foreign key/, 'an enrolment with payments cannot be removed');
 await as(ADMIN, () => db.exec(`delete from prep_enrolments where student_id = 'BB0003' and cycle_id = '${c2}'`));
 ok(await cnt('prep_attendance', `where student_id = 'BB0003' and cycle_id = $1`, [c2]) === 0, 'a mistaken enrolment with no payments can be removed');
+
+// ---------------------------------------------------------------------------
+console.log('\nDan numbers');
+await as(ADMIN, () => db.exec(`
+  insert into prep_students (student_id, full_name, belt_rank) values
+    ('D1','Zara Ng','Cho Dan Bo'), ('D2','Ben Ali','1st Dan Level 1'), ('D3','Amy Wu','1st Dan Black Belt'),
+    ('D4','Cal Ray','4th Dan Level 4'), ('D5','Dee Fox','Probationary Black Belt');`));
+const dn = async () => Object.fromEntries((await rows(`select student_id, dan_number, target_rank from prep_dan_numbers`)).map(r => [r.student_id, r]));
+const cA = (await as(ADMIN, () => one(`select prep_start_new_cycle('Dan test A', null, null, null, 0, null, array['D1','D2','D3','D4']) id`))).id;
+ok(Object.keys(await dn()).length === 0, 'no numbers handed out before a starting number is set');
+await fails(() => as(ADMIN, () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA])), /starting Dan number/, 'assigning without a starting number explains what to do');
+await as(ADMIN, () => db.exec(`update prep_settings set next_dan_number = 1001`));
+ok((await as(ADMIN, () => one(`select prep_assign_missing_dan_numbers($1) n`, [cA]))).n === 3, 'missing numbers assigned to the 3 students going for a Dan');
+let d = await dn();
+ok(d.D2.dan_number === 1001 && d.D4.dan_number === 1002 && d.D1.dan_number === 1003, 'numbers go up by one in name order (Ben, Cal, Zara)');
+ok(d.D1.target_rank === 'Probationary Black Belt' && d.D2.target_rank === '2nd Dan' && d.D4.target_rank === '5th Dan', 'records the rank each student is going for');
+ok(!d.D3, '1st Dan Black Belt (going for a level, not a Dan) gets no number');
+ok((await one(`select next_dan_number from prep_settings`)).next_dan_number === 1004, 'next number moves on to 1004');
+const cB = (await as(ADMIN, () => one(`select prep_start_new_cycle('Dan test B', null, null, null, 0, null, array['D2','D5']) id`))).id;
+d = await dn();
+ok(d.D5.dan_number === 1004 && d.D5.target_rank === '1st Dan Black Belt', 'joining a cycle hands out the next number automatically');
+ok(d.D2.dan_number === 1001, 'a student repeating the same grading keeps their number');
+await as(ADMIN, () => db.exec(`update prep_settings set next_dan_number = 1001; update prep_students set belt_rank = '2nd Dan Level 2' where student_id = 'D3'`));
+await as(ADMIN, () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA]));
+ok((await dn()).D3.dan_number === 1005, 'numbers already used are skipped, never reused (starting number set back to 1001)');
+await fails(() => as(ADMIN, () => db.exec(`update prep_dan_numbers set dan_number = 1001 where student_id = 'D3'`)), /duplicate key/, 'two students cannot share a Dan number');
+await as('view@ama.test', () => db.exec(`update prep_dan_numbers set dan_number = 9999 where student_id = 'D3'`));
+ok((await dn()).D3.dan_number === 1005, 'non-admins cannot change Dan numbers');
+ok((await as('view@ama.test', () => rows(`select * from prep_dan_numbers`))).length === 5, 'everyone with a prep role can see Dan numbers');
+await fails(() => as('inst@ama.test', () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA])), /Only an admin/, 'only admins can run the assignment');
+
+// ---------------------------------------------------------------------------
+console.log('\nSign-off (final session)');
+await as(ADMIN, () => db.exec(`update prep_settings set sessions_required = 3, excused_counts_as_attended = true`));
+const cS = (await as(ADMIN, () => one(`select prep_start_new_cycle('Sign-off test', null, null, null, 0, null, array['D1','D2','D3']) id`))).id;
+const ss = (await rows(`select session_id from prep_sessions where cycle_id = $1 order by session_number`, [cS])).map(r => r.session_id);
+await as(ADMIN, () => db.exec(`
+  select prep_mark_attendance('${ss[0]}', array['D1','D2','D3'], 'present');
+  select prep_mark_attendance('${ss[1]}', array['D1','D2','D3'], 'present');
+  select prep_mark_attendance('${ss[2]}', array['D1','D2','D3'], 'present');
+  select prep_mark_attendance('${ss[3]}', array['D1'], 'present');
+  select prep_mark_attendance('${ss[3]}', array['D2'], 'absent');
+  select prep_mark_attendance('${ss[3]}', array['D3'], 'excused');`));
+const so = Object.fromEntries((await rows(`select * from prep_attendance_summary where cycle_id = $1`, [cS])).map(r => [r.student_id, r]));
+ok(so.D1.attendance_eligible === true && so.D1.signoff_present === true, 'present at the sign-off and enough sessions: meets the requirement');
+ok(so.D2.attendance_eligible === false && so.D2.attended === 3 && so.D2.signoff_status === 'absent', 'enough sessions but absent from the sign-off: does not meet the requirement');
+ok(so.D3.attendance_eligible === false && so.D3.signoff_status === 'excused', 'excused from the sign-off does not count, even when excused counts elsewhere');
+await as(ADMIN, () => db.exec(`update prep_settings set sessions_required = 4, excused_counts_as_attended = false;
+  update prep_cycles set grading_date = '2026-11-07' where cycle_id = '${cS}'`));
+ok((await one(`select grading_date::text g from prep_cycles where cycle_id = $1`, [cS])).g === '2026-11-07', 'cycle has a grading date');
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
