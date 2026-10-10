@@ -374,6 +374,8 @@ const danFor = s => { const t = danTarget(s); return t ? state.danNumbers.find(d
 const feeReady = () => 'default_upfront_fee' in state.settings;
 const money = n => '$' + Number(n || 0).toFixed(2).replace(/\.00$/, '');
 const PLAN = { upfront: 'Upfront', per_session: 'Per session' };
+const DAN_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan'];
+const nextDan = rank => (state.danCounters.find(c => c.target_rank === rank) || {}).next_number ?? null;
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
@@ -443,7 +445,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, payments: [], danNumbers: [], danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, payments: [], danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -476,6 +478,9 @@ async function loadAll() {
   ]);
   // Dan numbers and grading dates arrive with supabase/prep-update-01.sql; the rest works without it
   state.danReady = !res[9].error;
+  const counters = await sb.from('prep_dan_counters').select('*');
+  state.countersReady = !counters.error;
+  state.danCounters = counters.data || [];
   if (res[9].error) res[9] = { data: [] };
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
@@ -664,14 +669,14 @@ function openDanEdit(s) {
   openSheet(`<form id="danForm">${sheetHead('Change Dan number', `${esc(s.full_name)} · going for ${esc(d.target_rank)}`)}
     <div class="field"><label for="danNo">Dan number</label><input type="number" id="danNo" min="1" step="1" required value="${d.dan_number}"></div>
     <div class="field"><label for="danNote">Reason</label><input type="text" id="danNote" required placeholder="e.g. Number already issued on paper"></div>
-    <p class="hint">Each number can only belong to one student. This does not change the next number in Settings.</p>
+    <p class="hint">Each ${esc(d.target_rank)} number can only belong to one student. This does not change the next number in Settings.</p>
     <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`);
   $('#danForm').onsubmit = async e => {
     e.preventDefault();
     try {
-      await run(sb.from('prep_dan_numbers').update({ dan_number: +$('#danNo').value, notes: $('#danNote').value.trim() }).eq('dan_number', d.dan_number), 'Dan number changed');
+      await run(sb.from('prep_dan_numbers').update({ dan_number: +$('#danNo').value, notes: $('#danNote').value.trim() }).eq('target_rank', d.target_rank).eq('dan_number', d.dan_number), 'Dan number changed');
       await loadAll(); render(); openStudent(s.student_id);
-    } catch (err) { toast(/duplicate|unique/i.test(errMsg(err)) ? `Dan number ${$('#danNo').value} already belongs to another student.` : errMsg(err), 6000); }
+    } catch (err) { toast(/duplicate|unique/i.test(errMsg(err)) ? `${d.target_rank} number ${$('#danNo').value} already belongs to another student.` : errMsg(err), 6000); }
   };
 }
 
@@ -824,7 +829,7 @@ function openNewCycle() {
   openSheet(`<form id="ncForm">
     ${sheetHead('Start new preparation cycle', 'Creates fresh attendance, readiness and fee records. Earlier cycles are not changed.')}
     <div class="field"><label for="ncName">Cycle name</label><input type="text" id="ncName" required placeholder="e.g. Term 4 2026" autocomplete="off"></div>
-    <div class="section"><h3>Sessions</h3><p class="hint">Pick session 1 and the rest fill in weekly. Change any date if needed. Session 4 is the sign-off: students must be present at it to grade.</p>
+    <div class="section"><h3>Sessions</h3><p class="hint">Pick session 1 and the rest fill in every two weeks, with grading two weeks after the sign-off. Change any date if needed. Session 4 is the sign-off: students must be present at it to grade.</p>
       <div class="grid2">${[1, 2, 3, 4].map(i => `<div class="field"><label for="ncS${i}">${i === 4 ? 'Session 4 · Sign-off' : 'Session ' + i}</label><input type="date" id="ncS${i}" required></div>`).join('')}</div>
       ${state.danReady ? '<div class="field"><label for="ncGrade">Grading date</label><input type="date" id="ncGrade"></div>' : ''}</div>
     <div class="section"><h3>Fee</h3>
@@ -848,9 +853,11 @@ function openNewCycle() {
   const start = $('#ncS1');
   start.addEventListener('change', () => {
     if (!start.value) return;
-    [2, 3, 4].forEach(i => { if (!$('#ncS' + i).dataset.touched) $('#ncS' + i).value = addDays(start.value, (i - 1) * 7); });
+    [2, 3, 4].forEach(i => { if (!$('#ncS' + i).dataset.touched) $('#ncS' + i).value = addDays(start.value, (i - 1) * 14); });
+    const g = $('#ncGrade'); if (g && !g.dataset.touched) g.value = addDays(start.value, 4 * 14);
     if (!$('#ncDue').dataset.touched) $('#ncDue').value = addDays(start.value, 7);
   });
+  $('#ncS4').addEventListener('change', () => { const g = $('#ncGrade'); if (g && !g.dataset.touched && $('#ncS4').value) g.value = addDays($('#ncS4').value, 14); });
   ['#ncS2', '#ncS3', '#ncS4', '#ncDue', '#ncGrade'].forEach(s => { const el = $(s); if (el) el.addEventListener('input', e => e.target.dataset.touched = '1'); });
   sheet.querySelectorAll('[name=ncWho]').forEach(r => r.onchange = () => $('#ncPick').hidden = r.value !== 'pick' || !r.checked);
   $('#ncSearch').oninput = e => { const q = e.target.value.toLowerCase(); $$('#ncList .check').forEach(l => l.hidden = !l.textContent.toLowerCase().includes(q)); };
@@ -888,6 +895,7 @@ function openCycle(id) {
   const people = [...ids].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
   const admin = has('admin');
   const missingDan = people.filter(s => danTarget(s) && !danFor(s));
+  const canFill = missingDan.filter(s => nextDan(danTarget(s)) != null), noNext = [...new Set(missingDan.filter(s => nextDan(danTarget(s)) == null).map(danTarget))];
   openSheet(`<form id="cyForm">
     ${sheetHead(c.name, `${label(c.status)} · ${people.length} student${people.length === 1 ? '' : 's'} · ${cycleWhen(c)}`)}
     <div class="field"><label for="cyName">Name</label><input type="text" id="cyName" value="${esc(c.name)}" ${admin ? '' : 'disabled'}></div>
@@ -951,8 +959,9 @@ function openCycle(id) {
   btn('#cyUnarchive', async () => { try { await run(sb.from('prep_cycles').update({ status: 'completed' }).eq('cycle_id', id)); reopen('Restored'); } catch (e) { fail(e); } });
   btn('#cyEnrol', () => openEnrol(id));
   btn('#cyDan', async () => {
-    if (!state.settings.next_dan_number) return toast('Set the next Dan number under More > Settings first.', 6000);
-    if (!await ask(`Give ${missingDan.length} student${missingDan.length > 1 ? 's' : ''} Dan numbers, starting at ${state.settings.next_dan_number}, in name order?`, 'Assign')) return;
+    if (!canFill.length) return toast(`Set the next number for ${noNext.join(', ')} under More > Settings first.`, 7000);
+    const byRank = DAN_RANKS.filter(r => canFill.some(s => danTarget(s) === r)).map(r => `${r} from ${nextDan(r)}`).join('; ');
+    if (!await ask(`Give ${canFill.length} student${canFill.length > 1 ? 's' : ''} Dan numbers in name order: ${byRank}.${noNext.length ? ` ${noNext.join(', ')} ha${noNext.length > 1 ? 've' : 's'} no next number yet and will be skipped.` : ''}`, 'Assign')) return;
     try { const n = await run(sb.rpc('prep_assign_missing_dan_numbers', { p_cycle: id })); reopen(`${n} Dan number${n === 1 ? '' : 's'} assigned`); } catch (e) { fail(e); }
   });
   sheet.querySelectorAll('[data-unenrol]').forEach(b => b.onclick = async () => {
@@ -1166,9 +1175,10 @@ async function renderMore() {
       </div>
       <div class="field"><label for="setPlan">Students start on</label><select id="setPlan"><option value="upfront"${S.default_payment_plan === 'upfront' ? ' selected' : ''}>Upfront</option><option value="per_session"${S.default_payment_plan === 'per_session' ? ' selected' : ''}>Per session</option></select></div>
       <p class="hint">These are used for new cycles. Each cycle's fees can be changed on the cycle.</p>` : ''}
-      <div class="field"><label for="setDan">Next Dan number</label><input type="number" id="setDan" min="1" step="1" placeholder="e.g. 1001" value="${S.next_dan_number ?? ''}" ${state.danReady ? '' : 'disabled'}></div>
-      <p class="hint">${state.danReady ? 'Students going for Probationary Black Belt or a Dan get this number when they join a cycle, then it goes up by one for each person. Numbers are never reused, and someone repeating the same grading keeps theirs.'
-        : 'To use Dan numbers, run supabase/prep-update-01.sql in Supabase &gt; SQL Editor, then reload.'}</p>
+      <div class="section"><h3>Next Dan numbers</h3>
+      ${state.countersReady ? `<div class="grid2">${DAN_RANKS.map((r, i) => `<div class="field"><label for="setDan${i}">${esc(r.replace(' Black Belt', ''))}</label><input type="number" id="setDan${i}" data-rank="${esc(r)}" min="1" step="1" placeholder="Not set" value="${nextDan(r) ?? ''}"></div>`).join('')}</div>
+      <p class="hint">Each rank has its own numbers. Students going for that rank get the next number when they join a cycle, then it goes up by one per person. Numbers are never reused, and someone repeating the same grading keeps theirs. Leave blank to stop numbering for that rank.</p>`
+        : '<p class="hint">To use Dan numbers, run supabase/prep-update-02.sql in Supabase &gt; SQL Editor, then reload.</p>'}</div>
       <label class="check"><input type="checkbox" id="setExc" ${S.excused_counts_as_attended ? 'checked' : ''}> Excused sessions count towards the requirement</label>
       <label class="check"><input type="checkbox" id="setInv" ${S.invoice_on_enrol ? 'checked' : ''}> Fees are due as soon as a student joins a cycle</label>
       <label class="check"><input type="checkbox" id="setMulti" ${S.allow_multiple_active ? 'checked' : ''}> Allow more than one active cycle</label>
@@ -1187,8 +1197,15 @@ async function renderMore() {
       await run(sb.from('prep_settings').update({ sessions_required: +$('#setReq').value,
         ...(feeReady() ? { default_upfront_fee: Number($('#setUp').value || 0), default_per_session_fee: Number($('#setPer').value || 0), default_payment_plan: $('#setPlan').value }
           : { default_session_fee: Number($('#setFee').value || 0) }),
-        excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked,
-        ...(state.danReady ? { next_dan_number: $('#setDan').value ? +$('#setDan').value : null } : {}) }).eq('id', 1), 'Settings saved');
+        excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked }).eq('id', 1));
+      for (const inp of $$('#setForm [data-rank]')) {
+        const rank = inp.dataset.rank, cur = nextDan(rank), want = inp.value ? +inp.value : null;
+        if (want === cur) continue;
+        if (want == null) await run(sb.from('prep_dan_counters').delete().eq('target_rank', rank));
+        else if (cur == null) await run(sb.from('prep_dan_counters').insert({ target_rank: rank, next_number: want }));
+        else await run(sb.from('prep_dan_counters').update({ next_number: want }).eq('target_rank', rank));
+      }
+      toast('Settings saved');
       await loadAll();
     } catch (err) { toast(errMsg(err), 6000); }
   };
@@ -1203,7 +1220,7 @@ async function renderMore() {
     `<li><button class="item" data-user="${esc(em)}"><div class="main"><div class="name" style="font-weight:400;color:var(--fg)">${esc(em)}</div><div class="meta">${rs.map(r => ROLE_NAMES[r]).join(', ')}</div></div></button></li>`).join('')}</ul>` : 'No users.';
   $$('[data-user]').forEach(b => b.onclick = () => openUser(b.dataset.user, byEmail[b.dataset.user]));
   const TABLES = { prep_students: 'Student', prep_cycles: 'Cycle', prep_sessions: 'Session', prep_enrolments: 'Enrolment', prep_attendance: 'Attendance',
-    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
+    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
   const desc = l => {
     const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
     let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;

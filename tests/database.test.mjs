@@ -39,9 +39,11 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-const DAN = read(join(here, '../supabase/prep-update-01.sql'));
-await db.exec(DAN); await db.exec(DAN);
-ok(true, 'prep-update-01.sql runs twice without errors');
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql']) {
+  const sql = read(join(here, '../supabase', f));
+  await db.exec(sql); await db.exec(sql);
+  ok(true, `${f} runs twice without errors`);
+}
 
 const ADMIN = 'owner@ama.test';
 ok((await one(`select role from prep_roles where email = $1`, [ADMIN]))?.role === 'admin', 'card software admin becomes prep admin');
@@ -256,33 +258,39 @@ await as(ADMIN, () => db.exec(`delete from prep_enrolments where student_id = 'B
 ok(await cnt('prep_attendance', `where student_id = 'BB0003' and cycle_id = $1`, [c2]) === 0, 'a mistaken enrolment with no payments can be removed');
 
 // ---------------------------------------------------------------------------
-console.log('\nDan numbers');
+console.log('\nDan numbers (separate for each rank)');
 await as(ADMIN, () => db.exec(`
   insert into prep_students (student_id, full_name, belt_rank) values
     ('D1','Zara Ng','Cho Dan Bo'), ('D2','Ben Ali','1st Dan Level 1'), ('D3','Amy Wu','1st Dan Black Belt'),
-    ('D4','Cal Ray','4th Dan Level 4'), ('D5','Dee Fox','Probationary Black Belt');`));
+    ('D4','Cal Ray','4th Dan Level 4'), ('D5','Dee Fox','Probationary Black Belt'), ('D6','Eve Lim','Cho Dan Bo');`));
 const dn = async () => Object.fromEntries((await rows(`select student_id, dan_number, target_rank from prep_dan_numbers`)).map(r => [r.student_id, r]));
-const cA = (await as(ADMIN, () => one(`select prep_start_new_cycle('Dan test A', null, null, null, 0, null, array['D1','D2','D3','D4']) id`))).id;
-ok(Object.keys(await dn()).length === 0, 'no numbers handed out before a starting number is set');
-await fails(() => as(ADMIN, () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA])), /starting Dan number/, 'assigning without a starting number explains what to do');
-await as(ADMIN, () => db.exec(`update prep_settings set next_dan_number = 1001`));
-ok((await as(ADMIN, () => one(`select prep_assign_missing_dan_numbers($1) n`, [cA]))).n === 3, 'missing numbers assigned to the 3 students going for a Dan');
+const counter = async t => (await one(`select next_number from prep_dan_counters where target_rank = $1`, [t]))?.next_number;
+const cA = (await as(ADMIN, () => one(`select prep_start_new_cycle('Dan test A', null, null, null, 0, null, array['D1','D2','D3','D4','D6']) id`))).id;
+ok(Object.keys(await dn()).length === 0, 'no numbers handed out before any next number is set');
+ok((await as(ADMIN, () => one(`select prep_assign_missing_dan_numbers($1) n`, [cA]))).n === 0, 'assigning with no next numbers set gives out nothing');
+await as(ADMIN, () => db.exec(`insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 101), ('2nd Dan', 201)`));
+ok((await as(ADMIN, () => one(`select prep_assign_missing_dan_numbers($1) n`, [cA]))).n === 3, 'numbers assigned for the ranks that have a next number (3 students)');
 let d = await dn();
-ok(d.D2.dan_number === 1001 && d.D4.dan_number === 1002 && d.D1.dan_number === 1003, 'numbers go up by one in name order (Ben, Cal, Zara)');
-ok(d.D1.target_rank === 'Probationary Black Belt' && d.D2.target_rank === '2nd Dan' && d.D4.target_rank === '5th Dan', 'records the rank each student is going for');
+ok(d.D6.dan_number === 101 && d.D1.dan_number === 102, 'Probationary numbers go up by one in name order (Eve 101, Zara 102)');
+ok(d.D2.dan_number === 201 && d.D2.target_rank === '2nd Dan', '2nd Dan has its own sequence (Ben 201)');
+ok(!d.D4, 'no number for 5th Dan until its next number is set');
 ok(!d.D3, '1st Dan Black Belt (going for a level, not a Dan) gets no number');
-ok((await one(`select next_dan_number from prep_settings`)).next_dan_number === 1004, 'next number moves on to 1004');
+ok(await counter('Probationary Black Belt') === 103 && await counter('2nd Dan') === 202, 'each rank\'s next number moves on separately');
+await as(ADMIN, () => db.exec(`insert into prep_dan_counters (target_rank, next_number) values ('5th Dan', 501)`));
+await as(ADMIN, () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA]));
+ok((await dn()).D4.dan_number === 501, 'setting the 5th Dan next number lets the missing one be filled in');
+await as(ADMIN, () => db.exec(`insert into prep_dan_counters (target_rank, next_number) values ('1st Dan Black Belt', 101)`));
 const cB = (await as(ADMIN, () => one(`select prep_start_new_cycle('Dan test B', null, null, null, 0, null, array['D2','D5']) id`))).id;
 d = await dn();
-ok(d.D5.dan_number === 1004 && d.D5.target_rank === '1st Dan Black Belt', 'joining a cycle hands out the next number automatically');
-ok(d.D2.dan_number === 1001, 'a student repeating the same grading keeps their number');
-await as(ADMIN, () => db.exec(`update prep_settings set next_dan_number = 1001; update prep_students set belt_rank = '2nd Dan Level 2' where student_id = 'D3'`));
+ok(d.D5.dan_number === 101 && d.D5.target_rank === '1st Dan Black Belt', 'joining a cycle hands out the next number for their rank; 101 can be used once per rank');
+ok(d.D2.dan_number === 201, 'a student repeating the same grading keeps their number');
+await as(ADMIN, () => db.exec(`update prep_dan_counters set next_number = 101 where target_rank = 'Probationary Black Belt'; update prep_students set belt_rank = 'Cho Dan Bo' where student_id = 'D3'`));
 await as(ADMIN, () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA]));
-ok((await dn()).D3.dan_number === 1005, 'numbers already used are skipped, never reused (starting number set back to 1001)');
-await fails(() => as(ADMIN, () => db.exec(`update prep_dan_numbers set dan_number = 1001 where student_id = 'D3'`)), /duplicate key/, 'two students cannot share a Dan number');
-await as('view@ama.test', () => db.exec(`update prep_dan_numbers set dan_number = 9999 where student_id = 'D3'`));
-ok((await dn()).D3.dan_number === 1005, 'non-admins cannot change Dan numbers');
-ok((await as('view@ama.test', () => rows(`select * from prep_dan_numbers`))).length === 5, 'everyone with a prep role can see Dan numbers');
+ok((await dn()).D3.dan_number === 103, 'numbers already used for that rank are skipped, never reused');
+await fails(() => as(ADMIN, () => db.exec(`update prep_dan_numbers set dan_number = 101 where student_id = 'D3'`)), /duplicate key/, 'two students cannot share a number for the same rank');
+await as('view@ama.test', () => db.exec(`update prep_dan_numbers set dan_number = 9999 where student_id = 'D3'; update prep_dan_counters set next_number = 1`));
+ok((await dn()).D3.dan_number === 103 && await counter('2nd Dan') === 202, 'non-admins cannot change Dan numbers or next numbers');
+ok((await as('view@ama.test', () => rows(`select * from prep_dan_numbers`))).length === 6, 'everyone with a prep role can see Dan numbers');
 await fails(() => as('inst@ama.test', () => db.query(`select prep_assign_missing_dan_numbers($1)`, [cA])), /Only an admin/, 'only admins can run the assignment');
 
 // ---------------------------------------------------------------------------

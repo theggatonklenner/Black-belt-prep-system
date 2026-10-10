@@ -24,8 +24,10 @@ await db.exec(`insert into auth.users (email) values ('owner@ama.test')`);
 for (const f of ['setup.sql', 'roles.sql', 'printed.sql']) await db.exec(read(join(CARD, 'supabase', f)));
 await db.exec(read(join(here, '../supabase/prep-setup.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-01.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-02.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
-  update prep_settings set default_session_fee = 120, next_dan_number = 501;`);
+  update prep_settings set default_session_fee = 120;
+  insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
 
 const users = Object.fromEntries(['owner@ama.test', 'att@ama.test', 'view@ama.test', 'nobody@ama.test']
   .map((e, i) => [e, { id: `00000000-0000-0000-0000-00000000000${i + 1}`, password: 'pw' }]));
@@ -154,8 +156,8 @@ try {
   ok(!(await page.$('#ncStart')) && !(await page.$('#ncEnd')), 'no cycle start or end date, only session dates');
   ok((await page.textContent('label[for=ncS4]')).includes('Sign-off'), 'session 4 is labelled as the sign-off');
   await page.fill('#ncS1', '2026-10-05'); await page.dispatchEvent('#ncS1', 'change');
-  ok(await page.inputValue('#ncS4') === '2026-10-26', 'sessions 2 to 4 filled in weekly from session 1');
-  await page.fill('#ncGrade', '2026-11-01');
+  ok(await page.inputValue('#ncS2') === '2026-10-19' && await page.inputValue('#ncS4') === '2026-11-16', 'sessions 2 to 4 filled in every two weeks from session 1');
+  ok(await page.inputValue('#ncGrade') === '2026-11-30', 'grading date filled in two weeks after the sign-off');
   ok(await page.inputValue('#ncFee') === '200.00' && await page.inputValue('#ncPer') === '60.00', 'fees default to $200 upfront and $60 per session');
   await shot(page, 'new-cycle');
   await page.click('#ncGo');
@@ -167,7 +169,7 @@ try {
   ok(c1.status === 'active', 'cycle saved as active');
   ok((await q(`select count(*)::int n from prep_attendance where cycle_id = $1 and status = 'not_recorded'`, [c1.cycle_id]))[0].n === 16, 'fresh attendance created for 4 students x 4 sessions');
   const cyc = (await q(`select grading_date::text g, start_date::text s, end_date::text e from prep_cycles where cycle_id = $1`, [c1.cycle_id]))[0];
-  ok(cyc.g === '2026-11-01' && cyc.s === '2026-10-05' && cyc.e === '2026-10-26', 'grading date saved; cycle span taken from the session dates');
+  ok(cyc.g === '2026-11-30' && cyc.s === '2026-10-05' && cyc.e === '2026-11-16', 'grading date saved; cycle span taken from the session dates');
   const dans = Object.fromEntries((await q(`select student_id, dan_number, target_rank from prep_dan_numbers`)).map(r => [r.student_id, r]));
   ok(dans.BB0001?.dan_number === 501 && dans.BB0002?.dan_number === 502 && dans['M-0042']?.dan_number === 503 && !dans.BB0003,
      'Dan numbers 501 to 503 given in name order to the Cho Dan Bo students; the 3rd Dan Level 2 student gets none');
@@ -241,7 +243,7 @@ try {
   const dash = await page.textContent('#view-dashboard');
   ok(dash.includes('Term 4 2026') && dash.includes('Needs attention'), 'dashboard shows the active cycle and a needs-attention list');
   ok(dash.includes('absence'), 'students with absences are listed for follow-up');
-  ok(dash.includes('Missed the sign-off (absent)') && dash.includes('Grading · 1 Nov'), 'dashboard flags a missed sign-off and shows the grading date');
+  ok(dash.includes('Missed the sign-off (absent)') && dash.includes('Grading · 30 Nov'), 'dashboard flags a missed sign-off and shows the grading date');
   await tab(page, 'students');
   ok((await page.textContent('#studentList')).includes('Dan no. 501'), 'student list shows Dan numbers');
   await tab(page, 'dashboard');
@@ -284,14 +286,16 @@ try {
   console.log('\nSettings and users');
   await tab(page, 'more');
   await page.waitForSelector('#userList ul');
-  ok(await page.inputValue('#setDan') === '504', 'settings show the next Dan number (504)');
+  ok(await page.inputValue('#setDan0') === '504' && await page.inputValue('#setDan1') === '701' && await page.inputValue('#setDan2') === '', 'settings show a next Dan number for each rank (Probationary 504, 1st Dan 701, 2nd Dan not set)');
+  await page.fill('#setDan2', '301');
   await page.fill('#setReq', '3'); await page.click('#setForm button[type=submit]'); await settle(page);
   ok((await q(`select sessions_required from prep_settings`))[0].sessions_required === 3, 'settings saved');
+  ok((await q(`select next_number from prep_dan_counters where target_rank = '2nd Dan'`))[0]?.next_number === 301, 'next number for 2nd Dan saved');
   await page.click('#addUserBtn'); await page.fill('#uEmail', 'Coach@AMA.test'); await page.check('#uForm input[value="instructor"]'); await page.click('#uForm button[type=submit]'); await settle(page);
   ok((await q(`select role from prep_roles where email = 'coach@ama.test'`)).map(r => r.role).join() === 'instructor', 'admin adds a user with a role');
   await page.waitForSelector('#auditList table');
   ok((await page.textContent('#auditList')).includes('Attendance:'), 'recent changes list shows attendance changes');
-  await shot(page, 'more');
+  await page.evaluate(() => document.querySelector('#setForm .section').scrollIntoView()); await shot(page, 'more');
   await ctx.close();
 
   // ------------------------------------------------------------------

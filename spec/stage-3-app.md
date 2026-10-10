@@ -21,6 +21,10 @@ Run `supabase/prep-update-01.sql` once in Supabase > SQL Editor (after `prep-set
 
 The app keeps working before the update is run; Dan numbers and grading dates appear once it is.
 
+## Database update 02
+
+Run `supabase/prep-update-02.sql` once (after update 01). Dan numbers now run separately for each rank being graded for: Probationary Black Belt, 1st Dan, 2nd Dan, 3rd Dan, 4th Dan and 5th Dan each have their own next number under More > Settings. Numbers already handed out are kept, and each rank starts from the single next number set before (change them in Settings). The same number can be used once per rank.
+
 ## Giving people access
 
 People sign in with their AMA ID Cards login. Card software admins are already prep admins. To add someone else: **More > Users > Add user**, enter their email and tick their roles. If they don't have a login yet, create one in Supabase first (Authentication > Users).
@@ -44,7 +48,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Student record: details, current cycle (attendance by session plus readiness, payment, grading, certificate and ID card status) and earlier cycles
 
 **Preparation cycles**
-- Start New Preparation Cycle: name, four session dates (session 1 sets the rest weekly; session 4 is the sign-off), grading date, fee, payment due date, all active students or chosen students, a review step, and the option to make it active (the previous active cycle is marked Completed; its records are kept)
+- Start New Preparation Cycle: name, four session dates (session 1 sets the rest every two weeks; session 4 is the sign-off), grading date (two weeks after the sign-off), fee, payment due date, all active students or chosen students, a review step, and the option to make it active (the previous active cycle is marked Completed; its records are kept)
 - A cycle name can't be used twice, so pressing the button again can't create duplicates
 - Edit session dates, grading date, fee and notes (cycles have no separate start or end date); add students mid-cycle; remove a student added by mistake (blocked once a payment is recorded)
 - Make active, mark completed, archive and restore
@@ -66,7 +70,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 74 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 76 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install
