@@ -438,6 +438,7 @@ await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 
 fU = (await as('att@ama.test', () => rows(`select * from prep_session_fees($1)`, [cU])))[0];
 ok(fU.prepaid === false && fU.paid_sessions.length === 0, 'undoing the upfront payment clears it from every session');
 
+// ---------------------------------------------------------------------------
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
 ok(noRls.length === 0, 'every prep table has row level security on' + (noRls.length ? ': missing ' + noRls.map(r => r.relname) : ''));

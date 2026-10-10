@@ -300,6 +300,9 @@
   <!-- Readiness -->
   <section class="view" id="view-readiness" hidden></section>
 
+  <!-- Grading -->
+  <section class="view" id="view-grading" hidden></section>
+
   <!-- Payments -->
   <section class="view" id="view-payments" hidden></section>
 
@@ -336,6 +339,17 @@
   <div class="selbar-inner">
     <div class="row"><b id="rdSelCount" class="grow">0 selected</b><button class="btn sm ghost" id="rdSelAll">Select all shown</button><button class="btn sm ghost" id="rdSelDone">Done</button></div>
     <button class="btn primary" id="rdSetBtn">Set readiness</button>
+  </div>
+</div>
+
+<div class="selbar" id="grSelbar" hidden>
+  <div class="selbar-inner">
+    <div class="row"><b id="grSelCount" class="grow">0 selected</b><button class="btn sm ghost" id="grSelAll">Select all shown</button><button class="btn sm ghost" id="grSelDone">Done</button></div>
+    <div class="acts">
+      <button class="btn" data-gbulk="eligible">Eligible</button>
+      <button class="btn" data-gbulk="put">Put forward</button>
+      <button class="btn" data-gbulk="passed">Passed</button>
+    </div>
   </div>
 </div>
 
@@ -491,7 +505,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, readiness: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], grading: [], templates: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -527,8 +541,10 @@ async function loadAll() {
   const counters = await sb.from('prep_dan_counters').select('*');
   state.countersReady = !counters.error;
   state.danCounters = counters.data || [];
-  const rd = await sb.from('prep_readiness').select('*');
+  const [rd, gr, tpl] = await Promise.all([sb.from('prep_readiness').select('*'), sb.from('prep_grading').select('*'), sb.from('prep_report_templates').select('*').order('name')]);
   state.readiness = rd.data || [];
+  state.grading = gr.data || [];
+  state.templates = tpl.data || [];
   // Grading fees per belt; needs supabase/prep-update-04.sql
   const rates = await sb.from('prep_grading_fee_rates').select('*');
   state.gradingReady = !rates.error;
@@ -557,11 +573,12 @@ function scheduleReload() {
 /* ---------- Navigation ---------- */
 function showView(v) {
   state.view = v;
-  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments'].includes(v)))));
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
   if (v !== 'students') stopStudentSelect();
   if (v !== 'readiness') stopRdSelect();
+  if (v !== 'grading') stopGrSelect();
   render();
   window.scrollTo(0, 0);
 }
@@ -572,7 +589,7 @@ function render() {
   const c = currentCycle();
   $('#cyclePill').hidden = !c;
   if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
-  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, more: renderMore })[state.view]();
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, more: renderMore })[state.view]();
 }
 
 /* =========================================================================
@@ -637,7 +654,7 @@ function renderDashboard() {
       <button class="stat ${incomplete.length ? 'warn' : ''}" data-go="attendance"><span class="n">${incomplete.length}</span><span class="l">Attendance not recorded</span></button>
       <button class="stat ${notMet.length ? 'warn' : ''}" data-go="attendance"><span class="n">${notMet.length}</span><span class="l">Below attendance requirement</span></button>
       ${lastS ? `<button class="stat ${missedSignoff.length ? 'bad' : ''}" data-go="attendance"><span class="n">${missedSignoff.length}</span><span class="l">Missed the sign-off</span></button>` : ''}
-      ${state.gradingReady ? `<button class="stat" data-go="cycles"><span class="n">${grading.length}</span><span class="l">Grading</span></button>` : ''}
+      ${state.gradingReady ? `<button class="stat" data-go="grading"><span class="n">${grading.length}</span><span class="l">Put forward for grading</span></button>` : ''}
       ${has('payments') && gFees.length ? `<button class="stat ${gOverdue.length ? 'bad' : gOwing.length ? 'warn' : ''}" data-go="cycles"><span class="n">${gOwing.length}</span><span class="l">Grading fees owing${c.grading_date ? ` (due ${fmtShort(addDays(c.grading_date, -21))})` : ''}</span></button>` : ''}
     </div>
     <h3>Readiness</h3>
@@ -1101,16 +1118,16 @@ function openCycle(id) {
     ${admin && state.danReady && missingDan.length ? `<div class="banner"><span>${missingDan.length} student${missingDan.length > 1 ? 's' : ''} going for a Dan without a Dan number</span><button type="button" class="btn sm" id="cyDan">Assign numbers</button></div>` : ''}
     <div class="section"><div class="row"><h3 class="grow">Students</h3>${admin && c.status !== 'archived' ? '<button type="button" class="btn sm" id="cyEnrol">Add students</button>' : ''}</div>
       ${people.length ? `<ul class="list">${people.map(s => { const sum = summaryFor(id, s.student_id) || {}; return `<li><div class="item" style="cursor:default">
-        ${canGrade ? `<input type="checkbox" data-grading="${esc(s.student_id)}" ${enrolment(id, s.student_id).is_grading ? 'checked' : ''} aria-label="${esc(s.full_name)} is grading" title="Grading">` : ''}
         <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, `${sum.attended ?? 0}/${sess.length} attended`, danMeta(s) || (danTarget(s) ? 'Dan no. missing' : ''),
           enrolment(id, s.student_id).is_grading ? `Grading to ${nextBelt(s.belt_rank) || '?'}` : ''].filter(Boolean).join(' · '))}</div></div>
         ${admin ? `<button type="button" class="btn sm ghost danger" data-unenrol="${esc(s.student_id)}">Remove</button>` : ''}</div></li>`; }).join('')}</ul>`
         : '<p class="hint">No students in this cycle.</p>'}
-      ${canGrade && people.length ? `<p class="hint">Tick the students who are grading (${gradingCount} so far). Each is charged the grading fee for their next belt${c.grading_date ? `, due ${fmt(addDays(c.grading_date, -21))} (3 weeks before grading)` : ', due 3 weeks before the grading date'}.</p>` : ''}
+      ${state.gradingReady && people.length ? `<div class="row"><p class="hint grow">${gradingCount} put forward for grading. Decide who grades on the Grading screen.</p><button type="button" class="btn sm" id="cyGrading">Grading</button></div>` : ''}
     </div>
     ${admin ? `<div class="dlg-actions"><button type="button" class="btn" data-close>Close</button><button type="submit" class="btn primary" id="cySave">Save changes</button></div>` : ''}
   </form>`);
   const reopen = async msg => { if (msg) toast(msg); await loadAll(); render(); openCycle(id); };
+  const cg = $('#cyGrading'); if (cg) cg.onclick = () => { sheet.close(); state.gr.cycle = id; showView('grading'); };
   sheet.querySelectorAll('[data-grading]').forEach(cb => cb.onchange = async () => {
     const st = student(cb.dataset.grading), on = cb.checked;
     if (on && !nextBelt(st.belt_rank)) { cb.checked = false; return toast(`Set ${st.full_name}'s belt rank first.`, 6000); }
@@ -1692,6 +1709,301 @@ async function openPayment(pid) {
 }
 
 /* =========================================================================
+   Grading: eligibility decisions, putting students forward, results
+   ========================================================================= */
+state.gr = { cycle: null, filter: 'decide', search: '' };
+const grSel = { on: false, ids: new Set() };
+const gradingFor = (cid, sid) => state.grading.filter(g => g.cycle_id === cid && g.student_id === sid).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
+const canGradeRole = () => has('grading');
+function grFacts(cid, sid) {
+  const s = student(sid), sum = summaryFor(cid, sid) || {}, r = readinessFor(cid, sid) || {}, g = gradingFor(cid, sid), e = enrolment(cid, sid);
+  const sp = sessionPay(cid, sid), gp = gradingPay(cid, sid);
+  const target = (g && g.target_rank) || nextBelt(s.belt_rank);
+  const missing = [];
+  if (!sum.attendance_eligible) missing.push(sum.signoff_status && sum.signoff_status !== 'present' ? 'not present at the sign-off' : `${sum.attended ?? 0} of ${state.settings.sessions_required ?? 4} required sessions`);
+  if (r.status !== 'ready') missing.push(`readiness: ${label(r.status || 'not_assessed').toLowerCase()}`);
+  return { s, sum, r, g, e, sp, gp, target, missing, meets: !missing.length };
+}
+function grStatus(f) {
+  if (f.g && f.g.result) return f.g.result;
+  if (f.e.is_grading) return 'nominated';
+  if (f.g && f.g.eligibility_decision === 'eligible') return 'eligible';
+  if (f.g && f.g.eligibility_decision === 'not_eligible') return 'not_eligible';
+  return 'pending';
+}
+const GR_FILTERS = { decide: ['To decide', st => st === 'pending'], eligible: ['Eligible', st => st === 'eligible'], nominated: ['Put forward', st => st === 'nominated'],
+  not_eligible: ['Not eligible', st => st === 'not_eligible'], results: ['Results', st => ['passed', 'unsuccessful', 'deferred'].includes(st)], all: ['All', () => true] };
+
+function grRows() {
+  const cid = state.gr.cycle;
+  return [...enrolledIds(cid)].map(id => student(id)).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name))
+    .map(s => { const f = grFacts(cid, s.student_id); return { ...f, st: grStatus(f) }; });
+}
+function renderGrading() {
+  const v = $('#view-grading'), G = state.gr;
+  if (!G.cycle || !cycle(G.cycle)) G.cycle = (currentCycle() || state.cycles[0] || {}).cycle_id;
+  if (!state.cycles.length) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Grading</h2></div><div class="card empty">No preparation cycles yet.</div>`; wireBack(); return; }
+  if (!state.gradingReady) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Grading</h2></div><div class="card">Run supabase/prep-update-04.sql in Supabase to use grading.</div>`; wireBack(); return; }
+  const c = cycle(G.cycle), rows = grRows(), count = k => rows.filter(x => GR_FILTERS[k][1](x.st)).length;
+  const keepFocus = document.activeElement && document.activeElement.id === 'grSearch';
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Grading</h2><div class="row">${canGradeRole() && rows.length ? `<button class="btn sm" id="grSelect">${grSel.on ? 'Cancel' : 'Select'}</button>` : ''}<button class="btn primary sm" id="grList">Grading list</button></div></div>
+    <div class="field"><label for="grCycle">Preparation cycle</label><select id="grCycle">${state.cycles.map(x => `<option value="${x.cycle_id}"${x.cycle_id === G.cycle ? ' selected' : ''}>${esc(x.name)}${x.status === 'active' ? ' (active)' : ` (${label(x.status).toLowerCase()})`}</option>`).join('')}</select></div>
+    <p class="hint">${c.grading_date ? `Grading on <b>${fmt(c.grading_date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</b>. Grading fees are due ${fmt(addDays(c.grading_date, -21))}.` : 'No grading date set for this cycle yet (set it on the cycle).'}
+      Attendance, readiness and payment are shown to help you decide; nobody is made eligible or passed automatically.</p>
+    <div class="stats">
+      <div class="stat"><span class="n">${count('decide')}</span><span class="l">To decide</span></div>
+      <div class="stat"><span class="n">${count('nominated')}</span><span class="l">Put forward</span></div>
+      <div class="stat"><span class="n">${rows.filter(x => x.st === 'passed').length}</span><span class="l">Passed</span></div>
+    </div>
+    <div class="seg" role="group" aria-label="Show">${Object.entries(GR_FILTERS).map(([k, [t]]) => `<button data-grf="${k}" aria-pressed="${G.filter === k}">${t}<small>${count(k)}</small></button>`).join('')}</div>
+    <input type="search" id="grSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(G.search)}">
+    <ul class="list" id="grListItems"></ul>
+    ${!canGradeRole() ? '<p class="hint">You can view grading but not change it.</p>' : ''}`;
+  wireBack();
+  $('#grCycle').onchange = e => { G.cycle = e.target.value; stopGrSelect(); renderGrading(); };
+  $$('#view-grading [data-grf]').forEach(b => b.onclick = () => { G.filter = b.dataset.grf; renderGrading(); });
+  const sr = $('#grSearch'); sr.oninput = () => { G.search = sr.value; renderGrList(); };
+  if (keepFocus) { sr.focus(); sr.setSelectionRange(sr.value.length, sr.value.length); }
+  $('#grList').onclick = () => openGradingList(G.cycle);
+  const sb3 = $('#grSelect'); if (sb3) sb3.onclick = () => { grSel.on ? stopGrSelect() : startGrSelect(); renderGrading(); };
+  renderGrList();
+}
+function visibleGr() {
+  const G = state.gr, q = G.search.toLowerCase();
+  return grRows().filter(x => GR_FILTERS[G.filter][1](x.st) && (!q || x.s.full_name.toLowerCase().includes(q) || x.s.student_id.toLowerCase().includes(q)));
+}
+function renderGrList() {
+  const list = visibleGr(), sess = cycleSessions(state.gr.cycle).length;
+  const ST = { pending: ['', 'To decide'], eligible: ['ok', 'Eligible'], not_eligible: ['bad', 'Not eligible'], nominated: ['gold', 'Put forward'], passed: ['ok', 'Passed'], unsuccessful: ['bad', 'Unsuccessful'], deferred: ['warn', 'Deferred'] };
+  $('#grListItems').innerHTML = list.length ? list.map(x => `<li><button class="item" data-gr="${esc(x.s.student_id)}">
+      ${grSel.on ? `<input type="checkbox" tabindex="-1" ${grSel.ids.has(x.s.student_id) ? 'checked' : ''} style="pointer-events:none" aria-label="Select ${esc(x.s.full_name)}">` : ''}
+      <div class="main"><div class="name">${esc(x.s.full_name)}</div>
+        <div class="meta">${esc([`${x.s.belt_rank || 'No belt'} → ${x.target || '?'}`, danMeta(x.s)].filter(Boolean).join(' · '))}</div>
+        <div class="meta">${x.sum.attended ?? 0}/${sess} attended · sign-off ${x.sum.signoff_status === 'present' ? '✓' : '✗'} · ${esc(label(x.r.status || 'not_assessed'))}</div></div>
+      <span class="tag ${ST[x.st][0]}">${ST[x.st][1]}</span></button></li>`).join('')
+    : `<li><div class="empty">${grRows().length ? 'No one here.' : 'No students in this cycle.'}</div></li>`;
+  $$('#grListItems [data-gr]').forEach(b => b.onclick = () => {
+    const id = b.dataset.gr;
+    if (grSel.on) { grSel.ids.has(id) ? grSel.ids.delete(id) : grSel.ids.add(id); renderGrList(); return; }
+    openGrading(state.gr.cycle, id);
+  });
+  updateGrSelbar();
+}
+function startGrSelect() { grSel.on = true; grSel.ids.clear(); document.body.classList.add('selecting'); $('#grSelbar').hidden = false; }
+function stopGrSelect() { grSel.on = false; grSel.ids.clear(); const b = $('#grSelbar'); if (b) b.hidden = true; if (!state.att.selecting && !stuSel.on && !rdSel.on) document.body.classList.remove('selecting'); }
+function updateGrSelbar() { $('#grSelCount').textContent = `${grSel.ids.size} selected`; $$('#grSelbar [data-gbulk]').forEach(b => b.disabled = !grSel.ids.size); }
+
+async function saveDecision(cid, sid, decision, reason, notes) {
+  const c = cycle(cid), s = student(sid), g = gradingFor(cid, sid);
+  if (decision === 'not_eligible' && enrolment(cid, sid).is_grading) await run(sb.rpc('prep_set_grading', { p_cycle: cid, p_student: sid, p_grading: false }));
+  const fields = { eligibility_decision: decision, decision_reason: reason || null, status: decision === 'eligible' ? 'eligible' : 'not_eligible' };
+  if (notes !== undefined) fields.notes = notes || null;
+  if (g) await run(sb.from('prep_grading').update(fields).eq('grading_id', g.grading_id));
+  else await run(sb.from('prep_grading').insert({ ...fields, student_id: sid, cycle_id: cid, grading_event: `${c.name} grading`, grading_date: c.grading_date || null,
+    current_rank: s.belt_rank || null, target_rank: nextBelt(s.belt_rank) }));
+}
+async function putForward(cid, sid, on) {
+  const g = gradingFor(cid, sid);
+  await run(sb.rpc('prep_set_grading', { p_cycle: cid, p_student: sid, p_grading: on }));
+  if (g) await run(sb.from('prep_grading').update({ status: on ? 'nominated' : 'eligible', grading_date: cycle(cid).grading_date || g.grading_date }).eq('grading_id', g.grading_id));
+}
+async function recordResult(cid, sid, result) {
+  const g = gradingFor(cid, sid);
+  await run(sb.from('prep_grading').update({ result, status: result || 'nominated' }).eq('grading_id', g.grading_id));
+}
+
+function openGrading(cid, sid) {
+  const c = cycle(cid), f = grFacts(cid, sid), st = grStatus(f), edit = canGradeRole() && c.status !== 'archived';
+  const sess = cycleSessions(cid).length, d = f.g ? f.g.eligibility_decision : 'pending';
+  const fee = f.target ? gradingRate(f.target) : null;
+  openSheet(`<div class="body">
+    ${sheetHead(f.s.full_name, `${esc(f.s.belt_rank || 'No belt')} → <b>${esc(f.target || 'no next belt')}</b>${danMeta(f.s) ? ' · ' + esc(danMeta(f.s)) : ''}`)}
+    <dl class="kv">
+      <dt>Attendance</dt><dd>${f.sum.attended ?? 0} of ${sess} present · sign-off ${label(f.sum.signoff_status || 'not_recorded').toLowerCase()} ${f.sum.attendance_eligible ? tag('ok', 'Requirement met') : tag('bad', 'Not met')}</dd>
+      <dt>Readiness</dt><dd>${tag(f.r.status || 'not_assessed')}${f.r.reason ? ` <span class="small muted">${esc(RD_REASONS[f.r.reason])}</span>` : ''}</dd>
+      ${f.sp ? `<dt>Session fees</dt><dd>${tag(f.sp.status, f.sp.status === 'not_invoiced' && Number(f.sp.amount_due) === 0 ? 'Nothing owed yet' : '')}${Number(f.sp.balance) > 0 ? ` <span class="small muted">${money(f.sp.balance)} owing</span>` : ''}</dd>` : ''}
+      ${f.gp ? `<dt>Grading fee</dt><dd>${tag(f.gp.status, f.gp.status === 'not_invoiced' ? 'Fee not set' : '')}${Number(f.gp.balance) > 0 ? ` <span class="small muted">${money(f.gp.balance)} owing</span>` : ''}</dd>` : ''}
+    </dl>
+    <p class="hint">${f.meets ? 'Meets the attendance requirement and is marked ready.' : `Not met: ${esc(f.missing.join('; '))}. Marking them eligible needs a reason.`}</p>
+    ${f.g && f.g.decided_at ? `<p class="hint">Decision: ${label(d)} by ${esc(f.g.decided_by || 'unknown')} ${fmtTime(f.g.decided_at)}${f.g.decision_reason ? ` · "${esc(f.g.decision_reason)}"` : ''}</p>` : ''}
+    ${edit ? `<form id="grDecide" class="section"><h3>Eligibility</h3>
+      <label class="check"><input type="radio" name="grDec" value="eligible" ${d === 'eligible' ? 'checked' : ''}> Eligible to grade</label>
+      <label class="check"><input type="radio" name="grDec" value="not_eligible" ${d === 'not_eligible' ? 'checked' : ''}> Not eligible</label>
+      <div class="field"><label for="grReason">Reason</label><input type="text" id="grReason" value="${esc(f.g && f.g.decision_reason || '')}" placeholder="Needed if not eligible, or eligible without meeting the above"></div>
+      <div class="field"><label for="grNotes">Notes</label><input type="text" id="grNotes" value="${esc(f.g && f.g.notes || '')}"></div>
+      <div class="row"><button type="submit" class="btn" id="grDecSave">Save decision</button></div></form>` : ''}
+    ${edit && d === 'eligible' ? `<div class="section"><h3>Grading</h3>
+      ${st === 'nominated' || f.e.is_grading ? `<p>${tag('gold', 'Put forward')} grading to ${esc(f.target)}${c.grading_date ? ' on ' + fmt(c.grading_date) : ''}.</p>
+        ${!f.g.result ? '<div class="row"><button class="btn" id="grUnput">Take off grading</button></div>' : ''}`
+        : `<p class="hint">Putting them forward charges the grading fee for ${esc(f.target || '?')}${fee != null ? ` (${money(fee)})` : ' (no fee set for that belt yet)'}${c.grading_date ? `, due ${fmt(addDays(c.grading_date, -21))}` : ''}.</p>
+        <div class="row"><button class="btn primary" id="grPut">Put forward for grading</button></div>`}
+    </div>` : ''}
+    ${edit && f.e.is_grading ? `<div class="section"><h3>Result</h3>
+      <div class="seg" role="group" aria-label="Result">${['passed', 'unsuccessful', 'deferred'].map(r => `<button data-res="${r}" aria-pressed="${f.g && f.g.result === r}">${label(r)}</button>`).join('')}</div>
+      ${f.g && f.g.result ? '<button class="btn sm ghost" data-res="">Clear result</button>' : ''}
+    </div>` : (!edit && f.g && f.g.result ? `<p>Result: ${tag(f.g.result)}</p>` : '')}
+  </div>`);
+  const again = async msg => { toast(msg); await loadAll(); render(); openGrading(cid, sid); };
+  const fail = e => toast(/Give a reason/i.test(errMsg(e)) ? 'Give a reason: they have not met attendance or are not marked ready.' : errMsg(e), 7000);
+  const fm = $('#grDecide');
+  if (fm) fm.onsubmit = async e => {
+    e.preventDefault();
+    const dec = (sheet.querySelector('[name=grDec]:checked') || {}).value, why = $('#grReason').value.trim();
+    if (!dec) return toast('Choose Eligible or Not eligible.');
+    if (dec === 'not_eligible' && !why) return toast('Give a reason for not eligible.', 6000);
+    if (dec === 'eligible' && !f.meets && !why) return toast('Give a reason: they have not met attendance or are not marked ready.', 7000);
+    try { await saveDecision(cid, sid, dec, why, $('#grNotes').value.trim()); again('Decision saved'); } catch (er) { fail(er); }
+  };
+  const pf = $('#grPut'); if (pf) pf.onclick = async () => {
+    if (!f.target) return toast('Set their belt rank first.');
+    if (!await ask(`Put ${f.s.full_name} forward for grading to ${f.target}?${fee != null ? ` This charges the ${money(fee)} grading fee.` : ''}`, 'Put forward')) return;
+    try { await putForward(cid, sid, true); again(`${f.s.full_name} put forward`); } catch (er) { fail(er); }
+  };
+  const un = $('#grUnput'); if (un) un.onclick = async () => {
+    if (!await ask(`Take ${f.s.full_name} off grading? Their grading fee is removed (not possible once they have paid it).`, 'Take off', true)) return;
+    try { await putForward(cid, sid, false); again('Taken off grading'); } catch (er) { fail(er); }
+  };
+  sheet.querySelectorAll('[data-res]').forEach(b => b.onclick = async () => {
+    try { await recordResult(cid, sid, b.dataset.res || null); again(b.dataset.res ? `Result: ${label(b.dataset.res)}` : 'Result cleared'); } catch (er) { fail(er); }
+  });
+}
+
+// Several students at once
+async function bulkGrading(action) {
+  const cid = state.gr.cycle, ids = [...grSel.ids], rows = ids.map(id => ({ ...grFacts(cid, id) })).map(f => ({ ...f, st: grStatus(f) }));
+  const go = [], skip = [];
+  const why = { eligible: f => f.g && f.g.eligibility_decision !== 'pending' ? 'already decided' : f.meets ? '' : 'requirements not met, decide one at a time',
+    put: f => f.g && f.g.eligibility_decision === 'eligible' ? (f.e.is_grading ? 'already put forward' : (!f.target ? 'no belt set' : '')) : 'not marked eligible yet',
+    passed: f => f.e.is_grading ? (f.g.result === 'passed' ? 'already passed' : '') : 'not put forward' }[action];
+  rows.forEach(f => { const w = why(f); (w ? skip : go).push(w ? `${f.s.full_name} (${w})` : f); });
+  if (!go.length) return toast(skip.length === 1 ? `Nothing to do: ${skip[0]}.` : `Nothing to do: ${skip.length} skipped (already done, or requirements not met).`, 6000);
+  const text = { eligible: `Mark ${go.length} eligible to grade?`, put: `Put ${go.length} forward for grading? Each is charged the grading fee for their next belt.`,
+    passed: `Record ${go.length} as passed?` }[action];
+  if (!await ask(`${text}${skip.length ? ` Skipped: ${skip.join(', ')}.` : ''}`, 'Go')) return;
+  let n = 0;
+  try {
+    for (const f of go) {
+      if (action === 'eligible') await saveDecision(cid, f.s.student_id, 'eligible', '', undefined);
+      if (action === 'put') await putForward(cid, f.s.student_id, true);
+      if (action === 'passed') await recordResult(cid, f.s.student_id, 'passed');
+      n++;
+    }
+    toast(`${n} done`);
+  } catch (e) { toast(`${n} done, then stopped: ${errMsg(e)}`, 8000); }
+  stopGrSelect(); await loadAll(); render();
+}
+
+/* =========================================================================
+   Grading list generator
+   ========================================================================= */
+function glColumns(cid) {
+  const sess = cycleSessions(cid);
+  return [
+    { k: 'student_id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'cert', t: 'Certificate name' },
+    { k: 'belt', t: 'Current belt' }, { k: 'target', t: 'Grading to' }, { k: 'dan', t: 'Dan number' },
+    ...sess.map(se => ({ k: 'att_' + se.session_number, t: isSignoff(se) ? 'Sign-off' : 'Session ' + se.session_number, group: 'sessions' })),
+    { k: 'attended', t: 'Sessions attended' }, { k: 'pct', t: 'Attendance %' }, { k: 'att_met', t: 'Attendance requirement met' },
+    { k: 'readiness', t: 'Readiness' }, { k: 'rd_reason', t: 'Readiness reason' },
+    { k: 'eligibility', t: 'Eligibility' }, { k: 'decision_reason', t: 'Decision reason' }, { k: 'put', t: 'Put forward' },
+    { k: 'grading_date', t: 'Grading date' }, { k: 'status', t: 'Grading status' }, { k: 'result', t: 'Result' },
+    { k: 'sess_fee', t: 'Session fees', money: true }, { k: 'sess_owing', t: 'Session fees owing', money: true },
+    { k: 'grade_fee', t: 'Grading fee', money: true }, { k: 'grade_owing', t: 'Grading fee owing', money: true },
+    { k: 'notes', t: 'Notes' }
+  ].filter(c => !c.money || has('payments'));
+}
+function glValue(k, f, cid) {
+  const c = cycle(cid);
+  if (k.startsWith('att_')) { const se = cycleSessions(cid).find(x => 'att_' + x.session_number === k); const a = se && state.attendance.find(x => x.session_id === se.session_id && x.student_id === f.s.student_id); return a ? ({ present: 'P', absent: 'A', excused: 'E', not_recorded: '' })[a.status] : ''; }
+  return ({
+    student_id: f.s.student_id, name: f.s.full_name, cert: f.s.certificate_name || f.s.full_name, belt: f.s.belt_rank || '', target: f.target || '',
+    dan: (danFor(f.s) || {}).dan_number ?? '', attended: `${f.sum.attended ?? 0}/${cycleSessions(cid).length}`, pct: f.sum.attendance_pct != null ? f.sum.attendance_pct + '%' : '',
+    att_met: f.sum.attendance_eligible ? 'Yes' : 'No', readiness: label(f.r.status || 'not_assessed'), rd_reason: f.r.reason ? RD_REASONS[f.r.reason] : '',
+    eligibility: f.g ? label(f.g.eligibility_decision) : 'Awaiting decision', decision_reason: f.g ? f.g.decision_reason || '' : '', put: f.e.is_grading ? 'Yes' : 'No',
+    grading_date: c.grading_date ? fmt(c.grading_date) : '', status: label(f.st), result: f.g && f.g.result ? label(f.g.result) : '',
+    sess_fee: f.sp ? label(f.sp.status) : '', sess_owing: f.sp && Number(f.sp.balance) > 0 ? money(f.sp.balance) : '',
+    grade_fee: f.gp ? label(f.gp.status) : '', grade_owing: f.gp && Number(f.gp.balance) > 0 ? money(f.gp.balance) : '', notes: f.g ? f.g.notes || '' : ''
+  })[k] ?? '';
+}
+const GL_PRESETS = {
+  instructor: { name: 'Instructor list', audience: 'instructor', columns: ['name', 'belt', 'target', 'dan', 'sessions', 'att_met', 'readiness', 'eligibility', 'put'], filters: { who: 'put' } },
+  admin: { name: 'Admin list', audience: 'admin', columns: ['student_id', 'name', 'cert', 'belt', 'target', 'dan', 'attended', 'att_met', 'readiness', 'eligibility', 'put', 'sess_fee', 'sess_owing', 'grade_fee', 'grade_owing'], filters: { who: 'put' } }
+};
+const GL_WHO = { put: 'Put forward for grading', eligible: 'Eligible (put forward or not)', results: 'With a result', all: 'Everyone in the cycle' };
+
+function openGradingList(cid) {
+  const c = cycle(cid), all = glColumns(cid);
+  const expand = keys => keys.flatMap(k => k === 'sessions' ? all.filter(x => x.group === 'sessions').map(x => x.k) : [k]).filter(k => all.some(x => x.k === k));
+  let L = { name: '', columns: expand((has('payments') ? GL_PRESETS.admin : GL_PRESETS.instructor).columns), filters: { who: 'put', belt: '', readiness: '' }, templateId: null };
+  const load = t => { L = { name: t.name, columns: expand(t.columns), filters: { who: 'put', belt: '', readiness: '', ...(t.filters || {}) }, templateId: t.template_id || null }; draw(); };
+  const saved = () => state.templates.filter(t => t.report_type === 'grading');
+  const rowsFor = () => grRows().filter(x => ({ put: x.e.is_grading, eligible: x.g && x.g.eligibility_decision === 'eligible', results: !!(x.g && x.g.result), all: true })[L.filters.who])
+    .filter(x => !L.filters.belt || x.s.belt_rank === L.filters.belt).filter(x => !L.filters.readiness || (x.r.status || 'not_assessed') === L.filters.readiness);
+  const title = () => `Grading list · ${c.name}${c.grading_date ? ' · grading ' + fmt(c.grading_date) : ''}`;
+  function draw() {
+    const cols = L.columns.map(k => all.find(x => x.k === k)).filter(Boolean), rows = rowsFor();
+    openSheet(`<div class="body">
+      ${sheetHead('Grading list', esc(c.name))}
+      <div class="field"><label for="glTpl">Template</label><select id="glTpl"><option value="">Choose…</option>
+        <option value="preset:instructor">Instructor list (no fees)</option>${has('payments') ? '<option value="preset:admin">Admin list (with fees)</option>' : ''}
+        ${saved().map(t => `<option value="${t.template_id}"${t.template_id === L.templateId ? ' selected' : ''}>${esc(t.name)}${t.audience === 'admin' ? ' (admin)' : ''}</option>`).join('')}</select></div>
+      <div class="grid2">
+        <div class="field"><label for="glWho">Who</label><select id="glWho">${Object.entries(GL_WHO).map(([k, t]) => `<option value="${k}"${L.filters.who === k ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label for="glBelt">Belt</label><select id="glBelt">${beltOptions(L.filters.belt, 'All belts').replace(' (not in list)', '')}</select></div>
+      </div>
+      <div class="field"><label for="glRd">Readiness</label><select id="glRd"><option value="">Any</option>${RD_STATUSES.map(st => `<option value="${st}"${L.filters.readiness === st ? ' selected' : ''}>${label(st)}</option>`).join('')}</select></div>
+      <details><summary><b>Columns</b> <span class="muted small">${cols.length} chosen · tap ↑ ↓ to reorder</span></summary>
+        <div class="checklist" id="glCols" style="max-height:none">${[...cols, ...all.filter(x => !L.columns.includes(x.k))].map(col => { const on = L.columns.includes(col.k), i = L.columns.indexOf(col.k);
+          return `<div class="check" style="justify-content:space-between"><label class="check" style="min-height:0;flex:1"><input type="checkbox" data-col="${col.k}" ${on ? 'checked' : ''}> ${esc(col.t)}${col.money ? ' <span class="tag warn">$</span>' : ''}</label>
+            ${on ? `<span><button class="btn sm ghost" data-up="${col.k}" ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(col.t)} up">↑</button><button class="btn sm ghost" data-down="${col.k}" ${i === L.columns.length - 1 ? 'disabled' : ''} aria-label="Move ${esc(col.t)} down">↓</button></span>` : ''}</div>`; }).join('')}</div>
+      </details>
+      <p class="hint"><b>${rows.length}</b> student${rows.length === 1 ? '' : 's'}. ${cols.some(x => x.money) ? 'This list includes fees, so share it only with admins.' : ''}</p>
+      <div class="preview" id="glPreview"><table class="grid"><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>
+        ${rows.map(r => `<tr>${cols.map(x => `<td>${esc(glValue(x.k, r, cid))}</td>`).join('')}</tr>`).join('')}</table></div>
+      <div class="row"><button class="btn" id="glCsv">Download CSV</button><button class="btn" id="glPrint">Print</button></div>
+      <div class="row"><input type="text" id="glName" placeholder="Template name" value="${esc(L.name)}" class="grow" style="flex:1 1 160px"><button class="btn" id="glSave">Save template</button>${L.templateId ? '<button class="btn danger" id="glDel">Delete</button>' : ''}</div>
+      <div class="dlg-actions"><button class="btn primary" data-close>Done</button></div>
+    </div>`);
+    $('#glTpl').onchange = e => { const v = e.target.value; if (v.startsWith('preset:')) load({ ...GL_PRESETS[v.slice(7)] }); else { const t = saved().find(x => x.template_id === v); if (t) load(t); } };
+    $('#glWho').onchange = e => { L.filters.who = e.target.value; draw(); };
+    $('#glBelt').onchange = e => { L.filters.belt = e.target.value; draw(); };
+    $('#glRd').onchange = e => { L.filters.readiness = e.target.value; draw(); };
+    const keepOpen = () => { const d = sheet.querySelector('details'); return d && d.open; };
+    const redraw = () => { const open = keepOpen(); draw(); if (open) sheet.querySelector('details').open = true; };
+    sheet.querySelectorAll('[data-col]').forEach(cb => cb.onchange = () => { const k = cb.dataset.col; L.columns = cb.checked ? [...L.columns, k] : L.columns.filter(x => x !== k); redraw(); });
+    sheet.querySelectorAll('[data-up],[data-down]').forEach(b => b.onclick = () => { const k = b.dataset.up || b.dataset.down, i = L.columns.indexOf(k), j = b.dataset.up ? i - 1 : i + 1;
+      [L.columns[i], L.columns[j]] = [L.columns[j], L.columns[i]]; redraw(); });
+    const cell = v => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+    $('#glCsv').onclick = () => {
+      const lines = [[title()], [`Generated ${fmt(today())}`], [], cols.map(x => x.t), ...rows.map(r => cols.map(x => glValue(x.k, r, cid)))];
+      const blob = new Blob(['﻿' + lines.map(l => l.map(cell).join(',')).join('\r\n') + '\r\n'], { type: 'text/csv' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `grading-list-${c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${today()}.csv`; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000); toast('CSV downloaded. It opens in Excel or Google Sheets.');
+    };
+    $('#glPrint').onclick = () => {
+      const w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print.');
+      w.document.write(`<!doctype html><title>${esc(title())}</title><style>body{font:13px Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{color:#555;margin:0 0 12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:5px 6px;text-align:left}th{background:#eee}</style>
+        <h1>${esc(title())}</h1><p>Generated ${fmt(today())} · ${rows.length} students</p><table><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(x => `<td>${esc(glValue(x.k, r, cid))}</td>`).join('')}</tr>`).join('')}</table>`);
+      w.document.close(); w.focus(); w.print();
+    };
+    $('#glSave').onclick = async () => {
+      const name = $('#glName').value.trim(); if (!name) return toast('Give the template a name.');
+      const audience = cols.some(x => x.money) ? 'admin' : 'instructor', rec = { name, report_type: 'grading', audience, columns: L.columns, filters: L.filters };
+      const same = saved().find(t => t.name.toLowerCase() === name.toLowerCase());
+      try {
+        if (same) await run(sb.from('prep_report_templates').update(rec).eq('template_id', same.template_id));
+        else await run(sb.from('prep_report_templates').insert(rec));
+        await loadAll(); const t = saved().find(x => x.name.toLowerCase() === name.toLowerCase()); L.templateId = t && t.template_id; L.name = name; toast('Template saved'); draw();
+      } catch (e) { toast(errMsg(e), 6000); }
+    };
+    const del = $('#glDel'); if (del) del.onclick = async () => {
+      if (!await ask(`Delete the template "${L.name}"?`, 'Delete', true)) return draw();
+      try { await run(sb.from('prep_report_templates').delete().eq('template_id', L.templateId)); await loadAll(); L.templateId = null; L.name = ''; toast('Template deleted'); draw(); } catch (e) { toast(errMsg(e), 6000); }
+    };
+  }
+  draw();
+}
+
+/* =========================================================================
    More: settings, users, audit log
    ========================================================================= */
 async function renderMore() {
@@ -1699,6 +2011,7 @@ async function renderMore() {
   v.innerHTML = `<div class="view-head"><h2>More</h2></div>
     <ul class="list">
       <li><button class="item" data-goto="cycles"><div class="main"><div class="name">Preparation cycles</div><div class="meta">Start a cycle, session and grading dates, fees, who is grading</div></div><span class="muted">›</span></button></li>
+      <li><button class="item" data-goto="grading"><div class="main"><div class="name">Grading</div><div class="meta">Eligibility, who is grading, results, grading lists</div></div><span class="muted">›</span></button></li>
       ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
     </ul>
     <div class="card"><div class="row"><div class="grow"><b>${esc(state.email)}</b><div class="small muted">${state.roles.map(r => ROLE_NAMES[r] || r).join(', ')}</div></div>
@@ -1731,7 +2044,7 @@ async function renderMore() {
       <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
       <div id="userList" class="small muted">Loading...</div></div>
     <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
-    <p class="hint">Black Belt Prep · Stage 4 build</p>`;
+    <p class="hint">Black Belt Prep · Stage 6 build</p>`;
   $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
   $$('#view-more [data-goto]').forEach(b => b.onclick = () => showView(b.dataset.goto));
   if (!admin) return;
@@ -1839,6 +2152,9 @@ async function start() {
 $('#rdSelAll').onclick = () => { visibleRd().forEach(x => rdSel.ids.add(x.s.student_id)); renderRdList(); };
 $('#rdSelDone').onclick = () => { stopRdSelect(); renderReadiness(); };
 $('#rdSetBtn').onclick = () => openReadiness(state.rd.cycle, [...rdSel.ids]);
+$('#grSelAll').onclick = () => { visibleGr().forEach(x => grSel.ids.add(x.s.student_id)); renderGrList(); };
+$('#grSelDone').onclick = () => { stopGrSelect(); renderGrading(); };
+$$('#grSelbar [data-gbulk]').forEach(b => b.onclick = () => bulkGrading(b.dataset.gbulk));
 sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') showOnly('#authView'); });
 start();
 </script>

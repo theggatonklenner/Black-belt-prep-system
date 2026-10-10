@@ -22,6 +22,7 @@ Progress:
 - Stage 2, database (and why it moved from AppSheet to Supabase): [spec/stage-2-database.md](spec/stage-2-database.md)
 - Stage 3, student register, cycles and attendance screens: [spec/stage-3-app.md](spec/stage-3-app.md)
 - Stage 4, readiness and payments screens: [spec/stage-4-readiness-payments.md](spec/stage-4-readiness-payments.md)
+- Stage 6, grading and grading lists: [spec/stage-6-grading.md](spec/stage-6-grading.md)
 
 | # | Section |
 |---|---|
@@ -50,7 +51,7 @@ Progress:
 3. Student register, preparation cycles, individual and bulk attendance (done)
 4. Readiness tracking and payment management (done)
 5. Dashboard, summary cards, filters and follow-up lists
-6. Grading management and grading list generator
+6. Grading management and grading list generator (done)
 7. Certificate management and certificate list generator
 8. ID card records, printing statuses and print history
 9. Reports, exports, permissions and automation

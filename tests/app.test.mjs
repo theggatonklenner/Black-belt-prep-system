@@ -67,7 +67,7 @@ async function open(email) {
 const shot = async (page, name) => page.screenshot({ path: join(SHOTS, `${String(++shotN).padStart(2, '0')}-${name}.png`), fullPage: false });
 const confirm = async page => { await page.waitForSelector('#askDlg[open]'); const t = await page.textContent('#askText'); await page.click('#askYes'); await page.waitForSelector('#askDlg:not([open])', { state: 'attached' }); return t; };
 const tab = async (page, v) => {
-  if (v === 'cycles' || v === 'payments') { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
+  if (v === 'cycles' || v === 'payments' || v === 'grading') { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
   else await page.click(`.tab[data-view="${v}"]`);
 };
 const settle = page => page.waitForTimeout(450);
@@ -350,12 +350,25 @@ try {
     await page.click('#setForm button[type=submit]'); await settle(page);
     ok((await q(`select fee::text f from prep_grading_fee_rates where target_rank = 'Probationary Black Belt'`))[0]?.f === '150.00', 'grading fee saved for Probationary Black Belt');
     await tab(page, 'cycles'); await page.click('[data-cycle]:has-text("Term 1 2027")');
-    ok((await page.textContent('#sheet')).includes('Tick the students who are grading'), 'cycle explains how to choose who is grading');
-    await page.check('[data-grading="BB0001"]'); await settle(page);
+    ok((await page.textContent('#sheet')).includes('Decide who grades on the Grading screen'), 'cycle points to the Grading screen');
+    await page.click('#cyGrading');
+    await page.waitForSelector('#grListItems [data-gr="BB0001"]');
+    await page.click('#grListItems [data-gr="BB0001"]');
+    ok((await page.textContent('#sheet')).includes('Not met'), 'grading record shows what is not met (attendance, readiness)');
+    await page.check('#grDecide [name=grDec][value=eligible]'); await page.click('#grDecSave');
+    ok((await toastText(page)).includes('Give a reason'), 'eligible without meeting requirements needs a reason');
+    await page.fill('#grReason', 'Head instructor approved'); await page.click('#grDecSave'); await settle(page);
+    const dec = (await q(`select g.eligibility_decision, g.decision_reason, g.decided_by, g.attendance_eligible, g.target_rank from prep_grading g join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and g.student_id = 'BB0001'`))[0];
+    ok(dec && dec.eligibility_decision === 'eligible' && dec.decision_reason === 'Head instructor approved' && dec.attendance_eligible === false && dec.target_rank === 'Probationary Black Belt',
+       'override recorded with the reason and the attendance at the time');
+    await page.waitForSelector('#grPut');
+    ok((await page.textContent('#sheet')).includes('$150'), 'putting forward shows the grading fee it will charge');
+    await page.click('#grPut'); await confirm(page); await settle(page);
     const gf = (await q(`select p.amount_due::text a, p.due_date::text d, p.target_rank, c.grading_date::text g from prep_payments p join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and p.student_id = 'BB0001' and p.kind = 'grading'`))[0];
     ok(gf && gf.a === '150.00' && gf.target_rank === 'Probationary Black Belt', 'ticking a Cho Dan Bo student charges the Probationary grading fee ($150)');
     ok(gf && gf.d === addDaysIso(gf.g, -21), 'grading fee due 3 weeks before the grading date');
-    ok((await page.textContent('#sheet')).includes('Grading to Probationary Black Belt'), 'cycle list shows who is grading and to which belt');
+    await page.waitForSelector('#sheet [data-res="passed"]');
+    ok((await page.textContent('#sheet')).includes('Put forward'), 'grading record shows they are put forward');
     await page.click('#sheet [data-close]');
     await tab(page, 'students'); await page.click('[data-student="BB0001"]');
     const rec = await page.textContent('#sheet');
@@ -477,6 +490,49 @@ try {
     await page.click('#view-payments [data-kind="grading"]');
     ok((await page.textContent('#payList')).includes('Grading to Probationary Black Belt'), 'grading fees can be shown on their own');
     await shot(page, 'payments');
+    await ctx.close();
+  }
+
+  console.log('\nGrading results and lists');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'grading');
+    await page.click('#view-grading [data-grf="nominated"]');
+    ok((await page.textContent('#grListItems')).includes('Alex Smith') && (await page.textContent('#grListItems')).includes('Cho Dan Bo → Probationary Black Belt'), 'Put forward list shows each student and the belt they are going to');
+    await page.click('#grListItems [data-gr="BB0001"]'); await page.waitForSelector('#sheet [data-res="passed"]');
+    await page.click('#sheet [data-res="passed"]'); await settle(page);
+    ok((await q(`select g.result from prep_grading g join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and g.student_id = 'BB0001'`))[0].result === 'passed', 'result recorded as passed');
+    ok((await q(`select belt_rank from prep_students where student_id = 'BB0001'`))[0].belt_rank === 'Cho Dan Bo', 'belt is not changed by a result');
+    ok(!(await page.$('#grPromote')), 'there is no belt-update button');
+    await page.click('#sheet [data-close]');
+    await page.click('#view-grading [data-grf="all"]');
+    await page.click('#grSelect'); await page.click('#grSelAll');
+    ok(!(await page.$('#grSelbar [data-gbulk="promote"]')), 'bulk actions do not include updating belts');
+    await page.click('#grSelbar [data-gbulk="eligible"]');
+    await page.waitForSelector('#askDlg[open], #toast:not([hidden])');
+    const bt = (await page.isVisible('#askDlg[open]')) ? await page.textContent('#askText') : await page.textContent('#toast');
+    ok(/requirements not met|Skipped|Nothing to do/.test(bt), 'bulk "Eligible" skips students who have not met the requirements');
+    if (await page.isVisible('#askDlg[open]')) await page.click('#askNo');
+    await page.click('#grSelDone');
+    await shot(page, 'grading');
+
+    await page.click('#grList'); await page.waitForSelector('#glPreview');
+    await page.selectOption('#glTpl', 'preset:instructor'); await page.selectOption('#glWho', 'all');
+    const head = await page.textContent('#glPreview tr');
+    ok(head.includes('Name') && head.includes('Grading to') && head.includes('Sign-off') && !head.includes('owing'), 'instructor list has grading-to, attendance and no fees');
+    const body = await page.textContent('#glPreview');
+    ok(body.includes('Alex Smith') && body.includes('Probationary Black Belt'), 'list shows the next belt for each student');
+    await page.selectOption('#glTpl', 'preset:admin'); await page.selectOption('#glWho', 'all');
+    ok((await page.textContent('#glPreview tr')).includes('Grading fee owing'), 'admin list adds fee columns');
+    await page.click('#sheet details summary');
+    await page.click('#glCols input[data-col="notes"]'); await page.waitForSelector('#glPreview');
+    ok((await page.textContent('#glPreview tr')).includes('Notes'), 'columns can be added');
+    const dl = page.waitForEvent('download'); await page.click('#glCsv'); const file = await dl;
+    ok(/grading-list-term-1-2027-.*\.csv$/.test(file.suggestedFilename()), 'CSV downloads with a clear file name');
+    await page.fill('#glName', 'My admin list'); await page.click('#glSave'); await settle(page);
+    const t = (await q(`select name, audience, columns from prep_report_templates where name = 'My admin list'`))[0];
+    ok(t && t.audience === 'admin' && t.columns.includes('notes'), 'template saved (marked admin because it has fees)');
+    await shot(page, 'grading-list');
     await ctx.close();
   }
 
