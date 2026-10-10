@@ -67,7 +67,7 @@ async function open(email) {
 const shot = async (page, name) => page.screenshot({ path: join(SHOTS, `${String(++shotN).padStart(2, '0')}-${name}.png`), fullPage: false });
 const confirm = async page => { await page.waitForSelector('#askDlg[open]'); const t = await page.textContent('#askText'); await page.click('#askYes'); await page.waitForSelector('#askDlg:not([open])', { state: 'attached' }); return t; };
 const tab = async (page, v) => {
-  if (v === 'cycles' || v === 'payments' || v === 'grading') { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
+  if (['cycles', 'payments', 'grading', 'certificates'].includes(v)) { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
   else await page.click(`.tab[data-view="${v}"]`);
 };
 const settle = page => page.waitForTimeout(450);
@@ -516,23 +516,61 @@ try {
     await page.click('#grSelDone');
     await shot(page, 'grading');
 
-    await page.click('#grList'); await page.waitForSelector('#glPreview');
-    await page.selectOption('#glTpl', 'preset:instructor'); await page.selectOption('#glWho', 'all');
-    const head = await page.textContent('#glPreview tr');
+    await page.click('#grList'); await page.waitForSelector('#lbPreview');
+    await page.selectOption('#lbTpl', 'preset:instructor'); await page.selectOption('#lbF_who', 'all');
+    const head = await page.textContent('#lbPreview tr');
     ok(head.includes('Name') && head.includes('Grading to') && head.includes('Sign-off') && !head.includes('owing'), 'instructor list has grading-to, attendance and no fees');
-    const body = await page.textContent('#glPreview');
+    const body = await page.textContent('#lbPreview');
     ok(body.includes('Alex Smith') && body.includes('Probationary Black Belt'), 'list shows the next belt for each student');
-    await page.selectOption('#glTpl', 'preset:admin'); await page.selectOption('#glWho', 'all');
-    ok((await page.textContent('#glPreview tr')).includes('Grading fee owing'), 'admin list adds fee columns');
+    await page.selectOption('#lbTpl', 'preset:admin'); await page.selectOption('#lbF_who', 'all');
+    ok((await page.textContent('#lbPreview tr')).includes('Grading fee owing'), 'admin list adds fee columns');
     await page.click('#sheet details summary');
-    await page.click('#glCols input[data-col="notes"]'); await page.waitForSelector('#glPreview');
-    ok((await page.textContent('#glPreview tr')).includes('Notes'), 'columns can be added');
-    const dl = page.waitForEvent('download'); await page.click('#glCsv'); const file = await dl;
+    await page.click('#lbCols input[data-col="notes"]'); await page.waitForSelector('#lbPreview');
+    ok((await page.textContent('#lbPreview tr')).includes('Notes'), 'columns can be added');
+    const dl = page.waitForEvent('download'); await page.click('#lbCsv'); const file = await dl;
     ok(/grading-list-term-1-2027-.*\.csv$/.test(file.suggestedFilename()), 'CSV downloads with a clear file name');
-    await page.fill('#glName', 'My admin list'); await page.click('#glSave'); await settle(page);
+    await page.fill('#lbName', 'My admin list'); await page.click('#lbSave'); await settle(page);
     const t = (await q(`select name, audience, columns from prep_report_templates where name = 'My admin list'`))[0];
     ok(t && t.audience === 'admin' && t.columns.includes('notes'), 'template saved (marked admin because it has fees)');
     await shot(page, 'grading-list');
+    await ctx.close();
+  }
+
+  console.log('\nCertificates');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'dashboard');
+    ok((await page.textContent('#view-dashboard')).includes('Certificates'), 'dashboard shows a certificates summary once someone has passed');
+    await tab(page, 'certificates');
+    await page.waitForSelector('#ceItems [data-ce="BB0001"]');
+    ok((await page.textContent('#ceItems')).includes('Awaiting approval'), 'a student who passed shows as awaiting approval');
+    await page.click('#ceItems [data-ce="BB0001"]'); await page.waitForSelector('#ceForm');
+    ok(await page.inputValue('#ceName') === 'Alex Smith' && await page.inputValue('#ceRank') === 'Probationary Black Belt' && await page.inputValue('#ceNo') === '501',
+       'certificate details filled in: name, awarded rank (the belt graded to) and Dan number');
+    await page.fill('#ceName', 'Alexander James Smith');
+    await page.click('#ceNext'); await settle(page);
+    let ce = (await q(`select * from prep_certificates where student_id = 'BB0001'`))[0];
+    ok(ce && ce.status === 'details_check' && ce.certificate_name === 'Alexander James Smith' && ce.certificate_number === '501' && ce.certificate_type === 'Dan certificate',
+       'saving moves it to the next step (details to be checked) with the exact name');
+    await page.click('#view-certificates [data-cef="all"]');
+    await page.click('#ceItems [data-ce="BB0001"]'); await page.waitForSelector('#ceForm');
+    await page.selectOption('#ceStatus', 'issued'); await page.click('#ceSave'); await settle(page);
+    ce = (await q(`select status, issue_date::text d from prep_certificates where student_id = 'BB0001'`))[0];
+    ok(ce.status === 'issued' && ce.d, 'marked issued; issue date filled in automatically');
+    await page.click('#ceList'); await page.waitForSelector('#lbPreview');
+    await page.selectOption('#lbTpl', 'preset:issued');
+    ok((await page.textContent('#lbPreview')).includes('Alexander James Smith') && (await page.textContent('#lbPreview tr')).includes('Certificate number'), 'certificate list "Issued" shows the certificate');
+    await page.selectOption('#lbTpl', 'preset:production');
+    ok(!(await page.textContent('#lbPreview')).includes('Alexander'), '"Ready for production" list is separate and does not include issued certificates');
+    const dl = page.waitForEvent('download'); await page.click('#lbCsv'); const file = await dl;
+    ok(/certificate-list-term-1-2027-.*\.csv$/.test(file.suggestedFilename()), 'certificate list downloads as CSV');
+    await page.fill('#lbName', 'Production run'); await page.click('#lbSave'); await settle(page);
+    ok((await q(`select report_type from prep_report_templates where name = 'Production run'`))[0]?.report_type === 'certificate', 'certificate list templates are saved separately from grading lists');
+    await page.click('#sheet [data-close]');
+    await page.click('#ceSelect'); await page.click('#ceSelAll'); await page.click('#ceSetBtn');
+    await page.selectOption('#cbStatus', 'reprint_required'); await page.click('#cbGo'); await confirm(page); await settle(page);
+    ok((await q(`select status from prep_certificates where student_id = 'BB0001'`))[0].status === 'reprint_required', 'several certificates can be set at once (reprint required)');
+    await shot(page, 'certificates');
     await ctx.close();
   }
 

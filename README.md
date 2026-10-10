@@ -23,6 +23,7 @@ Progress:
 - Stage 3, student register, cycles and attendance screens: [spec/stage-3-app.md](spec/stage-3-app.md)
 - Stage 4, readiness and payments screens: [spec/stage-4-readiness-payments.md](spec/stage-4-readiness-payments.md)
 - Stage 6, grading and grading lists: [spec/stage-6-grading.md](spec/stage-6-grading.md)
+- Stage 7, certificates and certificate lists: [spec/stage-7-certificates.md](spec/stage-7-certificates.md)
 
 | # | Section |
 |---|---|
@@ -52,7 +53,7 @@ Progress:
 4. Readiness tracking and payment management (done)
 5. Dashboard, summary cards, filters and follow-up lists
 6. Grading management and grading list generator (done)
-7. Certificate management and certificate list generator
+7. Certificate management and certificate list generator (done)
 8. ID card records, printing statuses and print history
 9. Reports, exports, permissions and automation
 10. Full test with sample data before using real student records

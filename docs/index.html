@@ -303,6 +303,9 @@
   <!-- Grading -->
   <section class="view" id="view-grading" hidden></section>
 
+  <!-- Certificates -->
+  <section class="view" id="view-certificates" hidden></section>
+
   <!-- Payments -->
   <section class="view" id="view-payments" hidden></section>
 
@@ -350,6 +353,13 @@
       <button class="btn" data-gbulk="put">Put forward</button>
       <button class="btn" data-gbulk="passed">Passed</button>
     </div>
+  </div>
+</div>
+
+<div class="selbar" id="ceSelbar" hidden>
+  <div class="selbar-inner">
+    <div class="row"><b id="ceSelCount" class="grow">0 selected</b><button class="btn sm ghost" id="ceSelAll">Select all shown</button><button class="btn sm ghost" id="ceSelDone">Done</button></div>
+    <button class="btn primary" id="ceSetBtn">Set certificate status</button>
   </div>
 </div>
 
@@ -505,7 +515,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, readiness: [], grading: [], templates: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], grading: [], templates: [], certificates: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -541,7 +551,8 @@ async function loadAll() {
   const counters = await sb.from('prep_dan_counters').select('*');
   state.countersReady = !counters.error;
   state.danCounters = counters.data || [];
-  const [rd, gr, tpl] = await Promise.all([sb.from('prep_readiness').select('*'), sb.from('prep_grading').select('*'), sb.from('prep_report_templates').select('*').order('name')]);
+  const [rd, gr, tpl, ce] = await Promise.all([sb.from('prep_readiness').select('*'), sb.from('prep_grading').select('*'), sb.from('prep_report_templates').select('*').order('name'), sb.from('prep_certificates').select('*')]);
+  state.certificates = ce.data || [];
   state.readiness = rd.data || [];
   state.grading = gr.data || [];
   state.templates = tpl.data || [];
@@ -573,12 +584,13 @@ function scheduleReload() {
 /* ---------- Navigation ---------- */
 function showView(v) {
   state.view = v;
-  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading'].includes(v)))));
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
   if (v !== 'students') stopStudentSelect();
   if (v !== 'readiness') stopRdSelect();
   if (v !== 'grading') stopGrSelect();
+  if (v !== 'certificates') stopCeSelect();
   render();
   window.scrollTo(0, 0);
 }
@@ -589,7 +601,7 @@ function render() {
   const c = currentCycle();
   $('#cyclePill').hidden = !c;
   if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
-  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, more: renderMore })[state.view]();
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, more: renderMore })[state.view]();
 }
 
 /* =========================================================================
@@ -671,12 +683,22 @@ function renderDashboard() {
       <button class="stat ${sOverdue.length + gOverdue.length ? 'bad' : ''}" data-paygo="overdue"><span class="n">${sOverdue.length + gOverdue.length}</span><span class="l">Overdue</span></button>
       <button class="stat" data-paygo="paid"><span class="n">${sFees.filter(p => p.status === 'paid').length}</span><span class="l">Session fees fully paid</span></button>
     </div>` : ''}
+    ${(() => {
+      const gr = state.grading.filter(g => g.cycle_id === c.cycle_id && g.result === 'passed');
+      if (!gr.length) return '';
+      const stOf = g => (certFor(g) || {}).status || 'awaiting_approval', cn = (...st) => gr.filter(g => st.includes(stOf(g))).length;
+      return `<h3>Certificates</h3><div class="stats">
+        <button class="stat ${cn('awaiting_approval', 'details_check') ? 'warn' : ''}" data-go="certificates"><span class="n">${cn('awaiting_approval', 'details_check')}</span><span class="l">Awaiting approval</span></button>
+        <button class="stat" data-go="certificates"><span class="n">${cn('approved', 'ready_for_production')}</span><span class="l">Ready for production</span></button>
+        <button class="stat" data-go="certificates"><span class="n">${cn('printed')}</span><span class="l">Printed, not issued</span></button>
+        <button class="stat" data-go="certificates"><span class="n">${cn('issued')}</span><span class="l">Issued</span></button>
+      </div>`; })()}
     <h3>Needs attention</h3>
     ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}"${a.open ? ` data-open="${a.open}"` : ''}${a.pid ? ` data-pid="${a.pid}"` : ''}>
       <div class="main"><div class="name">${esc(a.r.s.full_name)}</div><div class="meta">${esc([a.r.s.student_id, a.r.s.belt_rank].filter(Boolean).join(' · '))}</div></div>
       <span class="tag ${a.tone}">${esc(a.issue)}</span></button></li>`).join('')}</ul>`
       : '<div class="card empty">Nothing needs attention for attendance.</div>'}
-    <p class="hint">Grading results, certificates and ID cards are added in later build stages.</p>`;
+    <p class="hint">ID cards are added in a later build stage.</p>`;
   $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
   $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => b.dataset.open === 'readiness' ? openReadiness(c.cycle_id, b.dataset.student)
     : b.dataset.pid ? openPayment(b.dataset.pid) : openStudent(b.dataset.student));
@@ -1930,64 +1952,63 @@ const GL_PRESETS = {
 };
 const GL_WHO = { put: 'Put forward for grading', eligible: 'Eligible (put forward or not)', results: 'With a result', all: 'Everyone in the cycle' };
 
-function openGradingList(cid) {
-  const c = cycle(cid), all = glColumns(cid);
+/* =========================================================================
+   List builder (grading lists and certificate lists share this)
+   cfg: { type, heading, title(), columns(), value(key, row), rows(filters), filters: [{ key, label, options: [[value, text]] }],
+          presets: { id: { name, audience, columns, filters } }, defaultPreset, fileStem }
+   Money columns are only offered to admins and the payments role.
+   ========================================================================= */
+function openListBuilder(cfg) {
+  const all = cfg.columns().filter(c => !c.money || has('payments'));
   const expand = keys => keys.flatMap(k => k === 'sessions' ? all.filter(x => x.group === 'sessions').map(x => x.k) : [k]).filter(k => all.some(x => x.k === k));
-  let L = { name: '', columns: expand((has('payments') ? GL_PRESETS.admin : GL_PRESETS.instructor).columns), filters: { who: 'put', belt: '', readiness: '' }, templateId: null };
-  const load = t => { L = { name: t.name, columns: expand(t.columns), filters: { who: 'put', belt: '', readiness: '', ...(t.filters || {}) }, templateId: t.template_id || null }; draw(); };
-  const saved = () => state.templates.filter(t => t.report_type === 'grading');
-  const rowsFor = () => grRows().filter(x => ({ put: x.e.is_grading, eligible: x.g && x.g.eligibility_decision === 'eligible', results: !!(x.g && x.g.result), all: true })[L.filters.who])
-    .filter(x => !L.filters.belt || x.s.belt_rank === L.filters.belt).filter(x => !L.filters.readiness || (x.r.status || 'not_assessed') === L.filters.readiness);
-  const title = () => `Grading list · ${c.name}${c.grading_date ? ' · grading ' + fmt(c.grading_date) : ''}`;
+  const blankFilters = () => Object.fromEntries(cfg.filters.map(f => [f.key, f.options[0][0]]));
+  const presetsAllowed = Object.entries(cfg.presets).filter(([, p]) => p.audience !== 'admin' || has('payments'));
+  let L;
+  const load = (t, id = null) => { L = { name: t.name || '', columns: expand(t.columns), filters: { ...blankFilters(), ...(t.filters || {}) }, templateId: id }; };
+  load(cfg.presets[cfg.defaultPreset]); L.name = '';
+  const saved = () => state.templates.filter(t => t.report_type === cfg.type);
   function draw() {
-    const cols = L.columns.map(k => all.find(x => x.k === k)).filter(Boolean), rows = rowsFor();
+    const cols = L.columns.map(k => all.find(x => x.k === k)).filter(Boolean), rows = cfg.rows(L.filters);
     openSheet(`<div class="body">
-      ${sheetHead('Grading list', esc(c.name))}
-      <div class="field"><label for="glTpl">Template</label><select id="glTpl"><option value="">Choose…</option>
-        <option value="preset:instructor">Instructor list (no fees)</option>${has('payments') ? '<option value="preset:admin">Admin list (with fees)</option>' : ''}
+      ${sheetHead(cfg.heading, esc(cfg.subtitle || ''))}
+      <div class="field"><label for="lbTpl">Template</label><select id="lbTpl"><option value="">Choose…</option>
+        ${presetsAllowed.map(([id, p]) => `<option value="preset:${id}">${esc(p.name)}</option>`).join('')}
         ${saved().map(t => `<option value="${t.template_id}"${t.template_id === L.templateId ? ' selected' : ''}>${esc(t.name)}${t.audience === 'admin' ? ' (admin)' : ''}</option>`).join('')}</select></div>
-      <div class="grid2">
-        <div class="field"><label for="glWho">Who</label><select id="glWho">${Object.entries(GL_WHO).map(([k, t]) => `<option value="${k}"${L.filters.who === k ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
-        <div class="field"><label for="glBelt">Belt</label><select id="glBelt">${beltOptions(L.filters.belt, 'All belts').replace(' (not in list)', '')}</select></div>
-      </div>
-      <div class="field"><label for="glRd">Readiness</label><select id="glRd"><option value="">Any</option>${RD_STATUSES.map(st => `<option value="${st}"${L.filters.readiness === st ? ' selected' : ''}>${label(st)}</option>`).join('')}</select></div>
+      <div class="grid2">${cfg.filters.map(f => `<div class="field"><label for="lbF_${f.key}">${esc(f.label)}</label><select id="lbF_${f.key}" data-filter="${f.key}">${f.options.map(([v, t]) => `<option value="${esc(v)}"${String(L.filters[f.key] ?? '') === String(v) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`).join('')}</div>
       <details><summary><b>Columns</b> <span class="muted small">${cols.length} chosen · tap ↑ ↓ to reorder</span></summary>
-        <div class="checklist" id="glCols" style="max-height:none">${[...cols, ...all.filter(x => !L.columns.includes(x.k))].map(col => { const on = L.columns.includes(col.k), i = L.columns.indexOf(col.k);
+        <div class="checklist" id="lbCols" style="max-height:none">${[...cols, ...all.filter(x => !L.columns.includes(x.k))].map(col => { const on = L.columns.includes(col.k), i = L.columns.indexOf(col.k);
           return `<div class="check" style="justify-content:space-between"><label class="check" style="min-height:0;flex:1"><input type="checkbox" data-col="${col.k}" ${on ? 'checked' : ''}> ${esc(col.t)}${col.money ? ' <span class="tag warn">$</span>' : ''}</label>
             ${on ? `<span><button class="btn sm ghost" data-up="${col.k}" ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(col.t)} up">↑</button><button class="btn sm ghost" data-down="${col.k}" ${i === L.columns.length - 1 ? 'disabled' : ''} aria-label="Move ${esc(col.t)} down">↓</button></span>` : ''}</div>`; }).join('')}</div>
       </details>
-      <p class="hint"><b>${rows.length}</b> student${rows.length === 1 ? '' : 's'}. ${cols.some(x => x.money) ? 'This list includes fees, so share it only with admins.' : ''}</p>
-      <div class="preview" id="glPreview"><table class="grid"><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>
-        ${rows.map(r => `<tr>${cols.map(x => `<td>${esc(glValue(x.k, r, cid))}</td>`).join('')}</tr>`).join('')}</table></div>
-      <div class="row"><button class="btn" id="glCsv">Download CSV</button><button class="btn" id="glPrint">Print</button></div>
-      <div class="row"><input type="text" id="glName" placeholder="Template name" value="${esc(L.name)}" class="grow" style="flex:1 1 160px"><button class="btn" id="glSave">Save template</button>${L.templateId ? '<button class="btn danger" id="glDel">Delete</button>' : ''}</div>
+      <p class="hint"><b>${rows.length}</b> row${rows.length === 1 ? '' : 's'}. ${cols.some(x => x.money) ? 'This list includes fees, so share it only with admins.' : ''}</p>
+      <div class="preview" id="lbPreview"><table class="grid"><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>
+        ${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cfg.value(x.k, r))}</td>`).join('')}</tr>`).join('')}</table></div>
+      <div class="row"><button class="btn" id="lbCsv">Download CSV</button><button class="btn" id="lbPrint">Print</button></div>
+      <div class="row"><input type="text" id="lbName" placeholder="Template name" value="${esc(L.name)}" style="flex:1 1 160px;width:auto"><button class="btn" id="lbSave">Save template</button>${L.templateId ? '<button class="btn danger" id="lbDel">Delete</button>' : ''}</div>
       <div class="dlg-actions"><button class="btn primary" data-close>Done</button></div>
     </div>`);
-    $('#glTpl').onchange = e => { const v = e.target.value; if (v.startsWith('preset:')) load({ ...GL_PRESETS[v.slice(7)] }); else { const t = saved().find(x => x.template_id === v); if (t) load(t); } };
-    $('#glWho').onchange = e => { L.filters.who = e.target.value; draw(); };
-    $('#glBelt').onchange = e => { L.filters.belt = e.target.value; draw(); };
-    $('#glRd').onchange = e => { L.filters.readiness = e.target.value; draw(); };
-    const keepOpen = () => { const d = sheet.querySelector('details'); return d && d.open; };
-    const redraw = () => { const open = keepOpen(); draw(); if (open) sheet.querySelector('details').open = true; };
+    $('#lbTpl').onchange = e => { const v = e.target.value; if (v.startsWith('preset:')) { load(cfg.presets[v.slice(7)]); L.name = ''; } else { const t = saved().find(x => x.template_id === v); if (t) load(t, t.template_id); } draw(); };
+    sheet.querySelectorAll('[data-filter]').forEach(sel => sel.onchange = () => { L.filters[sel.dataset.filter] = sel.value; draw(); });
+    const redraw = () => { const d = sheet.querySelector('details'), open = d && d.open; draw(); if (open) sheet.querySelector('details').open = true; };
     sheet.querySelectorAll('[data-col]').forEach(cb => cb.onchange = () => { const k = cb.dataset.col; L.columns = cb.checked ? [...L.columns, k] : L.columns.filter(x => x !== k); redraw(); });
     sheet.querySelectorAll('[data-up],[data-down]').forEach(b => b.onclick = () => { const k = b.dataset.up || b.dataset.down, i = L.columns.indexOf(k), j = b.dataset.up ? i - 1 : i + 1;
       [L.columns[i], L.columns[j]] = [L.columns[j], L.columns[i]]; redraw(); });
     const cell = v => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
-    $('#glCsv').onclick = () => {
-      const lines = [[title()], [`Generated ${fmt(today())}`], [], cols.map(x => x.t), ...rows.map(r => cols.map(x => glValue(x.k, r, cid)))];
+    $('#lbCsv').onclick = () => {
+      const lines = [[cfg.title()], [`Generated ${fmt(today())}`], [], cols.map(x => x.t), ...rows.map(r => cols.map(x => cfg.value(x.k, r)))];
       const blob = new Blob(['﻿' + lines.map(l => l.map(cell).join(',')).join('\r\n') + '\r\n'], { type: 'text/csv' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `grading-list-${c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${today()}.csv`; a.click();
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${cfg.fileStem}-${today()}.csv`; a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000); toast('CSV downloaded. It opens in Excel or Google Sheets.');
     };
-    $('#glPrint').onclick = () => {
+    $('#lbPrint').onclick = () => {
       const w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print.');
-      w.document.write(`<!doctype html><title>${esc(title())}</title><style>body{font:13px Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{color:#555;margin:0 0 12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:5px 6px;text-align:left}th{background:#eee}</style>
-        <h1>${esc(title())}</h1><p>Generated ${fmt(today())} · ${rows.length} students</p><table><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(x => `<td>${esc(glValue(x.k, r, cid))}</td>`).join('')}</tr>`).join('')}</table>`);
+      w.document.write(`<!doctype html><title>${esc(cfg.title())}</title><style>body{font:13px Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{color:#555;margin:0 0 12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:5px 6px;text-align:left}th{background:#eee}</style>
+        <h1>${esc(cfg.title())}</h1><p>Generated ${fmt(today())} · ${rows.length} rows</p><table><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cfg.value(x.k, r))}</td>`).join('')}</tr>`).join('')}</table>`);
       w.document.close(); w.focus(); w.print();
     };
-    $('#glSave').onclick = async () => {
-      const name = $('#glName').value.trim(); if (!name) return toast('Give the template a name.');
-      const audience = cols.some(x => x.money) ? 'admin' : 'instructor', rec = { name, report_type: 'grading', audience, columns: L.columns, filters: L.filters };
+    $('#lbSave').onclick = async () => {
+      const name = $('#lbName').value.trim(); if (!name) return toast('Give the template a name.');
+      const rec = { name, report_type: cfg.type, audience: cols.some(x => x.money) ? 'admin' : 'instructor', columns: L.columns, filters: L.filters };
       const same = saved().find(t => t.name.toLowerCase() === name.toLowerCase());
       try {
         if (same) await run(sb.from('prep_report_templates').update(rec).eq('template_id', same.template_id));
@@ -1995,12 +2016,200 @@ function openGradingList(cid) {
         await loadAll(); const t = saved().find(x => x.name.toLowerCase() === name.toLowerCase()); L.templateId = t && t.template_id; L.name = name; toast('Template saved'); draw();
       } catch (e) { toast(errMsg(e), 6000); }
     };
-    const del = $('#glDel'); if (del) del.onclick = async () => {
+    const del = $('#lbDel'); if (del) del.onclick = async () => {
       if (!await ask(`Delete the template "${L.name}"?`, 'Delete', true)) return draw();
       try { await run(sb.from('prep_report_templates').delete().eq('template_id', L.templateId)); await loadAll(); L.templateId = null; L.name = ''; toast('Template deleted'); draw(); } catch (e) { toast(errMsg(e), 6000); }
     };
   }
   draw();
+}
+
+function openGradingList(cid) {
+  const c = cycle(cid);
+  openListBuilder({
+    type: 'grading', heading: 'Grading list', subtitle: c.name, fileStem: `grading-list-${c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`,
+    title: () => `Grading list · ${c.name}${c.grading_date ? ' · grading ' + fmt(c.grading_date) : ''}`,
+    columns: () => glColumns(cid), value: (k, r) => glValue(k, r, cid),
+    filters: [
+      { key: 'who', label: 'Who', options: Object.entries(GL_WHO) },
+      { key: 'belt', label: 'Belt', options: [['', 'All belts'], ...BELTS.map(b => [b, b])] },
+      { key: 'readiness', label: 'Readiness', options: [['', 'Any'], ...RD_STATUSES.map(st => [st, label(st)])] }
+    ],
+    rows: F => grRows().filter(x => ({ put: x.e.is_grading, eligible: x.g && x.g.eligibility_decision === 'eligible', results: !!(x.g && x.g.result), all: true })[F.who || 'put'])
+      .filter(x => !F.belt || x.s.belt_rank === F.belt).filter(x => !F.readiness || (x.r.status || 'not_assessed') === F.readiness),
+    presets: GL_PRESETS, defaultPreset: has('payments') ? 'admin' : 'instructor'
+  });
+}
+
+/* =========================================================================
+   Certificates
+   ========================================================================= */
+const CERT_FLOW = ['awaiting_approval', 'details_check', 'approved', 'ready_for_production', 'printed', 'issued'];
+const CERT_ALL = ['awaiting_result', ...CERT_FLOW, 'reprint_required', 'not_required'];
+const NEEDS_PASS = ['approved', 'ready_for_production', 'printed', 'issued'];
+state.ce = { cycle: null, filter: 'todo', search: '' };
+const ceSel = { on: false, ids: new Set() };
+const certFor = g => g ? state.certificates.filter(x => x.grading_id === g.grading_id).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null : null;
+const canCert = () => has('certificates');
+const certTypeFor = rank => /level/i.test(rank || '') ? 'Level certificate' : 'Dan certificate';
+
+function ceRows() {
+  const cid = state.ce.cycle;
+  return grRows().filter(x => x.e.is_grading || (x.g && x.g.result)).map(x => {
+    const cert = certFor(x.g), result = x.g ? x.g.result : null;
+    const st = cert ? cert.status : result === 'passed' ? 'awaiting_approval' : result ? 'not_required' : 'awaiting_result';
+    return { ...x, cert, result, cst: st };
+  });
+}
+const CE_FILTERS = { todo: ['To do', x => ['awaiting_approval', 'details_check', 'approved', 'ready_for_production', 'printed', 'reprint_required'].includes(x.cst) && x.result === 'passed'],
+  awaiting_result: ['Awaiting result', x => x.cst === 'awaiting_result'], issued: ['Issued', x => x.cst === 'issued'], all: ['All', () => true] };
+
+function renderCertificates() {
+  const v = $('#view-certificates'), E = state.ce;
+  if (!E.cycle || !cycle(E.cycle)) E.cycle = (currentCycle() || state.cycles[0] || {}).cycle_id;
+  state.gr.cycle = E.cycle;
+  if (!state.cycles.length) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Certificates</h2></div><div class="card empty">No preparation cycles yet.</div>`; wireBack(); return; }
+  const rows = ceRows(), n = st => rows.filter(x => x.cst === st).length, count = k => rows.filter(CE_FILTERS[k][1]).length;
+  const keepFocus = document.activeElement && document.activeElement.id === 'ceSearch';
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Certificates</h2><div class="row">${canCert() && rows.length ? `<button class="btn sm" id="ceSelect">${ceSel.on ? 'Cancel' : 'Select'}</button>` : ''}<button class="btn primary sm" id="ceList">Certificate list</button></div></div>
+    <div class="field"><label for="ceCycle">Preparation cycle</label><select id="ceCycle">${state.cycles.map(x => `<option value="${x.cycle_id}"${x.cycle_id === E.cycle ? ' selected' : ''}>${esc(x.name)}${x.status === 'active' ? ' (active)' : ` (${label(x.status).toLowerCase()})`}</option>`).join('')}</select></div>
+    <p class="hint">Everyone put forward for grading appears here. A certificate can only be approved, produced or issued once a pass is recorded on the Grading screen.</p>
+    <div class="stats">
+      <div class="stat ${n('awaiting_approval') + n('details_check') ? 'warn' : ''}"><span class="n">${n('awaiting_approval') + n('details_check')}</span><span class="l">Awaiting approval or checks</span></div>
+      <div class="stat"><span class="n">${n('approved') + n('ready_for_production')}</span><span class="l">Approved or ready to produce</span></div>
+      <div class="stat"><span class="n">${n('printed')}</span><span class="l">Printed, not issued</span></div>
+      <div class="stat"><span class="n">${n('issued')}</span><span class="l">Issued</span></div>
+      <div class="stat ${n('reprint_required') ? 'bad' : ''}"><span class="n">${n('reprint_required')}</span><span class="l">Reprints</span></div>
+    </div>
+    <div class="seg" role="group" aria-label="Show">${Object.entries(CE_FILTERS).map(([k, [t]]) => `<button data-cef="${k}" aria-pressed="${E.filter === k}">${t}<small>${count(k)}</small></button>`).join('')}</div>
+    <input type="search" id="ceSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(E.search)}">
+    <ul class="list" id="ceItems"></ul>
+    ${!canCert() ? '<p class="hint">You can view certificates but not change them.</p>' : ''}`;
+  wireBack();
+  $('#ceCycle').onchange = e => { E.cycle = e.target.value; stopCeSelect(); renderCertificates(); };
+  $$('#view-certificates [data-cef]').forEach(b => b.onclick = () => { E.filter = b.dataset.cef; renderCertificates(); });
+  const sr = $('#ceSearch'); sr.oninput = () => { E.search = sr.value; renderCeList(); };
+  if (keepFocus) { sr.focus(); sr.setSelectionRange(sr.value.length, sr.value.length); }
+  $('#ceList').onclick = () => openCertificateList(E.cycle);
+  const sb4 = $('#ceSelect'); if (sb4) sb4.onclick = () => { ceSel.on ? stopCeSelect() : startCeSelect(); renderCertificates(); };
+  renderCeList();
+}
+function visibleCe() {
+  const E = state.ce, q = E.search.toLowerCase();
+  return ceRows().filter(CE_FILTERS[E.filter][1]).filter(x => !q || x.s.full_name.toLowerCase().includes(q) || x.s.student_id.toLowerCase().includes(q));
+}
+function renderCeList() {
+  const list = visibleCe();
+  $('#ceItems').innerHTML = list.length ? list.map(x => `<li><button class="item" data-ce="${esc(x.s.student_id)}">
+      ${ceSel.on ? `<input type="checkbox" tabindex="-1" ${ceSel.ids.has(x.s.student_id) ? 'checked' : ''} style="pointer-events:none" aria-label="Select ${esc(x.s.full_name)}">` : ''}
+      <div class="main"><div class="name">${esc(x.cert ? x.cert.certificate_name : (x.s.certificate_name || x.s.full_name))}</div>
+        <div class="meta">${esc([x.cert ? x.cert.awarded_rank : x.target, x.cert && x.cert.certificate_number ? 'No. ' + x.cert.certificate_number : '', x.result ? label(x.result) : 'No result yet'].filter(Boolean).join(' · '))}</div></div>
+      ${tag(x.cst, x.cst === 'awaiting_approval' && !x.cert ? 'Awaiting approval' : '')}</button></li>`).join('')
+    : `<li><div class="empty">${ceRows().length ? 'Nothing here.' : 'Nobody has been put forward for grading in this cycle.'}</div></li>`;
+  $$('#ceItems [data-ce]').forEach(b => b.onclick = () => {
+    const id = b.dataset.ce;
+    if (ceSel.on) { ceSel.ids.has(id) ? ceSel.ids.delete(id) : ceSel.ids.add(id); renderCeList(); return; }
+    openCertificate(state.ce.cycle, id);
+  });
+  updateCeSelbar();
+}
+function startCeSelect() { ceSel.on = true; ceSel.ids.clear(); document.body.classList.add('selecting'); $('#ceSelbar').hidden = false; }
+function stopCeSelect() { ceSel.on = false; ceSel.ids.clear(); const b = $('#ceSelbar'); if (b) b.hidden = true; if (!state.att.selecting && !stuSel.on && !rdSel.on && !grSel.on) document.body.classList.remove('selecting'); }
+function updateCeSelbar() { $('#ceSelCount').textContent = `${ceSel.ids.size} selected`; $('#ceSetBtn').disabled = !ceSel.ids.size; }
+
+function certDefaults(x) {
+  const rank = x.target || '';
+  return { certificate_name: x.s.certificate_name || x.s.full_name, certificate_type: certTypeFor(rank), awarded_rank: rank,
+    certificate_number: (danFor(x.s) || {}).dan_number != null ? String(danFor(x.s).dan_number) : null };
+}
+async function saveCert(x, fields) {
+  if (x.cert) return run(sb.from('prep_certificates').update(fields).eq('certificate_id', x.cert.certificate_id));
+  return run(sb.from('prep_certificates').insert({ ...certDefaults(x), status: x.result === 'passed' ? 'awaiting_approval' : 'awaiting_result', ...fields, student_id: x.s.student_id, grading_id: x.g.grading_id }));
+}
+const certErr = e => /passed grading/i.test(errMsg(e)) ? 'A certificate can only be approved, produced or issued after a pass is recorded.'
+  : /duplicate|unique/i.test(errMsg(e)) ? 'That certificate number is already used on another certificate.' : errMsg(e);
+
+function openCertificate(cid, sid) {
+  const x = ceRows().find(r => r.s.student_id === sid); if (!x) return;
+  const d = x.cert || certDefaults(x), edit = canCert() && !!x.g, passed = x.result === 'passed';
+  openSheet(`<form id="ceForm">
+    ${sheetHead(x.s.full_name, `${esc(x.s.belt_rank || '')} → ${esc(x.target || '')} · grading ${x.result ? label(x.result).toLowerCase() : 'result not recorded'}`)}
+    ${!passed ? '<p class="hint">No pass recorded yet. You can prepare the details, but it can only be approved or issued after a pass.</p>' : ''}
+    <div class="field"><label for="ceName">Name on certificate</label><input type="text" id="ceName" required value="${esc(d.certificate_name)}" ${edit ? '' : 'disabled'}></div>
+    <div class="grid2">
+      <div class="field"><label for="ceType">Certificate type</label><input type="text" id="ceType" list="ceTypes" value="${esc(d.certificate_type || '')}" ${edit ? '' : 'disabled'}><datalist id="ceTypes"><option value="Dan certificate"><option value="Level certificate"><option value="Probationary certificate"></datalist></div>
+      <div class="field"><label for="ceRank">Awarded rank</label><select id="ceRank" ${edit ? '' : 'disabled'}>${beltOptions(d.awarded_rank || '')}</select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label for="ceNo">Certificate number</label><input type="text" id="ceNo" value="${esc(d.certificate_number || '')}" ${edit ? '' : 'disabled'} placeholder="Optional"></div>
+      <div class="field"><label for="ceDate">Issue date</label><input type="date" id="ceDate" value="${esc(x.cert && x.cert.issue_date || '')}" ${edit ? '' : 'disabled'}></div>
+    </div>
+    <div class="field"><label for="ceStatus">Status</label><select id="ceStatus" ${edit ? '' : 'disabled'}>${CERT_ALL.map(st => `<option value="${st}"${(x.cert ? x.cert.status : x.cst) === st ? ' selected' : ''}${NEEDS_PASS.includes(st) && !passed ? ' disabled' : ''}>${label(st)}</option>`).join('')}</select></div>
+    <div class="field"><label for="ceNotes">Notes</label><input type="text" id="ceNotes" value="${esc(x.cert && x.cert.notes || '')}" ${edit ? '' : 'disabled'}></div>
+    ${!x.cert ? `<p class="hint">Not saved yet. Name, rank and number are filled in from the student${danFor(x.s) ? ' and their Dan number' : ''}; check them before approving.</p>` : `<p class="hint">Issue date fills in automatically when it's marked Issued.</p>`}
+    ${edit ? `<div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button>${passed && x.cst !== 'issued' ? `<button type="button" class="btn" id="ceNext">Save as ${label(nextCertStatus(x.cst) || 'issued')}</button>` : ''}<button type="submit" class="btn primary" id="ceSave">Save</button></div>` : ''}
+  </form>`);
+  if (!edit) return;
+  const fields = st => ({ certificate_name: $('#ceName').value.trim(), certificate_type: $('#ceType').value.trim() || 'Dan certificate', awarded_rank: $('#ceRank').value || null,
+    certificate_number: $('#ceNo').value.trim() || null, issue_date: $('#ceDate').value || null, notes: $('#ceNotes').value.trim() || null, status: st });
+  const save = async st => {
+    if (!$('#ceName').value.trim()) return toast('Enter the name for the certificate.');
+    try { await saveCert(x, fields(st)); toast(`Certificate: ${label(st)}`); sheet.close(); await loadAll(); render(); } catch (e) { toast(certErr(e), 7000); }
+  };
+  $('#ceForm').onsubmit = e => { e.preventDefault(); save($('#ceStatus').value); };
+  const nx = $('#ceNext'); if (nx) nx.onclick = () => save(nextCertStatus(x.cst) || 'issued');
+}
+function nextCertStatus(st) { const i = CERT_FLOW.indexOf(st); return st === 'reprint_required' ? 'printed' : i >= 0 && i < CERT_FLOW.length - 1 ? CERT_FLOW[i + 1] : null; }
+
+async function bulkCertStatus() {
+  const ids = [...ceSel.ids], rows = ceRows().filter(x => ids.includes(x.s.student_id));
+  openSheet(`<form id="cbForm">${sheetHead(`Certificates for ${rows.length} students`)}
+    <div class="field"><label for="cbStatus">Set status to</label><select id="cbStatus">${CERT_ALL.filter(st => st !== 'awaiting_result').map(st => `<option value="${st}">${label(st)}</option>`).join('')}</select></div>
+    <p class="hint">Certificates not yet created are created with the student's details. Anyone without a pass is skipped for approved, ready, printed and issued.</p>
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="cbGo">Set status</button></div></form>`);
+  $('#cbForm').onsubmit = async e => {
+    e.preventDefault();
+    const st = $('#cbStatus').value, go = rows.filter(x => !NEEDS_PASS.includes(st) || x.result === 'passed'), skip = rows.filter(x => !go.includes(x));
+    if (!go.length) return toast('Nobody selected has a pass recorded.', 6000);
+    if (!await ask(`Set ${go.length} certificate${go.length === 1 ? '' : 's'} to "${label(st)}"?${skip.length ? ` Skipped (no pass): ${skip.map(x => x.s.full_name).join(', ')}.` : ''}`, 'Set status')) return;
+    let n = 0;
+    try { for (const x of go) { await saveCert(x, { status: st }); n++; } toast(`${n} updated`); }
+    catch (er) { toast(`${n} updated, then stopped: ${certErr(er)}`, 8000); }
+    sheet.close(); stopCeSelect(); await loadAll(); render();
+  };
+}
+
+function openCertificateList(cid) {
+  const c = cycle(cid);
+  state.ce.cycle = cid; state.gr.cycle = cid;
+  const COLS = [{ k: 'student_id', t: 'Student ID' }, { k: 'cert_name', t: 'Certificate name' }, { k: 'full_name', t: 'Full name' }, { k: 'type', t: 'Certificate type' },
+    { k: 'rank', t: 'Awarded rank' }, { k: 'number', t: 'Certificate number' }, { k: 'dan', t: 'Dan number' }, { k: 'from', t: 'Previous belt' },
+    { k: 'grading_date', t: 'Grading date' }, { k: 'result', t: 'Grading result' }, { k: 'issue_date', t: 'Issue date' }, { k: 'status', t: 'Certificate status' }, { k: 'notes', t: 'Notes' }];
+  const val = (k, x) => { const d = x.cert || certDefaults(x); return ({
+    student_id: x.s.student_id, cert_name: d.certificate_name, full_name: x.s.full_name, type: d.certificate_type, rank: d.awarded_rank || '', number: d.certificate_number || '',
+    dan: (danFor(x.s) || {}).dan_number ?? '', from: x.s.belt_rank || '', grading_date: c.grading_date ? fmt(c.grading_date) : '', result: x.result ? label(x.result) : '',
+    issue_date: x.cert && x.cert.issue_date ? fmt(x.cert.issue_date) : '', status: label(x.cst), notes: x.cert && x.cert.notes || '' })[k] ?? ''; };
+  const base = ['cert_name', 'rank', 'number', 'grading_date', 'status'];
+  openListBuilder({
+    type: 'certificate', heading: 'Certificate list', subtitle: c.name, fileStem: `certificate-list-${c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`,
+    title: () => `Certificate list · ${c.name}`, columns: () => COLS, value: val,
+    filters: [
+      { key: 'status', label: 'Certificate status', options: [['', 'Any'], ...CERT_ALL.map(st => [st, label(st)])] },
+      { key: 'result', label: 'Grading result', options: [['passed', 'Passed'], ['', 'Any'], ['none', 'No result yet']] },
+      { key: 'rank', label: 'Awarded rank', options: [['', 'Any'], ...BELTS.slice(1).map(b => [b, b])] }
+    ],
+    rows: F => ceRows().filter(x => !F.status || x.cst === F.status).filter(x => !F.result || (F.result === 'none' ? !x.result : x.result === F.result))
+      .filter(x => !F.rank || (x.cert ? x.cert.awarded_rank : x.target) === F.rank),
+    presets: {
+      awaiting: { name: 'Awaiting approval', audience: 'instructor', columns: [...base, 'student_id'], filters: { status: 'awaiting_approval', result: 'passed' } },
+      production: { name: 'Ready for production', audience: 'instructor', columns: base, filters: { status: 'ready_for_production', result: 'passed' } },
+      printed: { name: 'Printed', audience: 'instructor', columns: base, filters: { status: 'printed', result: 'passed' } },
+      issued: { name: 'Issued', audience: 'instructor', columns: [...base, 'issue_date'], filters: { status: 'issued', result: 'passed' } },
+      reprints: { name: 'Reprints', audience: 'instructor', columns: [...base, 'notes'], filters: { status: 'reprint_required', result: 'passed' } },
+      all: { name: 'All passed', audience: 'instructor', columns: [...base, 'type', 'dan'], filters: { status: '', result: 'passed' } }
+    },
+    defaultPreset: 'all'
+  });
 }
 
 /* =========================================================================
@@ -2012,6 +2221,7 @@ async function renderMore() {
     <ul class="list">
       <li><button class="item" data-goto="cycles"><div class="main"><div class="name">Preparation cycles</div><div class="meta">Start a cycle, session and grading dates, fees, who is grading</div></div><span class="muted">›</span></button></li>
       <li><button class="item" data-goto="grading"><div class="main"><div class="name">Grading</div><div class="meta">Eligibility, who is grading, results, grading lists</div></div><span class="muted">›</span></button></li>
+      <li><button class="item" data-goto="certificates"><div class="main"><div class="name">Certificates</div><div class="meta">Names, numbers, approval, printing and issuing</div></div><span class="muted">›</span></button></li>
       ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
     </ul>
     <div class="card"><div class="row"><div class="grow"><b>${esc(state.email)}</b><div class="small muted">${state.roles.map(r => ROLE_NAMES[r] || r).join(', ')}</div></div>
@@ -2044,7 +2254,7 @@ async function renderMore() {
       <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
       <div id="userList" class="small muted">Loading...</div></div>
     <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
-    <p class="hint">Black Belt Prep · Stage 6 build</p>`;
+    <p class="hint">Black Belt Prep · Stage 7 build</p>`;
   $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
   $$('#view-more [data-goto]').forEach(b => b.onclick = () => showView(b.dataset.goto));
   if (!admin) return;
@@ -2155,6 +2365,9 @@ $('#rdSetBtn').onclick = () => openReadiness(state.rd.cycle, [...rdSel.ids]);
 $('#grSelAll').onclick = () => { visibleGr().forEach(x => grSel.ids.add(x.s.student_id)); renderGrList(); };
 $('#grSelDone').onclick = () => { stopGrSelect(); renderGrading(); };
 $$('#grSelbar [data-gbulk]').forEach(b => b.onclick = () => bulkGrading(b.dataset.gbulk));
+$('#ceSelAll').onclick = () => { visibleCe().forEach(x => ceSel.ids.add(x.s.student_id)); renderCeList(); };
+$('#ceSelDone').onclick = () => { stopCeSelect(); renderCertificates(); };
+$('#ceSetBtn').onclick = () => bulkCertStatus();
 sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') showOnly('#authView'); });
 start();
 </script>
