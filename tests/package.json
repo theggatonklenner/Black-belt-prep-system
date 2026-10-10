@@ -11,5 +11,8 @@
   "license": "ISC",
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.45.4"
   }
 }

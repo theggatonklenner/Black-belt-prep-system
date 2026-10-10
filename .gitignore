@@ -5,3 +5,4 @@ exports/
 data/
 .DS_Store
 node_modules/
+tests/screenshots/

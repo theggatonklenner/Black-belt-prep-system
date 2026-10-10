@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#04794b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BB Prep">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>Black Belt Prep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<style>
+  /* Same look as AMA ID Cards: app bar, one view at a time, tab bar at the bottom on phones. */
+  :root {
+    --bg: #f3f6f4; --surface: #ffffff; --fg: #16211b; --muted: #5a6b61; --line: #dfe7e2;
+    --accent: #04794b; --on-accent: #ffffff; --accent-soft: #e3f2ea;
+    --gold: #f2d500; --on-gold: #1d1d1d; --belt: #141414;
+    --danger: #b3261e; --danger-soft: #fbe9e7; --ok: #04794b; --warn: #8a4f00; --warn-soft: #fdf0dc;
+    --info: #3a4181; --info-soft: #e8eaf8; --hover: #eef5f1;
+    --shadow: 0 1px 2px rgba(16,33,27,.06), 0 4px 14px rgba(16,33,27,.06);
+    --font-display: "Barlow Semi Condensed", "Arial Narrow", Arial, sans-serif;
+    --font-body: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+    --tabbar-h: 64px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1612; --surface: #16211b; --fg: #e6efe9; --muted: #93a79b; --line: #26352c;
+      --accent: #3fbf7f; --on-accent: #06150d; --accent-soft: #1b3326;
+      --gold: #e8d23a; --on-gold: #1d1d1d; --belt: #e6efe9;
+      --danger: #f2867d; --danger-soft: #3a1d1a; --ok: #5cd394; --warn: #f0b45a; --warn-soft: #3a2c14;
+      --info: #9aa3ea; --info-soft: #1f2340; --hover: #1c2b23;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 20px; height: 20px; flex: none; }
+
+  /* App bar */
+  .appbar { position: sticky; top: 0; z-index: 20; background: var(--surface); border-bottom: 1px solid var(--line);
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px; }
+  .appbar-inner { max-width: 820px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0; }
+  .brand img { width: 34px; height: 34px; border-radius: 8px; }
+  .brand h1 { font-family: var(--font-display); font-weight: 700; font-size: 22px; margin: 0; letter-spacing: .01em; white-space: nowrap; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); padding: 5px 10px; border-radius: 999px; background: var(--bg); white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; border: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .pill[data-kind="ok"] .dot { background: var(--ok); }
+
+  /* Tabs */
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); border-top: 1px solid var(--line);
+    display: grid; grid-template-columns: repeat(5, 1fr); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .tab { border: 0; background: none; padding: 8px 2px 9px; height: var(--tabbar-h); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+  .tab svg { width: 24px; height: 24px; }
+  .tab[aria-selected="true"] { color: var(--accent); }
+  @media (min-width: 900px) {
+    .tabbar { position: sticky; top: 61px; bottom: auto; border-top: 0; border-bottom: 1px solid var(--line); display: flex; justify-content: center; gap: 4px; padding: 0 16px; }
+    .tab { flex-direction: row; height: 48px; padding: 0 18px; font-size: 15px; gap: 8px; border-bottom: 2px solid transparent; }
+    .tab[aria-selected="true"] { border-bottom-color: var(--accent); }
+    .tab svg { width: 20px; height: 20px; }
+  }
+
+  /* Views */
+  main { max-width: 820px; margin: 0 auto; padding: 16px 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 24px); }
+  @media (min-width: 900px) { main { padding-bottom: 48px; } }
+  .view { display: flex; flex-direction: column; gap: 14px; }
+  h2 { font-family: var(--font-display); font-weight: 700; font-size: 24px; margin: 0; letter-spacing: .01em; }
+  h3 { font-family: var(--font-display); font-weight: 600; font-size: 18px; margin: 0; }
+  .view-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .small { font-size: 14px; }
+  .card { background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .empty { text-align: center; padding: 28px 16px; color: var(--muted); }
+
+  /* Controls */
+  label, .label { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  input[type=text], input[type=email], input[type=password], input[type=date], input[type=search], input[type=number], input[type=tel], textarea, select {
+    width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 16px; }
+  textarea { resize: vertical; line-height: 1.4; min-height: 0; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--surface); font-weight: 600; font-size: 15px; cursor: pointer; white-space: nowrap; text-decoration: none; }
+  .btn:hover { background: var(--hover); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.danger { color: var(--danger); }
+  .btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn.ghost { border-color: transparent; background: none; }
+  .btn.big { min-height: 54px; font-size: 17px; width: 100%; }
+  .btn.sm { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > .grow { flex: 1 1 0; min-width: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .hint { font-size: 14px; color: var(--muted); margin: 0; }
+  .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .check { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 400; color: var(--fg); min-height: 40px; cursor: pointer; }
+
+  /* Segmented control */
+  .seg { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; overflow-x: auto; }
+  .seg button { flex: 1 0 auto; border: 0; background: none; border-radius: 9px; padding: 8px 10px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; line-height: 1.2; }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
+  .seg button small { display: block; font-weight: 400; font-size: 12px; }
+
+  /* Lists */
+  .list { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+  .list > li { border-top: 1px solid var(--line); }
+  .list > li:first-child { border-top: 0; }
+  .item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; background: none; border: 0; text-align: left; cursor: pointer; min-height: 60px; }
+  button.item:hover { background: var(--hover); }
+  .item .main { flex: 1 1 auto; min-width: 0; }
+  .item .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); white-space: nowrap; vertical-align: 1px; }
+  .tag.ok { background: var(--accent-soft); color: var(--ok); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.bad { background: var(--danger-soft); color: var(--danger); }
+  .tag.info { background: var(--info-soft); color: var(--info); }
+  .tag.gold { background: var(--gold); color: var(--on-gold); }
+
+  /* Attendance buttons */
+  .att { display: flex; gap: 4px; flex: none; }
+  .att button { width: 44px; height: 40px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; font-size: 15px; color: var(--muted); cursor: pointer; }
+  .att button[aria-pressed="true"][data-s="present"] { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
+  .att button[aria-pressed="true"][data-s="absent"]  { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .att button[aria-pressed="true"][data-s="excused"] { background: var(--info); border-color: var(--info); color: #fff; }
+  .counts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; color: var(--muted); }
+  .counts b { color: var(--fg); }
+  .sess-cells { display: flex; gap: 3px; }
+  .cell { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--bg); color: var(--muted); }
+  .cell.present { background: var(--ok); color: var(--on-accent); }
+  .cell.absent  { background: var(--danger); color: #fff; }
+  .cell.excused { background: var(--info); color: #fff; }
+
+  /* Selection bar */
+  .selbar { position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); z-index: 19;
+    background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -4px 14px rgba(0,0,0,.08); padding: 10px 16px; }
+  .selbar-inner { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .selbar .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .selbar .acts .btn { padding: 8px 4px; font-size: 14px; }
+  @media (min-width: 900px) { .selbar { bottom: 0; } }
+  body.selecting main { padding-bottom: calc(var(--tabbar-h) + 150px); }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  @media (min-width: 640px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+  .stat { background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); padding: 14px; display: flex; flex-direction: column; gap: 2px; border: 0; text-align: left; cursor: pointer; }
+  .stat .n { font-family: var(--font-display); font-size: 32px; font-weight: 700; line-height: 1.05; }
+  .stat .l { font-size: 14px; color: var(--muted); }
+  .stat.warn .n { color: var(--warn); }
+  .stat.bad .n { color: var(--danger); }
+  .belt-rule { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--belt) 0 46%, var(--gold) 46% 50%, var(--belt) 50% 100%); }
+
+  /* Detail sections */
+  .kv { display: grid; grid-template-columns: minmax(110px, 38%) 1fr; gap: 6px 12px; margin: 0; font-size: 15px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .section { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.grid th, table.grid td { padding: 7px 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  table.grid th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  table.grid td.num, table.grid th.num { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .preview { max-height: 40vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .preview table { margin: 0; }
+  .preview .skip td { color: var(--muted); }
+
+  /* Dialogs */
+  dialog { border: 0; border-radius: 18px; background: var(--surface); color: var(--fg); padding: 18px; width: min(560px, calc(100% - 24px)); max-width: none; max-height: calc(100dvh - 24px); overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(10, 20, 15, .5); }
+  dialog form, dialog .body { display: flex; flex-direction: column; gap: 12px; }
+  dialog p { margin: 0; }
+  .dlg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .dlg-head .x { min-height: 36px; padding: 4px 10px; }
+  .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; position: sticky; bottom: -18px; background: var(--surface); padding: 10px 0 0; margin-top: 4px; }
+  @media (max-width: 640px) {
+    dialog.sheet { margin: auto 0 0; width: 100%; max-height: 92dvh; border-radius: 18px 18px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+    .dlg-actions { bottom: calc(-18px - env(safe-area-inset-bottom, 0px)); }
+    .dlg-actions .btn { flex: 1 1 auto; }
+  }
+  .checklist { max-height: 40vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px; }
+  .checklist .check { border-bottom: 1px solid var(--line); }
+  .checklist .check:last-child { border-bottom: 0; }
+
+  #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 14px);
+    z-index: 50; background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 15px; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
+  body.selecting #toast { bottom: calc(var(--tabbar-h) + 140px); }
+  @media (min-width: 900px) { #toast { bottom: 24px; } }
+  .auth { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
+  .banner { border-radius: 12px; padding: 12px 14px; background: var(--warn-soft); color: var(--warn); font-size: 15px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+
+  /* What each role can see */
+  body:not(.can-admin)      .need-admin,
+  body:not(.can-attendance) .need-attendance { display: none !important; }
+  @media (prefers-reduced-motion: no-preference) { .btn, .tab, .item, .att button { transition: background .12s, color .12s; } }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="appbar-inner">
+    <div class="brand"><img src="icon-192.png" alt=""><h1>Black Belt Prep</h1></div>
+    <span class="pill" id="cyclePill" hidden><span class="dot"></span><span id="cyclePillText"></span></span>
+  </div>
+</header>
+
+<nav class="tabbar" id="tabbar" role="tablist" hidden>
+  <button class="tab" role="tab" data-view="dashboard" aria-selected="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard</button>
+  <button class="tab" role="tab" data-view="students" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>Students</button>
+  <button class="tab" role="tab" data-view="attendance" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="17" rx="2"/><path d="M9 2.5v3M15 2.5v3M8.5 13l2.5 2.5 4.5-5"/></svg>Attendance</button>
+  <button class="tab" role="tab" data-view="cycles" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></svg>Cycles</button>
+  <button class="tab" role="tab" data-view="more" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>More</button>
+</nav>
+
+<!-- Sign in -->
+<section class="auth" id="authView" hidden>
+  <div class="card">
+    <h2>Sign in</h2>
+    <form id="loginForm" class="view" style="gap:12px">
+      <div class="field"><label for="loginEmail">Email</label><input type="email" id="loginEmail" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Password</label><input type="password" id="loginPassword" autocomplete="current-password" required></div>
+      <p class="hint" id="loginError" style="color:var(--danger)" hidden></p>
+      <button type="submit" class="btn primary big" id="loginBtn">Sign in</button>
+      <p class="hint">Use the same login as AMA ID Cards.</p>
+    </form>
+  </div>
+</section>
+
+<section class="auth" id="noAccessView" hidden>
+  <div class="card">
+    <h2>No access yet</h2>
+    <p class="hint">You're signed in as <b id="noAccessEmail"></b>, but you haven't been given a role in Black Belt Prep. Ask an admin to add you under More &gt; Users.</p>
+    <button class="btn" id="noAccessSignOut">Sign out</button>
+  </div>
+</section>
+
+<section class="auth" id="setupView" hidden>
+  <div class="card">
+    <h2>Almost there</h2>
+    <p class="hint">The database for Black Belt Prep isn't set up yet. Run <b>supabase/prep-setup.sql</b> in Supabase &gt; SQL Editor, then reload this page.</p>
+    <p class="hint" id="setupError"></p>
+  </div>
+</section>
+
+<main id="app" hidden>
+
+  <!-- Dashboard -->
+  <section class="view" id="view-dashboard"></section>
+
+  <!-- Students -->
+  <section class="view" id="view-students" hidden>
+    <div class="view-head">
+      <h2>Students <span class="muted small" id="studentCount"></span></h2>
+      <div class="row need-admin">
+        <button class="btn sm" id="importStudentsBtn">Import</button>
+        <button class="btn primary sm" id="addStudentBtn">Add student</button>
+      </div>
+    </div>
+    <div id="dupBanner"></div>
+    <input type="search" id="studentSearch" placeholder="Search name or Student ID" aria-label="Search students">
+    <div class="filters">
+      <select id="studentClub" aria-label="Club"><option value="">All clubs</option></select>
+      <select id="studentStatus" aria-label="Status">
+        <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">Active and inactive</option>
+      </select>
+    </div>
+    <label class="check need-admin"><input type="checkbox" id="studentShowTest"> Show test records</label>
+    <ul class="list" id="studentList"></ul>
+  </section>
+
+  <!-- Attendance -->
+  <section class="view" id="view-attendance" hidden></section>
+
+  <!-- Cycles -->
+  <section class="view" id="view-cycles" hidden></section>
+
+  <!-- More -->
+  <section class="view" id="view-more" hidden></section>
+</main>
+
+<div class="selbar" id="selbar" hidden>
+  <div class="selbar-inner">
+    <div class="row"><b id="selCount" class="grow">0 selected</b><button class="btn sm ghost" id="selAll">Select all shown</button><button class="btn sm ghost" id="selDone">Done</button></div>
+    <div class="acts">
+      <button class="btn" data-bulk="present">Present</button>
+      <button class="btn" data-bulk="excused">Excused</button>
+      <button class="btn danger" data-bulk="absent">Absent</button>
+      <button class="btn" data-bulk="not_recorded">Clear</button>
+    </div>
+  </div>
+</div>
+
+<!-- Generic confirm -->
+<dialog id="askDlg">
+  <div class="body">
+    <h3 id="askTitle">Are you sure?</h3>
+    <p id="askText" class="hint"></p>
+    <div class="dlg-actions"><button class="btn" id="askNo">Cancel</button><button class="btn primary" id="askYes">OK</button></div>
+  </div>
+</dialog>
+
+<dialog id="sheet" class="sheet"></dialog>
+
+<div id="toast" role="status" hidden></div>
+
+<script>
+'use strict';
+/* =========================================================================
+   Black Belt Prep
+   Reads and writes the prep_ tables in the AMA ID Cards Supabase project.
+   Security is enforced by the database (supabase/prep-setup.sql); hiding a
+   button here is only for convenience.
+   ========================================================================= */
+
+const CFG = window.PREP_CONFIG || {};
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const norm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+
+const LABEL = {
+  present: 'Present', absent: 'Absent', excused: 'Excused', not_recorded: 'Not recorded',
+  planned: 'Planned', active: 'Active', completed: 'Completed', archived: 'Archived',
+  not_assessed: 'Not yet assessed', on_track: 'On track', needs_preparation: 'Needs more preparation',
+  not_ready: 'Not ready for grading', ready: 'Ready for grading', awaiting_review: 'Awaiting instructor review',
+  not_invoiced: 'Not yet invoiced', due: 'Payment due', partially_paid: 'Partially paid', paid: 'Paid',
+  overdue: 'Payment overdue', waived: 'Waived', refund_pending: 'Refund pending', refunded: 'Refunded',
+  awaiting_result: 'Awaiting grading result', awaiting_approval: 'Awaiting approval', details_check: 'Details to be checked',
+  approved: 'Approved for issue', ready_for_production: 'Ready for production', printed: 'Printed', issued: 'Issued',
+  reprint_required: 'Reprint required', not_required: 'Not required', required: 'Required', details_incomplete: 'Details incomplete',
+  ready_for_printing: 'Ready for printing', sent_for_printing: 'Sent for printing', awaiting_collection: 'Awaiting collection',
+  collected: 'Issued or collected', nominated: 'Nominated for grading', booked: 'Grading booked', passed: 'Passed',
+  unsuccessful: 'Unsuccessful', deferred: 'Deferred', eligible: 'Eligible', not_eligible: 'Not eligible', pending: 'Awaiting decision'
+};
+const label = v => v == null ? '—' : (LABEL[v] || v);
+const TONE = { present: 'ok', active: 'ok', ready: 'ok', paid: 'ok', passed: 'ok', issued: 'ok', collected: 'ok', on_track: 'ok',
+  absent: 'bad', not_ready: 'bad', overdue: 'bad', unsuccessful: 'bad', reprint_required: 'bad',
+  needs_preparation: 'warn', partially_paid: 'warn', due: 'warn', awaiting_review: 'warn', details_incomplete: 'warn', planned: 'info', excused: 'info' };
+const tag = (v, extra = '') => `<span class="tag ${TONE[v] || ''}">${esc(extra || label(v))}</span>`;
+const ROLE_NAMES = { admin: 'Admin', instructor: 'Instructor', attendance: 'Attendance recorder', payments: 'Payments',
+  grading: 'Grading', certificates: 'Certificates', idcards: 'ID cards', viewer: 'Viewer' };
+const RANKS = ['White','Yellow','Yellow tip','Green','Green tip','Blue','Blue tip','Red','Red tip','Black tip','1st Poom','2nd Poom','3rd Poom','4th Poom',
+  '1st Dan','2nd Dan','3rd Dan','4th Dan','5th Dan','6th Dan','7th Dan','8th Dan','9th Dan'];
+
+/* ---------- Dates ---------- */
+const pad = n => String(n).padStart(2, '0');
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+function fmt(iso, opts = { day: 'numeric', month: 'short', year: 'numeric' }) {
+  if (!iso) return '—';
+  const d = new Date(String(iso).length <= 10 ? iso + 'T00:00:00' : iso);
+  return isNaN(d) ? '—' : d.toLocaleDateString('en-AU', opts);
+}
+const fmtShort = iso => fmt(iso, { day: 'numeric', month: 'short' });
+const fmtTime = iso => iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '—';
+const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+// Dates as people type them in Australia: 31/01/2010, 31-1-10, 2010-01-31, 31 Jan 2010
+function parseDate(s) {
+  s = String(s || '').trim(); if (!s) return null;
+  let m, y, mo, d;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) [y, mo, d] = [+m[1], +m[2], +m[3]];
+  else if ((m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/))) [d, mo, y] = [+m[1], +m[2], +m[3]];
+  else if ((m = s.match(/^(\d{1,2})[\s\-]([A-Za-z]{3,9})[\s\-,]*(\d{2,4})$/))) [d, mo, y] = [+m[1], MON[m[2].slice(0, 4).toLowerCase()] || MON[m[2].slice(0, 3).toLowerCase()], +m[3]];
+  else return undefined;
+  if (y < 100) y += y > (new Date().getFullYear() % 100) ? 1900 : 2000;
+  const dt = new Date(y, mo - 1, d);
+  if (!mo || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return undefined;
+  return `${y}-${pad(mo)}-${pad(d)}`;
+}
+
+/* ---------- Toast and confirm ---------- */
+let toastTimer;
+function toast(msg, ms = 3500) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer);
+  if (ms) toastTimer = setTimeout(() => t.hidden = true, ms);
+}
+function ask(text, yes = 'OK', danger = false, title = 'Are you sure?') {
+  return new Promise(resolve => {
+    const d = $('#askDlg');
+    $('#askTitle').textContent = title; $('#askText').textContent = text;
+    const y = $('#askYes'); y.textContent = yes; y.className = 'btn ' + (danger ? 'danger-solid' : 'primary');
+    const done = v => { d.close(); resolve(v); };
+    y.onclick = () => done(true); $('#askNo').onclick = () => done(false); d.oncancel = e => { e.preventDefault(); done(false); };
+    d.showModal();
+  });
+}
+const errMsg = e => (e && (e.message || e.error_description)) || String(e);
+async function run(promise, okMsg) {
+  const { data, error } = await promise;
+  if (error) throw error;
+  if (okMsg) toast(okMsg);
+  return data;
+}
+
+/* ---------- Sheet (bottom sheet on phones) ---------- */
+const sheet = $('#sheet');
+function openSheet(html, onClose) {
+  sheet.innerHTML = html;
+  sheet.onclose = () => { sheet.innerHTML = ''; onClose && onClose(); };
+  sheet.querySelectorAll('[data-close]').forEach(b => b.onclick = e => { e.preventDefault(); sheet.close(); });
+  if (!sheet.open) sheet.showModal();
+}
+const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(title)}</h3>${sub ? `<p class="hint">${sub}</p>` : ''}</div><button class="btn ghost x" data-close aria-label="Close">Close</button></div>`;
+
+/* ---------- State ---------- */
+const state = {
+  email: null, roles: [], view: 'dashboard', loaded: false,
+  settings: {}, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  att: { cycle: null, session: 1, search: '', club: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
+};
+const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
+const canEditAttendance = () => has('instructor', 'attendance');
+const student = id => state.students.find(s => s.student_id === id);
+const cycle = id => state.cycles.find(c => c.cycle_id === id);
+const activeCycles = () => state.cycles.filter(c => c.status === 'active');
+const currentCycle = () => activeCycles()[0] || null;
+const cycleSessions = id => state.sessions.filter(s => s.cycle_id === id).sort((a, b) => a.session_number - b.session_number);
+const enrolledIds = id => new Set(state.enrolments.filter(e => e.cycle_id === id).map(e => e.student_id));
+const summaryFor = (cid, sid) => state.summary.find(s => s.cycle_id === cid && s.student_id === sid);
+const overviewFor = (cid, sid) => state.overview.find(s => s.cycle_id === cid && s.student_id === sid);
+const clubs = () => [...new Set(state.students.map(s => s.club).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+async function loadAll() {
+  const q = (t, order) => { let x = sb.from(t).select('*'); if (order) x = x.order(order[0], { ascending: order[1] !== false }); return x; };
+  const res = await Promise.all([
+    q('prep_settings'), q('prep_students', ['full_name']), q('prep_cycles', ['created_at', false]), q('prep_sessions', ['session_number']),
+    q('prep_enrolments'), q('prep_attendance'), q('prep_attendance_summary'), q('prep_overview'),
+    has('admin') ? q('prep_possible_duplicates') : Promise.resolve({ data: [] })
+  ]);
+  const bad = res.find(r => r.error);
+  if (bad) throw bad.error;
+  const [settings, students, cycles, sessions, enrolments, attendance, summary, overview, dups] = res.map(r => r.data || []);
+  Object.assign(state, { settings: settings[0] || {}, students, cycles, sessions, enrolments, attendance, summary, overview, duplicates: dups, loaded: true });
+  if (!state.att.cycle || !cycle(state.att.cycle)) state.att.cycle = (currentCycle() || cycles[0] || {}).cycle_id || null;
+}
+
+let reloadTimer, reloading = false;
+function scheduleReload() {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(async () => {
+    if (reloading) return scheduleReload();
+    reloading = true;
+    try { await loadAll(); render(); } catch (e) { console.warn(e); } finally { reloading = false; }
+  }, 350);
+}
+
+/* ---------- Navigation ---------- */
+function showView(v) {
+  state.view = v;
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v)));
+  $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
+  if (v !== 'attendance') stopSelecting();
+  render();
+  window.scrollTo(0, 0);
+}
+$$('.tab').forEach(t => t.addEventListener('click', () => showView(t.dataset.view)));
+
+function render() {
+  if (!state.loaded) return;
+  const c = currentCycle();
+  $('#cyclePill').hidden = !c;
+  if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, cycles: renderCycles, more: renderMore })[state.view]();
+}
+
+/* =========================================================================
+   Dashboard (Stage 3: students and attendance; more summaries arrive in later stages)
+   ========================================================================= */
+function renderDashboard() {
+  const v = $('#view-dashboard');
+  const c = currentCycle();
+  const active = state.students.filter(s => s.is_active && !s.is_test);
+  if (!c) {
+    v.innerHTML = `<div class="view-head"><h2>Dashboard</h2></div>
+      <div class="card empty"><p>No preparation cycle is active.</p>
+      ${has('admin') ? '<button class="btn primary" id="dashStart">Start new preparation cycle</button>' : '<p class="hint">An admin can start one under Cycles.</p>'}</div>
+      <div class="stats"><div class="stat"><span class="n">${active.length}</span><span class="l">Active students</span></div></div>`;
+    const b = $('#dashStart'); if (b) b.onclick = () => openNewCycle();
+    return;
+  }
+  const sess = cycleSessions(c.cycle_id);
+  const past = new Set(sess.filter(s => s.session_date && s.session_date <= today()).map(s => s.session_id));
+  const ids = [...enrolledIds(c.cycle_id)];
+  const rows = ids.map(id => ({ s: student(id), sum: summaryFor(c.cycle_id, id) || {},
+    missing: state.attendance.filter(a => a.cycle_id === c.cycle_id && a.student_id === id && a.status === 'not_recorded' && past.has(a.session_id)).length }))
+    .filter(r => r.s);
+  const all = rows.filter(r => r.sum.attended === sess.length && sess.length > 0);
+  const withAbs = rows.filter(r => r.sum.absences > 0);
+  const incomplete = rows.filter(r => r.missing > 0);
+  const notMet = rows.filter(r => r.sum.attendance_eligible === false && r.sum.unrecorded === 0);
+  const next = sess.find(s => s.session_date && s.session_date >= today());
+  const attention = [
+    ...incomplete.map(r => ({ r, issue: `${r.missing} past session${r.missing > 1 ? 's' : ''} not recorded`, tone: 'warn' })),
+    ...withAbs.map(r => ({ r, issue: `${r.sum.absences} absence${r.sum.absences > 1 ? 's' : ''}`, tone: 'bad' }))
+  ].sort((a, b) => a.r.s.full_name.localeCompare(b.r.s.full_name));
+
+  v.innerHTML = `<div class="view-head"><h2>Dashboard</h2><span class="muted small">${esc(c.name)}</span></div>
+    <div class="card">
+      <div class="row"><h3 class="grow">${esc(c.name)}</h3>${tag('active')}</div>
+      <div class="belt-rule"></div>
+      <div class="counts"><span>${fmt(c.start_date)} to ${fmt(c.end_date)}</span>${next ? `<span>Next session: <b>${next.session_number} · ${fmt(next.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</b></span>` : ''}</div>
+      <div class="sess-cells" style="gap:6px;flex-wrap:wrap">${sess.map(s => `<span class="tag ${s.session_date && s.session_date < today() ? '' : 'info'}">S${s.session_number} · ${fmtShort(s.session_date)}</span>`).join('')}</div>
+      ${canEditAttendance() ? `<button class="btn primary" id="dashAtt">Take attendance${next ? ' for session ' + next.session_number : ''}</button>` : ''}
+    </div>
+    <div class="stats">
+      <button class="stat" data-go="students"><span class="n">${active.length}</span><span class="l">Active students</span></button>
+      <button class="stat" data-go="attendance"><span class="n">${rows.length}</span><span class="l">In this cycle</span></button>
+      <button class="stat" data-go="attendance"><span class="n">${all.length}</span><span class="l">Attended all ${sess.length} sessions</span></button>
+      <button class="stat ${withAbs.length ? 'bad' : ''}" data-go="attendance"><span class="n">${withAbs.length}</span><span class="l">With absences</span></button>
+      <button class="stat ${incomplete.length ? 'warn' : ''}" data-go="attendance"><span class="n">${incomplete.length}</span><span class="l">Attendance not recorded</span></button>
+      <button class="stat ${notMet.length ? 'warn' : ''}" data-go="attendance"><span class="n">${notMet.length}</span><span class="l">Below attendance requirement</span></button>
+    </div>
+    <h3>Needs attention</h3>
+    ${attention.length ? `<ul class="list">${attention.map(a => `<li><button class="item" data-student="${esc(a.r.s.student_id)}">
+      <div class="main"><div class="name">${esc(a.r.s.full_name)}</div><div class="meta">${esc([a.r.s.student_id, a.r.s.club].filter(Boolean).join(' · '))}</div></div>
+      <span class="tag ${a.tone}">${esc(a.issue)}</span></button></li>`).join('')}</ul>`
+      : '<div class="card empty">Nothing needs attention for attendance.</div>'}
+    <p class="hint">Readiness, payment, grading, certificate and ID card summaries are added in later build stages.</p>`;
+  $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
+  $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
+  const da = $('#dashAtt'); if (da) da.onclick = () => { state.att.cycle = c.cycle_id; state.att.session = next ? next.session_number : 1; showView('attendance'); };
+}
+
+/* =========================================================================
+   Students
+   ========================================================================= */
+['#studentSearch', '#studentClub', '#studentStatus', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
+$('#addStudentBtn').onclick = () => openStudentForm();
+$('#importStudentsBtn').onclick = () => openImportStudents();
+
+function visibleStudents() {
+  const q = $('#studentSearch').value.trim().toLowerCase(), club = $('#studentClub').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked;
+  return state.students.filter(s =>
+    (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!club || s.club === club) &&
+    (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q)));
+}
+function renderStudents() {
+  const sel = $('#studentClub'), cur = sel.value;
+  sel.innerHTML = '<option value="">All clubs</option>' + clubs().map(c => `<option${c === cur ? ' selected' : ''}>${esc(c)}</option>`).join('');
+  const list = visibleStudents(), c = currentCycle();
+  $('#studentCount').textContent = `${list.length}`;
+  const dups = state.duplicates.filter(d => student(d.student_a)?.is_active && student(d.student_b)?.is_active);
+  $('#dupBanner').innerHTML = dups.length ? `<div class="banner"><span>${dups.length} possible duplicate record${dups.length > 1 ? 's' : ''}</span><button class="btn sm" id="dupBtn">Review</button></div>` : '';
+  if (dups.length) $('#dupBtn').onclick = () => openDuplicates(dups);
+  const enrolled = c ? enrolledIds(c.cycle_id) : new Set();
+  $('#studentList').innerHTML = list.length ? list.map(s => {
+    const sum = c && enrolled.has(s.student_id) ? summaryFor(c.cycle_id, s.student_id) : null;
+    return `<li><button class="item" data-student="${esc(s.student_id)}">
+      <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.club, s.belt_rank].filter(Boolean).join(' · '))}</div></div>
+      ${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
+    </button></li>`;
+  }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
+  $$('#studentList [data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
+}
+
+function openStudent(id) {
+  const s = student(id); if (!s) return;
+  const myCycles = state.cycles.filter(c => enrolledIds(c.cycle_id).has(id));
+  const c = myCycles.find(x => x.status === 'active') || myCycles[0];
+  const cycleBlock = cy => {
+    const sess = cycleSessions(cy.cycle_id), sum = summaryFor(cy.cycle_id, id) || {}, ov = overviewFor(cy.cycle_id, id) || {};
+    const att = sess.map(se => (state.attendance.find(a => a.session_id === se.session_id && a.student_id === id) || {}).status || 'not_recorded');
+    return `<div class="row"><b class="grow">${esc(cy.name)}</b>${tag(cy.status)}</div>
+      <div class="row"><div class="sess-cells">${att.map((a, i) => `<span class="cell ${a}" title="Session ${i + 1}: ${label(a)}">${a === 'not_recorded' ? i + 1 : a[0].toUpperCase()}</span>`).join('')}</div>
+      <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
+      <dl class="kv">
+        <dt>Readiness</dt><dd>${tag(ov.readiness)}</dd>
+        ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${tag(ov.payment_status)} <span class="small muted">$${Number(ov.amount_paid || 0).toFixed(2)} of $${Number(ov.amount_due || 0).toFixed(2)}</span></dd>` : ''}
+        <dt>Grading</dt><dd>${ov.grading_status ? tag(ov.grading_status) : '—'}</dd>
+        <dt>Certificate</dt><dd>${ov.certificate_status ? tag(ov.certificate_status) : '—'}</dd>
+        <dt>ID card</dt><dd>${ov.id_card_status ? tag(ov.id_card_status) : '—'}</dd>
+      </dl>`;
+  };
+  openSheet(`<div class="body">
+    ${sheetHead(s.full_name, `${esc(s.student_id)}${s.club ? ' · ' + esc(s.club) : ''}${!s.is_active ? ' · Inactive' : ''}${s.is_test ? ' · Test record' : ''}`)}
+    <div class="section"><h3>Details</h3>
+      <dl class="kv">
+        <dt>Certificate name</dt><dd>${esc(s.certificate_name || s.full_name)}</dd>
+        <dt>Belt rank</dt><dd>${esc(s.belt_rank || '—')}</dd>
+        <dt>Date of birth</dt><dd>${fmt(s.dob)}</dd>
+        <dt>Email</dt><dd>${esc(s.contact_email || '—')}</dd>
+        <dt>Phone</dt><dd>${esc(s.contact_phone || '—')}</dd>
+        <dt>Added</dt><dd>${fmt(s.date_added)}</dd>
+        ${s.notes ? `<dt>Notes</dt><dd>${esc(s.notes)}</dd>` : ''}
+      </dl>
+      <div class="row need-admin"><button class="btn" id="stEdit">Edit</button>
+        <button class="btn ${s.is_active ? 'danger' : ''}" id="stActive">${s.is_active ? 'Deactivate' : 'Reactivate'}</button></div>
+    </div>
+    ${c ? `<div class="section"><h3>${c.status === 'active' ? 'Current cycle' : 'Latest cycle'}</h3>${cycleBlock(c)}</div>` : '<div class="section"><p class="hint">Not in any preparation cycle yet.</p></div>'}
+    ${myCycles.length > 1 ? `<div class="section"><h3>History</h3>${myCycles.filter(x => x !== c).map(cy => `<div class="card" style="box-shadow:none;border:1px solid var(--line)">${cycleBlock(cy)}</div>`).join('')}</div>` : ''}
+  </div>`);
+  const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
+  const ac = $('#stActive');
+  if (ac) ac.onclick = async () => {
+    if (s.is_active && !await ask(`Deactivate ${s.full_name}? Their records are kept and they can be reactivated at any time.`, 'Deactivate', true)) return;
+    try { await run(sb.from('prep_students').update({ is_active: !s.is_active }).eq('student_id', s.student_id), s.is_active ? 'Deactivated' : 'Reactivated'); await loadAll(); render(); openStudent(id); }
+    catch (e) { toast('Could not save: ' + errMsg(e), 6000); }
+  };
+}
+
+function openStudentForm(s = null) {
+  const v = k => esc(s ? s[k] ?? '' : '');
+  openSheet(`<form id="stForm">
+    ${sheetHead(s ? 'Edit student' : 'Add student', s ? esc(s.student_id) + ' (Student IDs never change)' : 'A Student ID is created automatically.')}
+    <div class="field"><label for="fName">Full name</label><input type="text" id="fName" required value="${v('full_name')}" autocomplete="off"></div>
+    <div class="field"><label for="fCert">Name on certificate, if different</label><input type="text" id="fCert" value="${v('certificate_name')}" autocomplete="off"></div>
+    <div class="grid2">
+      <div class="field"><label for="fClub">Club or school</label><input type="text" id="fClub" list="clubList" value="${v('club')}" autocomplete="off"></div>
+      <div class="field"><label for="fRank">Belt rank</label><input type="text" id="fRank" list="rankList" value="${v('belt_rank')}" autocomplete="off"></div>
+    </div>
+    <datalist id="clubList">${clubs().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+    <datalist id="rankList">${RANKS.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+    <div class="field"><label for="fDob">Date of birth</label><input type="date" id="fDob" value="${v('dob')}"></div>
+    <div class="grid2">
+      <div class="field"><label for="fEmail">Email</label><input type="email" id="fEmail" value="${v('contact_email')}"></div>
+      <div class="field"><label for="fPhone">Phone</label><input type="tel" id="fPhone" value="${v('contact_phone')}"></div>
+    </div>
+    <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${v('notes')}</textarea></div>
+    ${s ? '' : '<label class="check"><input type="checkbox" id="fTest"> Test record (kept out of real lists and new cycles)</label>'}
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="fSave">${s ? 'Save' : 'Add student'}</button></div>
+  </form>`);
+  $('#stForm').onsubmit = async e => {
+    e.preventDefault();
+    const rec = { full_name: $('#fName').value.trim(), certificate_name: $('#fCert').value.trim() || null, club: $('#fClub').value.trim() || null,
+      belt_rank: $('#fRank').value.trim() || null, dob: $('#fDob').value || null, contact_email: $('#fEmail').value.trim() || null,
+      contact_phone: $('#fPhone').value.trim() || null, notes: $('#fNotes').value.trim() || null };
+    if (!rec.full_name) return;
+    if (!s) {
+      rec.is_test = $('#fTest').checked;
+      const same = state.students.filter(x => norm(x.full_name) === norm(rec.full_name));
+      if (same.length && !await ask(`${same.map(x => `${x.full_name} (${x.student_id}${x.is_active ? '' : ', inactive'})`).join(', ')} already exists. Add a new student anyway?`, 'Add anyway', false, 'Possible duplicate')) return;
+    }
+    $('#fSave').disabled = true;
+    try {
+      let id = s && s.student_id;
+      if (s) await run(sb.from('prep_students').update(rec).eq('student_id', s.student_id), 'Saved');
+      else { const d = await run(sb.from('prep_students').insert(rec).select()); id = d[0].student_id; toast(`Added ${rec.full_name} as ${id}`); }
+      await loadAll(); render(); openStudent(id);
+    } catch (err) { $('#fSave').disabled = false; toast('Could not save: ' + errMsg(err), 6000); }
+  };
+}
+
+function openDuplicates(dups) {
+  openSheet(`<div class="body">${sheetHead('Possible duplicates', 'Names that match ignoring capitals, spaces and punctuation. Deactivate the extra record to hide it; its history is kept.')}
+    <ul class="list">${dups.map(d => [d.student_a, d.student_b].map(id => { const s = student(id); return `<li><button class="item" data-student="${esc(id)}"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([id, s.club, s.dob && fmt(s.dob)].filter(Boolean).join(' · '))}</div></div>${d.same_dob ? tag('warn', 'Same birth date') : ''}</button></li>`; }).join('')).join('<li style="height:8px;background:var(--bg)"></li>')}</ul></div>`);
+  sheet.querySelectorAll('[data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
+}
+
+/* ---------- Import (CSV or pasted from a spreadsheet) ---------- */
+function parseCSV(text) {
+  const first = text.split(/\r?\n/).find(l => l.trim()) || '';
+  const sep = first.includes('\t') ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"' && !cur.trim()) q = true;
+    else if (ch === sep) { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+    else cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows.map(r => r.map(c => c.trim())).filter(r => r.some(c => c));
+}
+function mapHeader(row, map) {
+  const cols = row.map(h => map[h.toLowerCase().replace(/[^a-z]/g, '')] || null);
+  return cols.some(Boolean) ? cols : null;
+}
+const STUDENT_HEADERS = {
+  studentid: 'student_id', id: 'student_id', memberid: 'student_id', memberno: 'student_id', membernumber: 'student_id',
+  name: 'full_name', fullname: 'full_name', studentname: 'full_name', membername: 'full_name',
+  firstname: 'first', givenname: 'first', first: 'first', middlename: 'middle', middle: 'middle', lastname: 'last', surname: 'last', familyname: 'last', last: 'last',
+  certificatename: 'certificate_name', nameoncertificate: 'certificate_name',
+  dob: 'dob', dateofbirth: 'dob', birthdate: 'dob', birthday: 'dob',
+  club: 'club', school: 'club', clubschool: 'club', cluborschool: 'club', dojang: 'club',
+  belt: 'belt_rank', beltrank: 'belt_rank', rank: 'belt_rank', grade: 'belt_rank', currentbeltrank: 'belt_rank', currentbelt: 'belt_rank',
+  email: 'contact_email', emailaddress: 'contact_email', phone: 'contact_phone', mobile: 'contact_phone', phonenumber: 'contact_phone', notes: 'notes'
+};
+function importSheet(title, hint, onText) {
+  openSheet(`<div class="body">
+    ${sheetHead(title, hint)}
+    <div class="row"><button class="btn" id="impFileBtn">Choose CSV file</button><span class="hint">or paste rows below</span></div>
+    <input type="file" id="impFile" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden>
+    <textarea id="impText" rows="5" placeholder="Paste rows from a spreadsheet, including the heading row"></textarea>
+    <div id="impPreview"></div>
+    <div class="dlg-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="impGo" disabled>Import</button></div>
+  </div>`);
+  $('#impFileBtn').onclick = () => $('#impFile').click();
+  $('#impFile').onchange = async e => { const f = e.target.files[0]; if (f) { $('#impText').value = await f.text(); onText($('#impText').value); } };
+  $('#impText').oninput = () => onText($('#impText').value);
+}
+function openImportStudents() {
+  let plan = [];
+  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Date of birth, Club, Belt rank, Email, Phone, Certificate name, Notes. Existing students are skipped.', text => {
+    const rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], STUDENT_HEADERS) : null;
+    plan = [];
+    if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
+    if (!cols || !(cols.includes('full_name') || cols.includes('first') || cols.includes('last'))) {
+      $('#impPreview').innerHTML = '<p class="hint" style="color:var(--danger)">Could not find a Name column. Include the heading row.</p>'; $('#impGo').disabled = true; return;
+    }
+    const seenNames = new Set(), seenIds = new Set();
+    for (const r of rows.slice(1)) {
+      const o = {}; cols.forEach((k, i) => { if (k && r[i]) o[k] = r[i]; });
+      const full = (o.full_name || [o.first, o.middle, o.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
+      const rec = { full_name: full, student_id: o.student_id || undefined, certificate_name: o.certificate_name || null, club: o.club || null,
+        belt_rank: o.belt_rank || null, contact_email: o.contact_email || null, contact_phone: o.contact_phone || null, notes: o.notes || null };
+      let why = '';
+      const dob = parseDate(o.dob);
+      if (dob === undefined) why = `Date of birth "${o.dob}" not understood`; else rec.dob = dob;
+      if (!full) why = 'No name';
+      else if (rec.student_id && !/^[A-Za-z0-9-]{2,20}$/.test(rec.student_id)) why = 'Student ID can only use letters, numbers and dashes';
+      else if (rec.student_id && student(rec.student_id)) why = `Student ID ${rec.student_id} already exists`;
+      else if (rec.student_id && seenIds.has(rec.student_id.toLowerCase())) why = 'Student ID repeated in this list';
+      else if (state.students.some(s => norm(s.full_name) === norm(full))) why = 'Already in the register';
+      else if (seenNames.has(norm(full))) why = 'Repeated in this list';
+      if (!why) { seenNames.add(norm(full)); if (rec.student_id) seenIds.add(rec.student_id.toLowerCase()); }
+      plan.push({ rec, why });
+    }
+    const add = plan.filter(p => !p.why);
+    $('#impPreview').innerHTML = `<p class="hint"><b>${add.length}</b> to add${plan.length - add.length ? `, ${plan.length - add.length} skipped` : ''}.</p>
+      <div class="preview"><table class="grid"><tr><th>Name</th><th>Club</th><th>Result</th></tr>
+      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.rec.full_name || '—')}${p.rec.student_id ? ` <span class="muted">${esc(p.rec.student_id)}</span>` : ''}</td><td>${esc(p.rec.club || '')}</td><td>${p.why ? esc(p.why) : tag('ok', 'Add')}</td></tr>`).join('')}</table></div>`;
+    $('#impGo').disabled = !add.length;
+    $('#impGo').textContent = add.length ? `Import ${add.length}` : 'Import';
+  });
+  $('#impGo').onclick = async () => {
+    const add = plan.filter(p => !p.why).map(p => { const r = { ...p.rec }; if (!r.student_id) delete r.student_id; return r; });
+    if (!add.length || !await ask(`Add ${add.length} student${add.length > 1 ? 's' : ''} to the register?`, 'Import')) return;
+    $('#impGo').disabled = true;
+    try {
+      // Rows with and without their own Student ID are sent separately so generated IDs work
+      const withId = add.filter(r => r.student_id), without = add.filter(r => !r.student_id);
+      if (withId.length) await run(sb.from('prep_students').insert(withId));
+      if (without.length) await run(sb.from('prep_students').insert(without));
+      sheet.close(); toast(`Imported ${add.length} student${add.length > 1 ? 's' : ''}`); await loadAll(); render();
+    } catch (e) { $('#impGo').disabled = false; toast('Import stopped: ' + errMsg(e), 7000); }
+  };
+}
+
+/* =========================================================================
+   Cycles
+   ========================================================================= */
+function renderCycles() {
+  const v = $('#view-cycles');
+  const groups = ['active', 'planned', 'completed', 'archived'].map(st => [st, state.cycles.filter(c => c.status === st)]).filter(g => g[1].length);
+  v.innerHTML = `<div class="view-head"><h2>Preparation cycles</h2>
+      <button class="btn primary sm need-admin" id="newCycleBtn">Start new preparation cycle</button></div>
+    ${groups.length ? groups.map(([st, list]) => `<h3>${label(st)}</h3><ul class="list">${list.map(c => {
+      const sess = cycleSessions(c.cycle_id), n = enrolledIds(c.cycle_id).size;
+      return `<li><button class="item" data-cycle="${c.cycle_id}"><div class="main"><div class="name">${esc(c.name)}</div>
+        <div class="meta">${fmt(c.start_date)} to ${fmt(c.end_date)} · ${sess.length} sessions · ${n} student${n === 1 ? '' : 's'}</div></div>${tag(c.status)}</button></li>`;
+    }).join('')}</ul>`).join('') : `<div class="card empty"><p>No preparation cycles yet.</p></div>`}`;
+  const nb = $('#newCycleBtn'); if (nb) nb.onclick = () => openNewCycle();
+  $$('#view-cycles [data-cycle]').forEach(b => b.onclick = () => openCycle(b.dataset.cycle));
+}
+
+function openNewCycle() {
+  const others = activeCycles();
+  const pool = state.students.filter(s => s.is_active && !s.is_test);
+  const fee = Number(state.settings.default_session_fee || 0);
+  openSheet(`<form id="ncForm">
+    ${sheetHead('Start new preparation cycle', 'Creates fresh attendance, readiness and fee records. Earlier cycles are not changed.')}
+    <div class="field"><label for="ncName">Cycle name</label><input type="text" id="ncName" required placeholder="e.g. Term 4 2026" autocomplete="off"></div>
+    <div class="grid2">
+      <div class="field"><label for="ncStart">Start date</label><input type="date" id="ncStart" required></div>
+      <div class="field"><label for="ncEnd">End date</label><input type="date" id="ncEnd" required></div>
+    </div>
+    <div class="section"><h3>Sessions</h3><p class="hint">Filled in weekly from the start date. Change any date if needed.</p>
+      <div class="grid2">${[1, 2, 3, 4].map(i => `<div class="field"><label for="ncS${i}">Session ${i}</label><input type="date" id="ncS${i}" required></div>`).join('')}</div></div>
+    <div class="section"><h3>Fee</h3>
+      <div class="grid2">
+        <div class="field"><label for="ncFee">Session fee ($)</label><input type="number" id="ncFee" min="0" step="0.01" required value="${fee.toFixed(2)}"></div>
+        <div class="field"><label for="ncDue">Payment due</label><input type="date" id="ncDue"></div>
+      </div></div>
+    <div class="section"><h3>Students</h3>
+      <label class="check"><input type="radio" name="ncWho" value="all" checked> All active students (${pool.length})</label>
+      <label class="check"><input type="radio" name="ncWho" value="pick"> Choose students</label>
+      <div id="ncPick" hidden>
+        <input type="search" id="ncSearch" placeholder="Search" aria-label="Search students">
+        <div class="checklist" id="ncList">${pool.map(s => `<label class="check"><input type="checkbox" value="${esc(s.student_id)}"> ${esc(s.full_name)} <span class="muted small">${esc([s.student_id, s.club].filter(Boolean).join(' · '))}</span></label>`).join('')}</div>
+      </div></div>
+    <div class="section"><label class="check"><input type="checkbox" id="ncActivate" checked> Make this the active cycle</label>
+      ${others.length ? `<p class="hint" id="ncActHint">${esc(others.map(o => o.name).join(', '))} will be marked Completed. Its records are kept.</p>` : ''}</div>
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="ncGo">Review</button></div>
+  </form>`);
+  const start = $('#ncStart');
+  start.onchange = () => {
+    if (!start.value) return;
+    [1, 2, 3, 4].forEach(i => { if (!$('#ncS' + i).dataset.touched) $('#ncS' + i).value = addDays(start.value, (i - 1) * 7); });
+    if (!$('#ncEnd').dataset.touched) $('#ncEnd').value = addDays(start.value, 21);
+    if (!$('#ncDue').dataset.touched) $('#ncDue').value = addDays(start.value, 7);
+  };
+  ['#ncS1', '#ncS2', '#ncS3', '#ncS4', '#ncEnd', '#ncDue'].forEach(s => $(s).addEventListener('input', e => e.target.dataset.touched = '1'));
+  sheet.querySelectorAll('[name=ncWho]').forEach(r => r.onchange = () => $('#ncPick').hidden = r.value !== 'pick' || !r.checked);
+  $('#ncSearch').oninput = e => { const q = e.target.value.toLowerCase(); $$('#ncList .check').forEach(l => l.hidden = !l.textContent.toLowerCase().includes(q)); };
+  const act = $('#ncActivate'), hint = $('#ncActHint'); if (hint) act.onchange = () => hint.hidden = !act.checked;
+  $('#ncForm').onsubmit = async e => {
+    e.preventDefault();
+    const name = $('#ncName').value.trim();
+    if (state.cycles.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) return toast(`A cycle called "${name}" already exists.`, 5000);
+    const dates = [1, 2, 3, 4].map(i => $('#ncS' + i).value);
+    if ($('#ncEnd').value < start.value) return toast('The end date is before the start date.', 5000);
+    const pick = sheet.querySelector('[name=ncWho]:checked').value === 'pick';
+    const ids = pick ? $$('#ncList input:checked').map(i => i.value) : [];
+    if (pick && !ids.length) return toast('Choose at least one student, or pick "All active students".', 5000);
+    const count = pick ? ids.length : pool.length, feeV = Number($('#ncFee').value || 0), activate = act.checked;
+    const msg = `${name}: ${fmt(start.value)} to ${fmt($('#ncEnd').value)}, sessions on ${dates.map(fmtShort).join(', ')}. ` +
+      `Fee $${feeV.toFixed(2)}. ${count} student${count === 1 ? '' : 's'} enrolled.` +
+      (activate ? ` It becomes the active cycle${others.length ? ' and ' + others.map(o => o.name).join(', ') + ' is marked Completed' : ''}.` : ' It stays Planned until you activate it.');
+    if (!await ask(msg, 'Start cycle', false, 'Start this cycle?')) return;
+    $('#ncGo').disabled = true;
+    try {
+      const id = await run(sb.rpc('prep_start_new_cycle', { p_name: name, p_start: start.value, p_end: $('#ncEnd').value, p_session_dates: dates,
+        p_fee: feeV, p_payment_due: $('#ncDue').value || null, p_student_ids: pick ? ids : null, p_notes: null }));
+      if (activate) await run(sb.rpc('prep_activate_cycle', { p_cycle: id, p_complete_current: true }));
+      sheet.close(); toast(`${name} started`); await loadAll(); state.att.cycle = id; render();
+    } catch (err) { $('#ncGo').disabled = false; toast('Could not start the cycle: ' + errMsg(err), 7000); await loadAll(); render(); }
+  };
+}
+
+function openCycle(id) {
+  const c = cycle(id); if (!c) return;
+  const sess = cycleSessions(id), ids = enrolledIds(id);
+  const people = [...ids].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const admin = has('admin');
+  openSheet(`<form id="cyForm">
+    ${sheetHead(c.name, `${label(c.status)} · ${people.length} student${people.length === 1 ? '' : 's'}`)}
+    <div class="field"><label for="cyName">Name</label><input type="text" id="cyName" value="${esc(c.name)}" ${admin ? '' : 'disabled'}></div>
+    <div class="grid2">
+      <div class="field"><label for="cyStart">Start date</label><input type="date" id="cyStart" value="${esc(c.start_date || '')}" ${admin ? '' : 'disabled'}></div>
+      <div class="field"><label for="cyEnd">End date</label><input type="date" id="cyEnd" value="${esc(c.end_date || '')}" ${admin ? '' : 'disabled'}></div>
+    </div>
+    <div class="grid2">${sess.map(s => `<div class="field"><label for="cySess${s.session_number}">Session ${s.session_number}</label><input type="date" id="cySess${s.session_number}" data-sid="${s.session_id}" value="${esc(s.session_date || '')}" ${admin ? '' : 'disabled'}></div>`).join('')}</div>
+    <div class="grid2">
+      <div class="field"><label for="cyFee">Session fee ($)</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
+      <div class="field"><label for="cyDue">Payment due</label><input type="date" id="cyDue" value="${esc(c.payment_due_date || '')}" ${admin ? '' : 'disabled'}></div>
+    </div>
+    <div class="field"><label for="cyNotes">Notes</label><textarea id="cyNotes" rows="2" ${admin ? '' : 'disabled'}>${esc(c.notes || '')}</textarea></div>
+    ${admin ? `<p class="hint">Changing the fee updates everyone still at the old amount. Fees changed individually are left alone.</p>
+    <div class="row">
+      ${c.status !== 'active' && c.status !== 'archived' ? '<button type="button" class="btn" id="cyActivate">Make active</button>' : ''}
+      ${c.status === 'active' ? '<button type="button" class="btn" id="cyComplete">Mark completed</button>' : ''}
+      ${c.status === 'completed' ? '<button type="button" class="btn" id="cyArchive">Archive</button>' : ''}
+      ${c.status === 'archived' ? '<button type="button" class="btn" id="cyUnarchive">Restore from archive</button>' : ''}
+    </div>` : ''}
+    <div class="section"><div class="row"><h3 class="grow">Students</h3>${admin && c.status !== 'archived' ? '<button type="button" class="btn sm" id="cyEnrol">Add students</button>' : ''}</div>
+      ${people.length ? `<ul class="list">${people.map(s => { const sum = summaryFor(id, s.student_id) || {}; return `<li><div class="item" style="cursor:default">
+        <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc(s.student_id)} · ${sum.attended ?? 0}/${sess.length} attended</div></div>
+        ${admin ? `<button type="button" class="btn sm ghost danger" data-unenrol="${esc(s.student_id)}">Remove</button>` : ''}</div></li>`; }).join('')}</ul>`
+        : '<p class="hint">No students in this cycle.</p>'}
+    </div>
+    ${admin ? `<div class="dlg-actions"><button type="button" class="btn" data-close>Close</button><button type="submit" class="btn primary" id="cySave">Save changes</button></div>` : ''}
+  </form>`);
+  if (!admin) return;
+  const reopen = async msg => { if (msg) toast(msg); await loadAll(); render(); openCycle(id); };
+  const fail = e => toast(errMsg(e), 7000);
+  $('#cyForm').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await run(sb.from('prep_cycles').update({ name: $('#cyName').value.trim(), start_date: $('#cyStart').value || null, end_date: $('#cyEnd').value || null,
+        session_fee: Number($('#cyFee').value || 0), payment_due_date: $('#cyDue').value || null, notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
+      for (const inp of $$('#cyForm [data-sid]')) {
+        const s = sess.find(x => x.session_id === inp.dataset.sid);
+        if ((s.session_date || '') !== inp.value) await run(sb.from('prep_sessions').update({ session_date: inp.value || null }).eq('session_id', s.session_id));
+      }
+      reopen('Saved');
+    } catch (err) { fail(err); }
+  };
+  const btn = (sel, fn) => { const b = $(sel); if (b) b.onclick = fn; };
+  btn('#cyActivate', async () => {
+    const cur = activeCycles().filter(x => x.cycle_id !== id);
+    if (!await ask(`Make ${c.name} the active cycle?${cur.length ? ` ${cur.map(x => x.name).join(', ')} will be marked Completed. Its records are kept.` : ''}`, 'Make active')) return;
+    try { await run(sb.rpc('prep_activate_cycle', { p_cycle: id, p_complete_current: true })); reopen(`${c.name} is now active`); } catch (e) { fail(e); }
+  });
+  btn('#cyComplete', async () => {
+    if (!await ask(`Mark ${c.name} as completed? Its records are kept and can still be viewed and corrected.`, 'Mark completed')) return;
+    try { await run(sb.from('prep_cycles').update({ status: 'completed' }).eq('cycle_id', id)); reopen('Marked completed'); } catch (e) { fail(e); }
+  });
+  btn('#cyArchive', async () => { try { await run(sb.from('prep_cycles').update({ status: 'archived' }).eq('cycle_id', id)); reopen('Archived'); } catch (e) { fail(e); } });
+  btn('#cyUnarchive', async () => { try { await run(sb.from('prep_cycles').update({ status: 'completed' }).eq('cycle_id', id)); reopen('Restored'); } catch (e) { fail(e); } });
+  btn('#cyEnrol', () => openEnrol(id));
+  sheet.querySelectorAll('[data-unenrol]').forEach(b => b.onclick = async () => {
+    const s = student(b.dataset.unenrol);
+    if (!await ask(`Remove ${s.full_name} from ${c.name}? Their attendance, readiness and fee record for this cycle are removed. This is only allowed if no payment has been recorded.`, 'Remove', true)) return;
+    try { await run(sb.from('prep_enrolments').delete().eq('cycle_id', id).eq('student_id', s.student_id)); reopen(`${s.full_name} removed`); }
+    catch (e) { toast(/foreign key|RESTRICT/i.test(errMsg(e)) ? `${s.full_name} has payments recorded for this cycle, so they can't be removed.` : errMsg(e), 7000); }
+  });
+}
+
+function openEnrol(id) {
+  const c = cycle(id), ids = enrolledIds(id);
+  const pool = state.students.filter(s => s.is_active && !ids.has(s.student_id));
+  openSheet(`<div class="body">${sheetHead('Add students to ' + c.name, 'Each student gets attendance, readiness and fee records for this cycle.')}
+    <input type="search" id="enSearch" placeholder="Search" aria-label="Search students">
+    ${pool.length ? `<div class="checklist" id="enList">${pool.map(s => `<label class="check"><input type="checkbox" value="${esc(s.student_id)}"> ${esc(s.full_name)} <span class="muted small">${esc([s.student_id, s.club, s.is_test ? 'Test' : ''].filter(Boolean).join(' · '))}</span></label>`).join('')}</div>` : '<p class="hint">Every active student is already in this cycle.</p>'}
+    <div class="dlg-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="enGo" ${pool.length ? '' : 'disabled'}>Add</button></div></div>`, () => {});
+  const s = $('#enSearch'); s.oninput = () => { const q = s.value.toLowerCase(); $$('#enList .check').forEach(l => l.hidden = !l.textContent.toLowerCase().includes(q)); };
+  $('#enGo').onclick = async () => {
+    const pick = $$('#enList input:checked').map(i => i.value);
+    if (!pick.length) return toast('Choose at least one student.');
+    try { await run(sb.from('prep_enrolments').insert(pick.map(student_id => ({ cycle_id: id, student_id })))); toast(`Added ${pick.length}`); await loadAll(); render(); openCycle(id); }
+    catch (e) { toast(errMsg(e), 7000); }
+  };
+}
+
+/* =========================================================================
+   Attendance
+   ========================================================================= */
+function attRows() {
+  const A = state.att, cid = A.cycle, se = cycleSessions(cid).find(s => s.session_number === A.session);
+  if (!se) return { se: null, rows: [] };
+  const rows = [...enrolledIds(cid)].map(id => {
+    const s = student(id), a = state.attendance.find(x => x.session_id === se.session_id && x.student_id === id);
+    return s && a ? { s, a } : null;
+  }).filter(Boolean).sort((x, y) => x.s.full_name.localeCompare(y.s.full_name));
+  return { se, rows };
+}
+function visibleAttRows() {
+  const A = state.att, q = A.search.toLowerCase();
+  return attRows().rows.filter(r => (!A.club || r.s.club === A.club) && (!A.status || r.a.status === A.status) &&
+    (!q || r.s.full_name.toLowerCase().includes(q) || r.s.student_id.toLowerCase().includes(q)));
+}
+function renderAttendance() {
+  const v = $('#view-attendance'), A = state.att;
+  if (!state.cycles.length) { v.innerHTML = '<div class="view-head"><h2>Attendance</h2></div><div class="card empty">No preparation cycles yet. Start one under Cycles.</div>'; return; }
+  const sess = cycleSessions(A.cycle);
+  if (!sess.some(s => s.session_number === A.session)) A.session = (sess[0] || {}).session_number || 1;
+  const { se, rows } = attRows();
+  const n = st => rows.filter(r => r.a.status === st).length;
+  const editable = canEditAttendance();
+  const keepFocus = document.activeElement && document.activeElement.id === 'attSearch';
+  v.innerHTML = `<div class="view-head"><h2>Attendance</h2>
+      ${editable ? '<button class="btn sm" id="attImport">Import</button>' : ''}</div>
+    <div class="field"><label for="attCycle">Preparation cycle</label><select id="attCycle">${state.cycles.map(c => `<option value="${c.cycle_id}"${c.cycle_id === A.cycle ? ' selected' : ''}>${esc(c.name)}${c.status === 'active' ? ' (active)' : ` (${label(c.status).toLowerCase()})`}</option>`).join('')}</select></div>
+    <div class="seg" role="group" aria-label="View"><button data-mode="sessions" aria-pressed="${A.mode === 'sessions'}">Take attendance</button><button data-mode="summary" aria-pressed="${A.mode === 'summary'}">Summary</button></div>
+    <div id="attBody"></div>`;
+  $('#attCycle').onchange = e => { A.cycle = e.target.value; A.selected.clear(); renderAttendance(); };
+  $$('#view-attendance [data-mode]').forEach(b => b.onclick = () => { A.mode = b.dataset.mode; stopSelecting(); renderAttendance(); });
+  const imp = $('#attImport'); if (imp) imp.onclick = () => openImportAttendance();
+  const body = $('#attBody');
+  if (A.mode === 'summary') return renderAttSummary(body);
+  body.innerHTML = `
+    <div class="seg" role="group" aria-label="Session">${sess.map(s => `<button data-session="${s.session_number}" aria-pressed="${s.session_number === A.session}">Session ${s.session_number}<small>${fmt(s.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</small></button>`).join('')}</div>
+    <div class="counts" style="margin-top:12px"><span><b>${n('present')}</b> present</span><span><b>${n('absent')}</b> absent</span><span><b>${n('excused')}</b> excused</span><span><b>${n('not_recorded')}</b> not recorded</span></div>
+    <div class="view" style="gap:8px;margin-top:12px">
+      <input type="search" id="attSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(A.search)}">
+      <div class="filters">
+        <select id="attClub" aria-label="Club"><option value="">All clubs</option>${clubs().map(c => `<option${c === A.club ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select id="attStatus" aria-label="Status"><option value="">Everyone</option>${['not_recorded', 'present', 'absent', 'excused'].map(s => `<option value="${s}"${s === A.status ? ' selected' : ''}>${label(s)}</option>`).join('')}</select>
+      </div>
+      ${editable && rows.length ? `<div class="row"><button class="btn grow" id="attSelect">${A.selecting ? 'Cancel selecting' : 'Select several'}</button><button class="btn grow" id="attAllPresent">Mark shown as present</button></div>` : ''}
+    </div>
+    <ul class="list" id="attList" style="margin-top:12px"></ul>
+    ${!editable ? '<p class="hint" style="margin-top:8px">You can view attendance but not change it.</p>' : ''}`;
+  $$('#attBody [data-session]').forEach(b => b.onclick = () => { A.session = +b.dataset.session; A.selected.clear(); renderAttendance(); });
+  const s = $('#attSearch'); s.oninput = () => { A.search = s.value; renderAttList(); };
+  if (keepFocus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+  $('#attClub').onchange = e => { A.club = e.target.value; renderAttList(); };
+  $('#attStatus').onchange = e => { A.status = e.target.value; renderAttList(); };
+  const sel = $('#attSelect'); if (sel) sel.onclick = () => { A.selecting ? stopSelecting() : startSelecting(); renderAttendance(); };
+  const allP = $('#attAllPresent'); if (allP) allP.onclick = () => {
+    const ids = visibleAttRows().filter(r => r.a.status !== 'present').map(r => r.s.student_id);
+    if (!ids.length) return toast('Everyone shown is already present.');
+    bulkMark(se, ids, 'present');
+  };
+  renderAttList();
+}
+function renderAttList() {
+  const A = state.att, list = visibleAttRows(), editable = canEditAttendance();
+  $('#attList').innerHTML = list.length ? list.map(({ s, a }) => `<li><div class="item" style="cursor:default">
+    ${A.selecting ? `<input type="checkbox" data-pick="${esc(s.student_id)}" ${A.selected.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}">` : ''}
+    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.club].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
+    ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}</div>`
+      : tag(a.status)}
+  </div></li>`).join('') : `<li><div class="empty">${attRows().rows.length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
+  $$('#attList .att button').forEach(b => b.onclick = () => markOne(b.dataset.id, b.dataset.s));
+  $$('#attList [data-pick]').forEach(c => c.onchange = () => { c.checked ? A.selected.add(c.dataset.pick) : A.selected.delete(c.dataset.pick); updateSelbar(); });
+  updateSelbar();
+}
+async function markOne(id, status) {
+  const { se } = attRows(), a = state.attendance.find(x => x.session_id === se.session_id && x.student_id === id);
+  if (!a || a.status === status) return;
+  const prev = a.status; a.status = status; renderAttendance();
+  const { error } = await sb.rpc('prep_mark_attendance', { p_session: se.session_id, p_student_ids: [id], p_status: status, p_notes: null });
+  if (error) { a.status = prev; renderAttendance(); toast('Not saved: ' + errMsg(error), 6000); }
+  else scheduleReload();
+}
+async function bulkMark(se, ids, status) {
+  const word = label(status).toLowerCase();
+  const text = status === 'absent' ? `Mark ${ids.length} student${ids.length > 1 ? 's' : ''} ABSENT for session ${se.session_number}? Only the students you selected are changed.`
+    : status === 'not_recorded' ? `Clear the attendance of ${ids.length} student${ids.length > 1 ? 's' : ''} for session ${se.session_number}?`
+    : `Mark ${ids.length} student${ids.length > 1 ? 's' : ''} ${word} for session ${se.session_number}? Nobody else is changed.`;
+  if (!await ask(text, status === 'not_recorded' ? 'Clear' : `Mark ${word}`, status === 'absent' || status === 'not_recorded')) return;
+  try {
+    const n = await run(sb.rpc('prep_mark_attendance', { p_session: se.session_id, p_student_ids: ids, p_status: status, p_notes: null }));
+    toast(`${n} marked ${word}`); stopSelecting(); await loadAll(); render();
+  } catch (e) { toast('Not saved: ' + errMsg(e), 6000); }
+}
+function startSelecting() { state.att.selecting = true; state.att.selected.clear(); document.body.classList.add('selecting'); $('#selbar').hidden = false; }
+function stopSelecting() { state.att.selecting = false; state.att.selected.clear(); document.body.classList.remove('selecting'); $('#selbar').hidden = true; }
+function updateSelbar() { $('#selCount').textContent = `${state.att.selected.size} selected`; $$('#selbar [data-bulk]').forEach(b => b.disabled = !state.att.selected.size); }
+$('#selDone').onclick = () => { stopSelecting(); renderAttendance(); };
+$('#selAll').onclick = () => { visibleAttRows().forEach(r => state.att.selected.add(r.s.student_id)); renderAttList(); };
+$$('#selbar [data-bulk]').forEach(b => b.onclick = () => bulkMark(attRows().se, [...state.att.selected], b.dataset.bulk));
+
+function renderAttSummary(body) {
+  const cid = state.att.cycle, sess = cycleSessions(cid);
+  const rows = [...enrolledIds(cid)].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const req = state.settings.sessions_required ?? 4;
+  body.innerHTML = `<p class="hint" style="margin-bottom:10px">Attendance % = present ÷ (present + absent). Excused and not-yet-recorded sessions are left out.
+      Requirement: ${req} session${req === 1 ? '' : 's'} present${state.settings.excused_counts_as_attended ? ' (excused counts)' : ''}.</p>
+    ${rows.length ? `<div class="card scroll" style="padding:8px 10px"><table class="grid"><tr><th>Student</th><th>Sessions</th><th class="num">Att.</th><th class="num">%</th></tr>
+    ${rows.map(s => { const sum = summaryFor(cid, s.student_id) || {};
+      const cells = sess.map(se => (state.attendance.find(a => a.session_id === se.session_id && a.student_id === s.student_id) || {}).status || 'not_recorded');
+      return `<tr><td><button class="btn ghost sm" style="padding:0;min-height:0;font-weight:600;text-align:left;white-space:normal" data-student="${esc(s.student_id)}">${esc(s.full_name)}</button></td>
+        <td><div class="sess-cells">${cells.map((a, i) => `<span class="cell ${a}" title="Session ${i + 1}: ${label(a)}">${a === 'not_recorded' ? '–' : a[0].toUpperCase()}</span>`).join('')}</div></td>
+        <td class="num">${sum.attended ?? 0}/${sess.length}${sum.attendance_eligible ? ' ✓' : ''}</td><td class="num">${sum.attendance_pct ?? '—'}</td></tr>`; }).join('')}</table></div>
+    <div class="counts" style="margin-top:8px"><span><span class="cell present" style="display:inline-grid">P</span> Present</span><span><span class="cell absent" style="display:inline-grid">A</span> Absent</span><span><span class="cell excused" style="display:inline-grid">E</span> Excused</span><span><span class="cell" style="display:inline-grid">–</span> Not recorded</span><span>✓ meets requirement</span></div>`
+    : '<div class="card empty">No students in this cycle.</div>'}`;
+  body.querySelectorAll('[data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
+}
+
+const ATT_HEADERS = { studentid: 'id', id: 'id', memberid: 'id', name: 'name', fullname: 'name', studentname: 'name',
+  session: 'session', sessionnumber: 'session', sessionno: 'session', status: 'status', attendance: 'status', attended: 'status', notes: 'notes' };
+const ATT_STATUS = { present: 'present', p: 'present', yes: 'present', y: 'present', attended: 'present', x: 'present', '1': 'present', true: 'present',
+  absent: 'absent', a: 'absent', no: 'absent', n: 'absent', '0': 'absent', excused: 'excused', e: 'excused', ex: 'excused' };
+function openImportAttendance() {
+  const cid = state.att.cycle, c = cycle(cid), sess = cycleSessions(cid), ids = enrolledIds(cid);
+  let plan = [];
+  importSheet(`Import attendance: ${c.name}`, `Columns: Student ID or Name, Status (Present, Absent, Excused; blank means Present), and optionally Session (1 to ${sess.length}). Without a Session column, rows go to session ${state.att.session}.`, text => {
+    const rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], ATT_HEADERS) : null;
+    plan = [];
+    if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
+    if (!cols || !(cols.includes('id') || cols.includes('name'))) { $('#impPreview').innerHTML = '<p class="hint" style="color:var(--danger)">Could not find a Student ID or Name column. Include the heading row.</p>'; $('#impGo').disabled = true; return; }
+    const seen = new Set();
+    for (const r of rows.slice(1)) {
+      const o = {}; cols.forEach((k, i) => { if (k) o[k] = r[i] || ''; });
+      let s = o.id ? student(o.id.trim()) || state.students.find(x => x.student_id.toLowerCase() === o.id.trim().toLowerCase()) : null;
+      let why = '';
+      if (!s && o.name) { const m = state.students.filter(x => norm(x.full_name) === norm(o.name)); if (m.length === 1) s = m[0]; else if (m.length > 1) why = 'More than one student with this name; use the Student ID'; }
+      const num = o.session ? parseInt(o.session.replace(/\D/g, ''), 10) : state.att.session;
+      const se = sess.find(x => x.session_number === num);
+      const status = ATT_STATUS[(o.status || 'present').trim().toLowerCase()];
+      const who = s ? s.full_name : (o.name || o.id || '—');
+      if (!why && !s) why = 'Student not found';
+      else if (!why && !ids.has(s.student_id)) why = 'Not in this cycle';
+      else if (!why && !se) why = `No session ${o.session}`;
+      else if (!why && !status) why = `Status "${o.status}" not understood`;
+      else if (!why && seen.has(s.student_id + '|' + num)) why = 'Repeated in this list';
+      let cur = null;
+      if (!why) { seen.add(s.student_id + '|' + num); cur = state.attendance.find(a => a.session_id === se.session_id && a.student_id === s.student_id); if (cur && cur.status === status) why = 'Already recorded'; }
+      plan.push({ who, id: s && s.student_id, se, status, why, change: cur && cur.status !== 'not_recorded' ? cur.status : null });
+    }
+    const go = plan.filter(p => !p.why), changes = go.filter(p => p.change);
+    $('#impPreview').innerHTML = `<p class="hint"><b>${go.length}</b> to record${changes.length ? `, including <b>${changes.length}</b> that change an existing record` : ''}${plan.length - go.length ? `, ${plan.length - go.length} skipped` : ''}.</p>
+      <div class="preview"><table class="grid"><tr><th>Student</th><th>Session</th><th>Result</th></tr>
+      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.who)}</td><td>${p.se ? p.se.session_number : '—'}</td><td>${p.why ? esc(p.why) : tag(p.status) + (p.change ? ` <span class="small muted">was ${label(p.change)}</span>` : '')}</td></tr>`).join('')}</table></div>`;
+    $('#impGo').disabled = !go.length; $('#impGo').textContent = go.length ? `Record ${go.length}` : 'Import';
+  });
+  $('#impGo').onclick = async () => {
+    const go = plan.filter(p => !p.why);
+    if (!go.length || !await ask(`Record ${go.length} attendance entr${go.length > 1 ? 'ies' : 'y'} for ${c.name}? Students not in the list are not changed.`, 'Record')) return;
+    $('#impGo').disabled = true;
+    const groups = {};
+    go.forEach(p => { const k = p.se.session_id + '|' + p.status; (groups[k] = groups[k] || { se: p.se, status: p.status, ids: [] }).ids.push(p.id); });
+    try {
+      for (const g of Object.values(groups)) await run(sb.rpc('prep_mark_attendance', { p_session: g.se.session_id, p_student_ids: g.ids, p_status: g.status, p_notes: null }));
+      sheet.close(); toast(`Recorded ${go.length}`); await loadAll(); render();
+    } catch (e) { $('#impGo').disabled = false; toast('Import stopped: ' + errMsg(e), 7000); await loadAll(); render(); }
+  };
+}
+
+/* =========================================================================
+   More: settings, users, audit log
+   ========================================================================= */
+async function renderMore() {
+  const v = $('#view-more'), S = state.settings, admin = has('admin');
+  v.innerHTML = `<div class="view-head"><h2>More</h2></div>
+    <div class="card"><div class="row"><div class="grow"><b>${esc(state.email)}</b><div class="small muted">${state.roles.map(r => ROLE_NAMES[r] || r).join(', ')}</div></div>
+      <button class="btn danger" id="signOutBtn">Sign out</button></div></div>
+    ${admin ? `<form class="card" id="setForm"><h3>Settings</h3>
+      <div class="grid2">
+        <div class="field"><label for="setReq">Sessions required for grading</label><input type="number" id="setReq" min="0" max="20" value="${S.sessions_required ?? 4}"></div>
+        <div class="field"><label for="setFee">Default session fee ($)</label><input type="number" id="setFee" min="0" step="0.01" value="${Number(S.default_session_fee || 0).toFixed(2)}"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="setExc" ${S.excused_counts_as_attended ? 'checked' : ''}> Excused sessions count towards the requirement</label>
+      <label class="check"><input type="checkbox" id="setInv" ${S.invoice_on_enrol ? 'checked' : ''}> Fees are due as soon as a student joins a cycle</label>
+      <label class="check"><input type="checkbox" id="setMulti" ${S.allow_multiple_active ? 'checked' : ''}> Allow more than one active cycle</label>
+      <p class="hint">The attendance requirement only informs the grading decision. It never marks anyone ready or eligible.</p>
+      <div class="row"><button class="btn primary" type="submit">Save settings</button></div></form>
+    <div class="card"><div class="row"><h3 class="grow">Users</h3><button class="btn sm" id="addUserBtn">Add user</button></div>
+      <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
+      <div id="userList" class="small muted">Loading...</div></div>
+    <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
+    <p class="hint">Black Belt Prep · Stage 3 build</p>`;
+  $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+  if (!admin) return;
+  $('#setForm').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await run(sb.from('prep_settings').update({ sessions_required: +$('#setReq').value, default_session_fee: Number($('#setFee').value || 0),
+        excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked }).eq('id', 1), 'Settings saved');
+      await loadAll();
+    } catch (err) { toast(errMsg(err), 6000); }
+  };
+  $('#addUserBtn').onclick = () => openUser();
+  const [{ data: roles }, { data: log }] = await Promise.all([
+    sb.from('prep_roles').select('*').order('email'),
+    sb.from('prep_audit_log').select('*').order('changed_at', { ascending: false }).limit(40)
+  ]);
+  if (state.view !== 'more') return;
+  const byEmail = {}; (roles || []).forEach(r => (byEmail[r.email] = byEmail[r.email] || []).push(r.role));
+  $('#userList').innerHTML = Object.keys(byEmail).length ? `<ul class="list" style="box-shadow:none;border:1px solid var(--line)">${Object.entries(byEmail).map(([em, rs]) =>
+    `<li><button class="item" data-user="${esc(em)}"><div class="main"><div class="name" style="font-weight:400;color:var(--fg)">${esc(em)}</div><div class="meta">${rs.map(r => ROLE_NAMES[r]).join(', ')}</div></div></button></li>`).join('')}</ul>` : 'No users.';
+  $$('[data-user]').forEach(b => b.onclick = () => openUser(b.dataset.user, byEmail[b.dataset.user]));
+  const TABLES = { prep_students: 'Student', prep_cycles: 'Cycle', prep_sessions: 'Session', prep_enrolments: 'Enrolment', prep_attendance: 'Attendance',
+    prep_settings: 'Settings', prep_roles: 'User role', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
+  const desc = l => {
+    const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
+    let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;
+    if (l.table_name === 'prep_attendance' && l.action === 'update') what = `Attendance: ${label(l.old_row.status)} → ${label(l.new_row.status)}`;
+    return `${esc(what)}${who ? ' · ' + esc(who) : ''}`;
+  };
+  $('#auditList').innerHTML = (log || []).length ? `<table class="grid">${log.map(l => `<tr><td>${desc(l)}<div class="small muted">${esc(l.changed_by || 'system')} · ${fmtTime(l.changed_at)}</div></td></tr>`).join('')}</table>` : 'No changes yet.';
+}
+function openUser(email = '', current = []) {
+  openSheet(`<form id="uForm">${sheetHead(email ? 'User roles' : 'Add user', email ? esc(email) : 'They sign in with their AMA ID Cards login. Create the login in Supabase first if they do not have one.')}
+    ${email ? '' : '<div class="field"><label for="uEmail">Email</label><input type="email" id="uEmail" required></div>'}
+    <div>${Object.entries(ROLE_NAMES).map(([r, n]) => `<label class="check"><input type="checkbox" value="${r}" ${current.includes(r) ? 'checked' : ''}> ${n}</label>`).join('')}</div>
+    <p class="hint">Admin can do everything. Only Admin and Payments can see fees and payments.</p>
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`);
+  $('#uForm').onsubmit = async e => {
+    e.preventDefault();
+    const em = (email || $('#uEmail').value).trim().toLowerCase(), want = $$('#uForm input[type=checkbox]:checked').map(c => c.value);
+    const add = want.filter(r => !current.includes(r)), remove = current.filter(r => !want.includes(r));
+    if (em === state.email && remove.includes('admin') && !await ask('Remove your own admin role? You will lose access to settings and users.', 'Remove', true)) return;
+    try {
+      if (add.length) await run(sb.from('prep_roles').insert(add.map(role => ({ email: em, role }))));
+      for (const r of remove) await run(sb.from('prep_roles').delete().eq('email', em).eq('role', r));
+      sheet.close(); toast('Roles saved'); renderMore();
+    } catch (err) { toast(errMsg(err), 6000); }
+  };
+}
+
+/* =========================================================================
+   Start up
+   ========================================================================= */
+function showOnly(id) { ['#authView', '#noAccessView', '#setupView'].forEach(s => $(s).hidden = s !== id); $('#app').hidden = $('#tabbar').hidden = !!id; }
+
+$('#loginForm').onsubmit = async e => {
+  e.preventDefault();
+  $('#loginBtn').disabled = true; $('#loginError').hidden = true;
+  const { error } = await sb.auth.signInWithPassword({ email: $('#loginEmail').value.trim(), password: $('#loginPassword').value });
+  $('#loginBtn').disabled = false;
+  if (error) { $('#loginError').textContent = /invalid/i.test(error.message) ? 'Wrong email or password.' : error.message; $('#loginError').hidden = false; return; }
+  start();
+};
+$('#noAccessSignOut').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+let started = false;
+async function start() {
+  const { data } = await sb.auth.getSession();
+  const session = data && data.session;
+  if (!session) return showOnly('#authView');
+  state.email = (session.user.email || '').toLowerCase();
+  const { data: roles, error } = await sb.rpc('prep_my_roles');
+  if (error) { showOnly('#setupView'); $('#setupError').textContent = /prep_my_roles|function|schema cache/i.test(error.message) ? '' : error.message; return; }
+  state.roles = roles || [];
+  if (!state.roles.length) { $('#noAccessEmail').textContent = state.email; return showOnly('#noAccessView'); }
+  document.body.classList.toggle('can-admin', has('admin'));
+  document.body.classList.toggle('can-attendance', canEditAttendance());
+  showOnly(null);
+  $('#view-dashboard').innerHTML = '<p class="muted">Loading...</p>';
+  try { await loadAll(); } catch (e) { toast('Could not load: ' + errMsg(e), 8000); return; }
+  showView(state.view);
+  if (!started) {
+    started = true;
+    try { sb.channel('prep-changes').on('postgres_changes', { event: '*', schema: 'public' }, p => { if (String(p.table).startsWith('prep_')) scheduleReload(); }).subscribe(); } catch (e) { console.warn(e); }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleReload(); });
+  }
+}
+sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') showOnly('#authView'); });
+start();
+</script>
+</body>
+</html>

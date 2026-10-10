@@ -96,4 +96,4 @@ Card software admins become prep admins on the first run. A person can hold seve
 - the full ID card flow, including reprints keeping the original print event
 - permissions for every role, including payment information being hidden
 
-To run: `cd tests && npm install && CARD_REPO=/path/to/ama-id-cards node database.test.mjs`
+To run: see the Tests section of [stage-3-app.md](stage-3-app.md).
