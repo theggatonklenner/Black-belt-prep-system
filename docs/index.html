@@ -153,7 +153,7 @@
   .selbar { position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); z-index: 19;
     background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -4px 14px rgba(0,0,0,.08); padding: 10px 16px; }
   .selbar-inner { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
-  .selbar .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .selbar .acts { display: grid; grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); gap: 6px; }
   .selbar .acts .btn { padding: 8px 4px; font-size: 14px; }
   @media (min-width: 900px) { .selbar { bottom: 0; } }
   body.selecting main { padding-bottom: calc(var(--tabbar-h) + 150px); }
@@ -309,6 +309,7 @@
       <button class="btn" data-bulk="excused">Excused</button>
       <button class="btn danger" data-bulk="absent">Absent</button>
       <button class="btn" data-bulk="not_recorded">Clear</button>
+      <button class="btn" data-bulk="paid" id="bulkPaid">Paid $</button>
     </div>
   </div>
 </div>
@@ -1255,12 +1256,39 @@ async function bulkMark(se, ids, status) {
     toast(`${n} marked ${word}`); stopSelecting(); await loadAll(); render();
   } catch (e) { toast('Not saved: ' + errMsg(e), 6000); }
 }
-function startSelecting() { state.att.selecting = true; state.att.selected.clear(); document.body.classList.add('selecting'); $('#selbar').hidden = false; }
+function startSelecting() { $('#bulkPaid').hidden = !state.sessionFees.length; state.att.selecting = true; state.att.selected.clear(); document.body.classList.add('selecting'); $('#selbar').hidden = false; }
 function stopSelecting() { state.att.selecting = false; state.att.selected.clear(); document.body.classList.remove('selecting'); $('#selbar').hidden = true; }
 function updateSelbar() { $('#selCount').textContent = `${state.att.selected.size} selected`; $$('#selbar [data-bulk]').forEach(b => b.disabled = !state.att.selected.size); }
 $('#selDone').onclick = () => { stopSelecting(); renderAttendance(); };
 $('#selAll').onclick = () => { visibleAttRows().forEach(r => state.att.selected.add(r.s.student_id)); renderAttList(); };
-$$('#selbar [data-bulk]').forEach(b => b.onclick = () => bulkMark(attRows().se, [...state.att.selected], b.dataset.bulk));
+$$('#selbar [data-bulk]').forEach(b => b.onclick = () => b.dataset.bulk === 'paid' ? bulkPaid(attRows().se, [...state.att.selected]) : bulkMark(attRows().se, [...state.att.selected], b.dataset.bulk));
+
+// Record payment for several students at once: $60 for this session (per-session students marked present)
+// or the full upfront fee (upfront students not yet paid). Everyone else is skipped, with the reason.
+async function bulkPaid(se, ids) {
+  const cid = state.att.cycle, c = cycle(cid), name = isSignoff(se) ? 'the sign-off' : 'session ' + se.session_number;
+  const per = [], up = [], skipped = [];
+  for (const id of ids) {
+    const s = student(id), f = feeInfo(cid, id), a = state.attendance.find(x => x.session_id === se.session_id && x.student_id === id);
+    if (!f || !f.payment_plan) skipped.push(`${s.full_name} (no fee record)`);
+    else if (paidAt(cid, id, se.session_id)) skipped.push(`${s.full_name} (already paid)`);
+    else if (f.payment_plan === 'upfront') up.push(id);
+    else if (!a || a.status !== 'present') skipped.push(`${s.full_name} (not marked present)`);
+    else per.push(id);
+  }
+  if (!per.length && !up.length) return toast(`Nothing to record. ${skipped.length === 1 ? skipped[0] : skipped.length + ' students skipped (already paid or not marked present)'}.`, 7000);
+  const parts = [per.length ? `${per.length} × ${money(c.per_session_fee)} for ${name}` : '', up.length ? `${up.length} × ${money(c.upfront_fee)} upfront (covers every session)` : ''].filter(Boolean);
+  if (!await ask(`Record payment: ${parts.join(' and ')}?${skipped.length ? ` Skipped: ${skipped.join(', ')}.` : ''}`, `Record ${per.length + up.length} paid`, false, 'Mark as paid?')) return;
+  let done = 0;
+  try {
+    for (const id of [...per, ...up]) {
+      await run(sb.rpc('prep_record_session_payment', { p_session: se.session_id, p_student: id, p_paid: true, p_method: 'cash' }));
+      done++;
+    }
+    toast(`${done} marked paid`);
+  } catch (e) { toast(`${done} marked paid, then stopped: ${errMsg(e)}`, 7000); }
+  stopSelecting(); await loadAll(); render();
+}
 
 function renderAttSummary(body) {
   const cid = state.att.cycle, sess = cycleSessions(cid);

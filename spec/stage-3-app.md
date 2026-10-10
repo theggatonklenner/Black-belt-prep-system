@@ -77,7 +77,8 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Search and filter by belt rank or status
 - Select several, then mark Present, Excused, Absent or Clear, always with a confirmation; "Mark shown as present" for the filtered list
 - Nobody who isn't selected is ever marked absent
-- **$** button for per-session students to record payment at the session, with a "paid" count for the session
+- **$** button to record payment at the session ($60 per session, or the full upfront fee), with a "paid" count for the session
+- **Paid $** in the selection bar to record payment for several students at once; anyone already paid, or per-session and not marked present, is skipped and listed
 - **Upload attendance** for a session from a CSV or pasted list. A plain list of names is enough. People in the cycle are marked present; for an admin, students not in the cycle are added to it, and names not in the register become new students (a Belt column gives them their belt). A preview shows every change before anything is saved, and nobody missing from the list is marked absent
 - Summary grid for the whole cycle with attended count, percentage and whether the requirement is met
 
@@ -90,7 +91,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 110 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 114 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

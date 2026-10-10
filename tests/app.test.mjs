@@ -384,6 +384,27 @@ try {
     await ctx.close();
   }
 
+  console.log('\nMark several as paid');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'attendance');
+    await page.click('#attBody [data-session="2"]');
+    // Term 1 2027 session 2: Riley and the Oops-free students; mark Riley present first (per session)
+    await page.click('.att button[data-id="M-0042"][data-s="present"]'); await settle(page);
+    await page.click('#attSelect');
+    await page.click('#selAll');
+    ok(await page.isVisible('#bulkPaid'), 'selection bar has a Paid button');
+    await page.click('#bulkPaid');
+    await page.waitForSelector('#askDlg[open]');
+    const pt = await page.textContent('#askText');
+    ok(pt.includes('1 × $60 for session 2') && pt.includes('Skipped') && pt.includes('already paid'), 'confirmation lists who is charged and who is skipped (Alex already paid upfront)');
+    await page.click('#askYes'); await page.waitForSelector('#askDlg:not([open])', { state: 'attached' }); await settle(page);
+    const rp = await q(`select count(*)::int n from prep_payment_transactions t join prep_sessions s using (session_id) join prep_cycles c on c.cycle_id = s.cycle_id where c.name = 'Term 1 2027' and s.session_number = 2 and t.student_id = 'M-0042' and t.type = 'payment'`);
+    ok(rp[0].n === 1, 'Riley recorded as paid $60 for session 2');
+    ok(await page.isHidden('#selbar'), 'selection closes after recording');
+    await ctx.close();
+  }
+
   console.log('\nSelect several students and delete');
   {
     const { ctx, page } = await open('owner@ama.test');
@@ -428,6 +449,7 @@ try {
     await tab(page, 'students');
     ok(await page.isHidden('#addStudentBtn'), 'attendance recorder cannot add students');
     await tab(page, 'attendance');
+    await page.waitForSelector('.att button', { timeout: 5000 }).catch(() => {});
     ok((await page.$$('.att button')).length > 0, 'attendance recorder can take attendance');
     ok((await page.$$('.att .pay')).length > 0, 'attendance recorder sees the $ button for per-session students');
     await tab(page, 'more');
