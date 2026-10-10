@@ -252,5 +252,9 @@ await fails(() => as(ADMIN, () => db.exec(`delete from prep_enrolments where stu
 await as(ADMIN, () => db.exec(`delete from prep_enrolments where student_id = 'BB0003' and cycle_id = '${c2}'`));
 ok(await cnt('prep_attendance', `where student_id = 'BB0003' and cycle_id = $1`, [c2]) === 0, 'a mistaken enrolment with no payments can be removed');
 
+const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
+ok(noRls.length === 0, 'every prep table has row level security on' + (noRls.length ? ': missing ' + noRls.map(r => r.relname) : ''));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

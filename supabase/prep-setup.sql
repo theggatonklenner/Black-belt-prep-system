@@ -754,6 +754,25 @@ grant execute on function public.prep_start_new_cycle(text, date, date, date[], 
 -- ============================================================================
 -- Security rules
 -- ============================================================================
+-- Row Level Security on every prep table (written out in full so Supabase's checker can see it)
+alter table public.prep_roles                enable row level security;
+alter table public.prep_settings             enable row level security;
+alter table public.prep_students             enable row level security;
+alter table public.prep_cycles               enable row level security;
+alter table public.prep_sessions             enable row level security;
+alter table public.prep_enrolments           enable row level security;
+alter table public.prep_attendance           enable row level security;
+alter table public.prep_readiness            enable row level security;
+alter table public.prep_readiness_history    enable row level security;
+alter table public.prep_payments             enable row level security;
+alter table public.prep_payment_transactions enable row level security;
+alter table public.prep_grading              enable row level security;
+alter table public.prep_certificates         enable row level security;
+alter table public.prep_id_cards             enable row level security;
+alter table public.prep_print_event_notes    enable row level security;
+alter table public.prep_report_templates     enable row level security;
+alter table public.prep_audit_log            enable row level security;
+
 do $$
 declare t text;
 begin
