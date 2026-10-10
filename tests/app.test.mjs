@@ -25,6 +25,7 @@ for (const f of ['setup.sql', 'roles.sql', 'printed.sql']) await db.exec(read(jo
 await db.exec(read(join(here, '../supabase/prep-setup.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-01.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-02.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-03.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -204,6 +205,15 @@ try {
   ok(await page.isHidden('#selbar'), 'selection mode closes after a bulk change');
   await page.click('.att button[data-id="BB0002"][data-s="excused"]'); await settle(page);
   ok((await q(`select a.status from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and a.student_id = 'BB0002'`, [c1.cycle_id]))[0].status === 'excused', 'recorded attendance can be corrected');
+  ok(await page.isDisabled('.att .pay[data-pay="BB0003"]') && !(await page.isDisabled('.att .pay[data-pay="BB0001"]')), '$ button only works for students marked present');
+  await page.click('.att .pay[data-pay="BB0001"]'); await settle(page);
+  const paidTx = await q(`select t.amount::text a, t.method, t.notes from prep_payment_transactions t join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and t.student_id = 'BB0001'`, [c1.cycle_id]);
+  ok(paidTx.length === 1 && paidTx[0].a === '60.00' && paidTx[0].notes === 'Paid at session 1', 'one tap on $ records $60 paid at that session');
+  ok(await page.getAttribute('.att .pay[data-pay="BB0001"]', 'aria-pressed') === 'true' && (await page.textContent('#attBody .counts')).includes('1 of 1 paid'), '$ shows as paid and the session count updates');
+  await shot(page, 'attendance-paid');
+  await page.click('.att .pay[data-pay="BB0001"]'); const undoTxt = await confirm(page); await settle(page);
+  ok(undoTxt.includes('Undo') && Number((await q(`select amount_paid from prep_payment_summary p join prep_cycles c using (cycle_id) where c.cycle_id = $1 and p.student_id = 'BB0001'`, [c1.cycle_id]))[0].amount_paid) === 0, 'tapping $ again undoes the payment after confirming');
+  await page.click('.att .pay[data-pay="BB0001"]'); await settle(page);
 
   await page.click('#attBody [data-session="2"]');
   await page.selectOption('#attBelt', 'Cho Dan Bo');
@@ -215,13 +225,28 @@ try {
   await shot(page, 'attendance');
 
   await page.click('#attImport');
-  await page.fill('#impText', 'Student ID,Name,Session,Status\nBB0003,,2,P\n,Jordan Lee,3,absent\n,Nobody Here,3,P\nBB0001,,7,P\nBB0001,,3,maybe\nBB0001,,2,present');
+  await page.fill('#impText', 'Student ID,Name,Session,Status\nBB0003,,2,P\n,Jordan Lee,3,absent\n,Nobody Here,3,P\nBB0001,,7,P\nBB0001,,3,maybe\nBB0001,,2,present\nZZ999,,2,P');
   await page.waitForSelector('#impPreview table');
   const ip = await page.textContent('#impPreview');
-  ok(ip.includes('2 to record') && ip.includes('Student not found') && ip.includes('No session 7') && ip.includes('not understood') && ip.includes('Already recorded'), 'attendance import preview flags unknown students, bad sessions, bad statuses and repeats');
+  ok(ip.includes('3 to record') && ip.includes('1 new student') && ip.includes('New student'), 'upload preview: a name not in the register becomes a new student');
+  ok(ip.includes('Student ID ZZ999 not found') && ip.includes('No session 7') && ip.includes('not understood') && ip.includes('Already recorded'), 'upload preview flags unknown IDs, bad sessions, bad statuses and repeats');
   await shot(page, 'attendance-import');
   await page.click('#impGo'); await confirm(page); await settle(page);
-  ok((await q(`select count(*)::int n from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and ((s.session_number = 2 and a.student_id = 'BB0003' and a.status = 'present') or (s.session_number = 3 and a.student_id = 'BB0002' and a.status = 'absent'))`, [c1.cycle_id]))[0].n === 2, 'imported attendance saved');
+  ok((await q(`select count(*)::int n from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and ((s.session_number = 2 and a.student_id = 'BB0003' and a.status = 'present') or (s.session_number = 3 and a.student_id = 'BB0002' and a.status = 'absent'))`, [c1.cycle_id]))[0].n === 2, 'uploaded attendance saved');
+  const nobody = (await q(`select s.student_id, s.belt_rank, a.status from prep_students s join prep_attendance a using (student_id) join prep_sessions x using (session_id) where s.full_name = 'Nobody Here' and x.session_number = 3 and x.cycle_id = $1`, [c1.cycle_id]))[0];
+  ok(nobody && nobody.status === 'present', 'new student created, added to the cycle and marked present for that session');
+
+  // End of a session: upload a plain list of names (no heading row)
+  await page.click('#attBody [data-session="3"]');
+  await page.click('#attImport');
+  await page.fill('#impText', 'Riley Chen\nBrand New,2nd Dan\nAlex Smith');
+  await page.waitForSelector('#impPreview table');
+  const ip2 = await page.textContent('#impPreview');
+  ok(ip2.includes('3 to record') && ip2.includes('1 new student') && ip2.includes('2nd Dan'), 'plain list of names works; a belt next to a new name is used');
+  await page.click('#impGo'); await confirm(page); await settle(page);
+  const s3 = Object.fromEntries((await q(`select st.full_name, a.status, st.belt_rank from prep_attendance a join prep_sessions x using (session_id) join prep_students st using (student_id) where x.cycle_id = $1 and x.session_number = 3`, [c1.cycle_id])).map(r => [r.full_name, r]));
+  ok(s3['Riley Chen'].status === 'present' && s3['Alex Smith'].status === 'present' && s3['Brand New']?.status === 'present' && s3['Brand New'].belt_rank === '2nd Dan', 'everyone on the list is marked present for session 3, including the new student');
+  ok(s3['Taylor Brown'].status === 'not_recorded', 'people not on the list are not marked absent');
 
   ok((await page.textContent('#attBody [data-session="4"]')).includes('Sign-off'), 'attendance shows session 4 as the sign-off');
   await page.click('#attBody [data-session="4"]');
@@ -272,11 +297,11 @@ try {
   await page.click('#sheet [data-close]');
   await tab(page, 'students'); await page.click('[data-student="BB0001"]');
   ok((await page.textContent('#sheet')).includes('Fee option'), 'student record shows the fee option');
-  await page.selectOption('#sheet [data-plan]', 'per_session'); await settle(page);
+  await page.selectOption('#sheet [data-plan]', 'upfront'); await settle(page);
   const t1 = (await q(`select c.cycle_id from prep_cycles c where c.name = 'Term 1 2027'`))[0].cycle_id;
-  ok((await q(`select payment_plan, amount_due::text a from prep_payments where student_id = 'BB0001' and cycle_id = $1`, [t1]))[0].payment_plan === 'per_session', 'fee option switched to per session');
+  ok((await q(`select payment_plan, amount_due::text a from prep_payments where student_id = 'BB0001' and cycle_id = $1`, [t1]))[0].payment_plan === 'upfront', 'per session is the default; switched this student to upfront');
   const t4 = (await q(`select p.amount_due::text a from prep_payments p join prep_cycles c using (cycle_id) where c.name = 'Term 4 2026' and p.student_id = 'BB0001'`))[0].a;
-  ok(t4 === '200.00', 'earlier cycle fee unchanged ($200 upfront)');
+  ok(t4 === '180.00', 'earlier cycle fee unchanged (per session: 3 sessions present x $60)');
   const hist = await page.textContent('#sheet');
   ok(hist.includes('Current cycle') && hist.includes('History') && hist.includes('Term 4 2026'), 'student record shows current cycle and history');
   await shot(page, 'student-detail');
@@ -306,6 +331,7 @@ try {
     ok(await page.isHidden('#addStudentBtn'), 'attendance recorder cannot add students');
     await tab(page, 'attendance');
     ok((await page.$$('.att button')).length > 0, 'attendance recorder can take attendance');
+    ok((await page.$$('.att .pay')).length > 0, 'attendance recorder sees the $ button for per-session students');
     await tab(page, 'more');
     ok(await page.isHidden('#setForm') || !(await page.$('#setForm')), 'attendance recorder cannot change settings');
     await ctx.close();

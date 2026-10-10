@@ -138,6 +138,9 @@
   .att button[aria-pressed="true"][data-s="present"] { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
   .att button[aria-pressed="true"][data-s="absent"]  { background: var(--danger); border-color: var(--danger); color: #fff; }
   .att button[aria-pressed="true"][data-s="excused"] { background: var(--info); border-color: var(--info); color: #fff; }
+  .att .pay { margin-left: 6px; border-style: dashed; }
+  .att .pay[aria-pressed="true"] { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
+  .att .pay:disabled { opacity: .35; cursor: default; }
   .counts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; color: var(--muted); }
   .counts b { color: var(--fg); }
   .sess-cells { display: flex; gap: 3px; }
@@ -376,6 +379,8 @@ const money = n => '$' + Number(n || 0).toFixed(2).replace(/\.00$/, '');
 const PLAN = { upfront: 'Upfront', per_session: 'Per session' };
 const DAN_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan'];
 const nextDan = rank => (state.danCounters.find(c => c.target_rank === rank) || {}).next_number ?? null;
+const feeInfo = (cid, sid) => state.sessionFees.find(f => f.cycle_id === cid && f.student_id === sid) || null;
+const paidAt = (cid, sid, sessionId) => { const f = feeInfo(cid, sid); return !!f && (f.paid_sessions || []).includes(sessionId); };
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
@@ -445,7 +450,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, payments: [], danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, payments: [], sessionFees: [], danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -481,6 +486,9 @@ async function loadAll() {
   const counters = await sb.from('prep_dan_counters').select('*');
   state.countersReady = !counters.error;
   state.danCounters = counters.data || [];
+  // Who pays per session and which sessions they've paid at (no amounts); needs supabase/prep-update-03.sql
+  const fees = canEditAttendance() ? await sb.rpc('prep_session_fees', { p_cycle: null }) : { data: [] };
+  state.sessionFees = fees.error ? [] : (fees.data || []);
   if (res[9].error) res[9] = { data: [] };
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
@@ -1015,7 +1023,7 @@ function renderAttendance() {
   const editable = canEditAttendance();
   const keepFocus = document.activeElement && document.activeElement.id === 'attSearch';
   v.innerHTML = `<div class="view-head"><h2>Attendance</h2>
-      ${editable ? '<button class="btn sm" id="attImport">Import</button>' : ''}</div>
+      ${editable ? '<button class="btn sm primary" id="attImport">Upload attendance</button>' : ''}</div>
     <div class="field"><label for="attCycle">Preparation cycle</label><select id="attCycle">${state.cycles.map(c => `<option value="${c.cycle_id}"${c.cycle_id === A.cycle ? ' selected' : ''}>${esc(c.name)}${c.status === 'active' ? ' (active)' : ` (${label(c.status).toLowerCase()})`}</option>`).join('')}</select></div>
     <div class="seg" role="group" aria-label="View"><button data-mode="sessions" aria-pressed="${A.mode === 'sessions'}">Take attendance</button><button data-mode="summary" aria-pressed="${A.mode === 'summary'}">Summary</button></div>
     <div id="attBody"></div>`;
@@ -1027,7 +1035,11 @@ function renderAttendance() {
   body.innerHTML = `
     <div class="seg" role="group" aria-label="Session">${sess.map(s => `<button data-session="${s.session_number}" aria-pressed="${s.session_number === A.session}">${isSignoff(s) ? 'Sign-off' : 'Session ' + s.session_number}<small>${fmt(s.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</small></button>`).join('')}</div>
     ${isSignoff(se) ? '<p class="hint" style="margin-top:10px">This is the sign-off session. Students must be marked Present here to grade.</p>' : ''}
-    <div class="counts" style="margin-top:12px"><span><b>${n('present')}</b> present</span><span><b>${n('absent')}</b> absent</span><span><b>${n('excused')}</b> excused</span><span><b>${n('not_recorded')}</b> not recorded</span></div>
+    <div class="counts" style="margin-top:12px"><span><b>${n('present')}</b> present</span><span><b>${n('absent')}</b> absent</span><span><b>${n('excused')}</b> excused</span><span><b>${n('not_recorded')}</b> not recorded</span>${(() => {
+      const per = rows.filter(r => r.a.status === 'present' && (feeInfo(A.cycle, r.s.student_id) || {}).payment_plan === 'per_session');
+      return per.length ? `<span><b>${per.filter(r => paidAt(A.cycle, r.s.student_id, se.session_id)).length}</b> of ${per.length} paid</span>` : '';
+    })()}</div>
+    ${editable && state.sessionFees.length ? `<p class="hint" style="margin-top:6px">Tap <b>$</b> when a per-session student pays ${money(cycle(A.cycle).per_session_fee)} for this session. Tap again to undo.</p>` : ''}
     <div class="view" style="gap:8px;margin-top:12px">
       <input type="search" id="attSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(A.search)}">
       <div class="filters">
@@ -1056,10 +1068,12 @@ function renderAttList() {
   $('#attList').innerHTML = list.length ? list.map(({ s, a }) => `<li><div class="item" style="cursor:default">
     ${A.selecting ? `<input type="checkbox" data-pick="${esc(s.student_id)}" ${A.selected.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}">` : ''}
     <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
-    ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}</div>`
+    ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}${
+      (feeInfo(A.cycle, s.student_id) || {}).payment_plan === 'per_session' ? `<button class="pay" data-pay="${esc(s.student_id)}" aria-pressed="${paidAt(A.cycle, s.student_id, a.session_id)}" ${a.status === 'present' || paidAt(A.cycle, s.student_id, a.session_id) ? '' : 'disabled'} title="Paid for this session" aria-label="Paid for this session">$</button>` : ''}</div>`
       : tag(a.status)}
   </div></li>`).join('') : `<li><div class="empty">${attRows().rows.length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
-  $$('#attList .att button').forEach(b => b.onclick = () => markOne(b.dataset.id, b.dataset.s));
+  $$('#attList .att button[data-s]').forEach(b => b.onclick = () => markOne(b.dataset.id, b.dataset.s));
+  $$('#attList .att .pay').forEach(b => b.onclick = () => markPaid(b.dataset.pay, b.getAttribute('aria-pressed') !== 'true'));
   $$('#attList [data-pick]').forEach(c => c.onchange = () => { c.checked ? A.selected.add(c.dataset.pick) : A.selected.delete(c.dataset.pick); updateSelbar(); });
   updateSelbar();
 }
@@ -1070,6 +1084,17 @@ async function markOne(id, status) {
   const { error } = await sb.rpc('prep_mark_attendance', { p_session: se.session_id, p_student_ids: [id], p_status: status, p_notes: null });
   if (error) { a.status = prev; renderAttendance(); toast('Not saved: ' + errMsg(error), 6000); }
   else scheduleReload();
+}
+async function markPaid(id, paid) {
+  const { se } = attRows(), s = student(id), f = feeInfo(state.att.cycle, id);
+  if (!f) return;
+  if (!paid && !await ask(`Undo ${s.full_name}'s payment for ${isSignoff(se) ? 'the sign-off' : 'session ' + se.session_number}? The payment record is kept with a correction.`, 'Undo payment', true)) return;
+  const prev = f.paid_sessions || [];
+  f.paid_sessions = paid ? [...prev, se.session_id] : prev.filter(x => x !== se.session_id);
+  renderAttendance();
+  const { error } = await sb.rpc('prep_record_session_payment', { p_session: se.session_id, p_student: id, p_paid: paid, p_method: 'cash' });
+  if (error) { f.paid_sessions = prev; renderAttendance(); toast('Not saved: ' + errMsg(error), 6000); }
+  else { toast(paid ? `${s.full_name} paid ${money(cycle(state.att.cycle).per_session_fee)}` : 'Payment undone'); scheduleReload(); }
 }
 async function bulkMark(se, ids, status) {
   const word = label(status).toLowerCase();
@@ -1107,52 +1132,91 @@ function renderAttSummary(body) {
 }
 
 const ATT_HEADERS = { studentid: 'id', id: 'id', memberid: 'id', name: 'name', fullname: 'name', studentname: 'name',
+  firstname: 'first', givenname: 'first', first: 'first', lastname: 'last', surname: 'last', familyname: 'last', last: 'last',
+  belt: 'belt', beltrank: 'belt', rank: 'belt', grade: 'belt', currentbelt: 'belt',
   session: 'session', sessionnumber: 'session', sessionno: 'session', status: 'status', attendance: 'status', attended: 'status', notes: 'notes' };
 const ATT_STATUS = { present: 'present', p: 'present', yes: 'present', y: 'present', attended: 'present', x: 'present', '1': 'present', true: 'present',
   absent: 'absent', a: 'absent', no: 'absent', n: 'absent', '0': 'absent', excused: 'excused', e: 'excused', ex: 'excused' };
+// Upload who attended a session. Students already in the cycle are marked; for an admin, students not in
+// the cycle are added to it, and names not in the register become new students, then are marked.
 function openImportAttendance() {
-  const cid = state.att.cycle, c = cycle(cid), sess = cycleSessions(cid), ids = enrolledIds(cid);
+  const cid = state.att.cycle, c = cycle(cid), sess = cycleSessions(cid), ids = enrolledIds(cid), admin = has('admin');
+  const se0 = sess.find(x => x.session_number === state.att.session) || sess[0];
+  const canAdd = admin && c.status !== 'archived';
   let plan = [];
-  importSheet(`Import attendance: ${c.name}`, `Columns: Student ID or Name, Status (Present, Absent, Excused; blank means Present), and optionally Session (1 to ${sess.length}). Without a Session column, rows go to session ${state.att.session}.`, text => {
-    const rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], ATT_HEADERS) : null;
+  importSheet(`Upload attendance: ${sessName(se0)}`,
+    `Paste or upload who attended. A list of names is enough; Student ID, Belt, Status and Session columns are used if there is a heading row. ` +
+    (canAdd ? 'Students not in this cycle are added to it, and names not in the register are added as new students (include a Belt column so they get their belt).'
+            : 'Only an admin can add students to the cycle or create new ones; those rows will be listed for an admin.'), text => {
+    let rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], ATT_HEADERS) : null;
     plan = [];
     if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
-    if (!cols || !(cols.includes('id') || cols.includes('name'))) { $('#impPreview').innerHTML = '<p class="hint" style="color:var(--danger)">Could not find a Student ID or Name column. Include the heading row.</p>'; $('#impGo').disabled = true; return; }
-    const seen = new Set();
-    for (const r of rows.slice(1)) {
-      const o = {}; cols.forEach((k, i) => { if (k) o[k] = r[i] || ''; });
-      let s = o.id ? student(o.id.trim()) || state.students.find(x => x.student_id.toLowerCase() === o.id.trim().toLowerCase()) : null;
-      let why = '';
-      if (!s && o.name) { const m = state.students.filter(x => norm(x.full_name) === norm(o.name)); if (m.length === 1) s = m[0]; else if (m.length > 1) why = 'More than one student with this name; use the Student ID'; }
-      const num = o.session ? parseInt(o.session.replace(/\D/g, ''), 10) : state.att.session;
+    const headed = !!cols && (cols.includes('id') || cols.includes('name') || cols.includes('first') || cols.includes('last'));
+    if (headed) rows = rows.slice(1);
+    else cols = ['name', 'belt'];                                   // no heading row: a list of names, optionally with belts
+    const seen = new Set(), seenNew = new Set();
+    for (const r of rows) {
+      const o = {}; cols.forEach((k, i) => { if (k) o[k] = (r[i] || '').trim(); });
+      const name = (o.name || [o.first, o.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
+      let s = o.id ? state.students.find(x => x.student_id.toLowerCase() === o.id.toLowerCase()) : null;
+      let why = '', action = 'mark', belt = null;
+      if (!s && !o.id && name) {
+        const m = state.students.filter(x => norm(x.full_name) === norm(name));
+        if (m.length === 1) s = m[0]; else if (m.length > 1) why = 'More than one student with this name; use the Student ID';
+      }
+      const num = o.session ? parseInt(o.session.replace(/\D/g, ''), 10) : se0.session_number;
       const se = sess.find(x => x.session_number === num);
-      const status = ATT_STATUS[(o.status || 'present').trim().toLowerCase()];
-      const who = s ? s.full_name : (o.name || o.id || '—');
-      if (!why && !s) why = 'Student not found';
-      else if (!why && !ids.has(s.student_id)) why = 'Not in this cycle';
-      else if (!why && !se) why = `No session ${o.session}`;
+      const status = ATT_STATUS[(o.status || 'present').toLowerCase()];
+      if (!why && !se) why = `No session ${o.session}`;
       else if (!why && !status) why = `Status "${o.status}" not understood`;
-      else if (!why && seen.has(s.student_id + '|' + num)) why = 'Repeated in this list';
+      else if (!why && !s) {
+        if (o.id) why = `Student ID ${o.id} not found`;
+        else if (!name) why = 'No name';
+        else if (!canAdd) why = 'Not in the register (an admin can upload this to add them)';
+        else if (headed && o.belt && !matchBelt(o.belt)) why = `Belt "${o.belt}" is not in the list`;
+        else if (seenNew.has(norm(name) + '|' + num)) why = 'Repeated in this list';
+        else { action = 'create'; belt = matchBelt(o.belt); seenNew.add(norm(name) + '|' + num); }
+      } else if (!why && !s.is_active) why = 'Student is inactive (reactivate them first)';
+      else if (!why && !ids.has(s.student_id)) { if (canAdd) action = 'enrol'; else why = 'Not in this cycle (an admin can upload this to add them)'; }
       let cur = null;
-      if (!why) { seen.add(s.student_id + '|' + num); cur = state.attendance.find(a => a.session_id === se.session_id && a.student_id === s.student_id); if (cur && cur.status === status) why = 'Already recorded'; }
-      plan.push({ who, id: s && s.student_id, se, status, why, change: cur && cur.status !== 'not_recorded' ? cur.status : null });
+      if (!why && s) {
+        if (seen.has(s.student_id + '|' + num)) why = 'Repeated in this list';
+        else {
+          seen.add(s.student_id + '|' + num);
+          cur = action === 'mark' ? state.attendance.find(a => a.session_id === se.session_id && a.student_id === s.student_id) : null;
+          if (cur && cur.status === status) why = 'Already recorded';
+        }
+      }
+      plan.push({ who: s ? s.full_name : (name || o.id || '—'), name, id: s && s.student_id, se, status, why, action, belt,
+                  change: cur && cur.status !== 'not_recorded' ? cur.status : null });
     }
-    const go = plan.filter(p => !p.why), changes = go.filter(p => p.change);
-    $('#impPreview').innerHTML = `<p class="hint"><b>${go.length}</b> to record${changes.length ? `, including <b>${changes.length}</b> that change an existing record` : ''}${plan.length - go.length ? `, ${plan.length - go.length} skipped` : ''}.</p>
+    const go = plan.filter(p => !p.why), nNew = go.filter(p => p.action === 'create').length, nEnrol = go.filter(p => p.action === 'enrol').length;
+    const changes = go.filter(p => p.change).length;
+    $('#impPreview').innerHTML = `<p class="hint"><b>${go.length}</b> to record${nNew ? `, including <b>${nNew}</b> new student${nNew > 1 ? 's' : ''}` : ''}${nEnrol ? `, <b>${nEnrol}</b> added to this cycle` : ''}${changes ? `, <b>${changes}</b> changing an existing record` : ''}${plan.length - go.length ? `; ${plan.length - go.length} skipped` : ''}.</p>
       <div class="preview"><table class="grid"><tr><th>Student</th><th>Session</th><th>Result</th></tr>
-      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.who)}</td><td>${p.se ? p.se.session_number : '—'}</td><td>${p.why ? esc(p.why) : tag(p.status) + (p.change ? ` <span class="small muted">was ${label(p.change)}</span>` : '')}</td></tr>`).join('')}</table></div>`;
-    $('#impGo').disabled = !go.length; $('#impGo').textContent = go.length ? `Record ${go.length}` : 'Import';
+      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.who)}${p.action === 'create' && !p.why && p.belt ? ` <span class="muted small">${esc(p.belt)}</span>` : ''}</td><td>${p.se ? p.se.session_number : '—'}</td><td>${p.why ? esc(p.why)
+        : (p.action === 'create' ? '<span class="tag gold">New student</span> ' : p.action === 'enrol' ? '<span class="tag info">Added to cycle</span> ' : '') + tag(p.status) + (p.change ? ` <span class="small muted">was ${label(p.change)}</span>` : '')}</td></tr>`).join('')}</table></div>`;
+    $('#impGo').disabled = !go.length; $('#impGo').textContent = go.length ? `Record ${go.length}` : 'Upload';
   });
+  $('#impGo').textContent = 'Upload';
   $('#impGo').onclick = async () => {
-    const go = plan.filter(p => !p.why);
-    if (!go.length || !await ask(`Record ${go.length} attendance entr${go.length > 1 ? 'ies' : 'y'} for ${c.name}? Students not in the list are not changed.`, 'Record')) return;
+    const go = plan.filter(p => !p.why), creates = go.filter(p => p.action === 'create'), enrols = go.filter(p => p.action === 'enrol');
+    const extra = [creates.length ? `add ${creates.length} new student${creates.length > 1 ? 's' : ''} to the register` : '', enrols.length + creates.length ? `add ${enrols.length + creates.length} to ${c.name}` : ''].filter(Boolean).join(' and ');
+    if (!go.length || !await ask(`Record ${go.length} attendance entr${go.length > 1 ? 'ies' : 'y'}${extra ? ` and ${extra}` : ''}? Students not in the list are not changed.`, 'Record')) return;
     $('#impGo').disabled = true;
-    const groups = {};
-    go.forEach(p => { const k = p.se.session_id + '|' + p.status; (groups[k] = groups[k] || { se: p.se, status: p.status, ids: [] }).ids.push(p.id); });
     try {
+      if (creates.length) {
+        const unique = [...new Map(creates.map(p => [norm(p.name), p])).values()];
+        const made = await run(sb.from('prep_students').insert(unique.map(p => ({ full_name: p.name, belt_rank: p.belt }))).select());
+        creates.forEach(p => { p.id = made.find(m => norm(m.full_name) === norm(p.name)).student_id; });
+      }
+      const toEnrol = [...new Set([...creates, ...enrols].map(p => p.id))];
+      if (toEnrol.length) await run(sb.from('prep_enrolments').insert(toEnrol.map(student_id => ({ cycle_id: cid, student_id }))));
+      const groups = {};
+      go.forEach(p => { const k = p.se.session_id + '|' + p.status; (groups[k] = groups[k] || { se: p.se, status: p.status, ids: [] }).ids.push(p.id); });
       for (const g of Object.values(groups)) await run(sb.rpc('prep_mark_attendance', { p_session: g.se.session_id, p_student_ids: g.ids, p_status: g.status, p_notes: null }));
-      sheet.close(); toast(`Recorded ${go.length}`); await loadAll(); render();
-    } catch (e) { $('#impGo').disabled = false; toast('Import stopped: ' + errMsg(e), 7000); await loadAll(); render(); }
+      sheet.close(); toast(`Recorded ${go.length}${creates.length ? `, ${creates.length} new` : ''}`); await loadAll(); render();
+    } catch (e) { $('#impGo').disabled = false; toast('Upload stopped: ' + errMsg(e), 7000); await loadAll(); render(); }
   };
 }
 

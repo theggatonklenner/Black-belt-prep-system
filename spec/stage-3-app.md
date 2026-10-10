@@ -25,6 +25,10 @@ The app keeps working before the update is run; Dan numbers and grading dates ap
 
 Run `supabase/prep-update-02.sql` once (after update 01). Dan numbers now run separately for each rank being graded for: Probationary Black Belt, 1st Dan, 2nd Dan, 3rd Dan, 4th Dan and 5th Dan each have their own next number under More > Settings. Numbers already handed out are kept, and each rank starts from the single next number set before (change them in Settings). The same number can be used once per rank.
 
+## Database update 03
+
+Run `supabase/prep-update-03.sql` once (after update 02). Per session ($60, paid at each session) becomes the normal fee option; $200 upfront is the exception, switched on the student's record. Whoever takes attendance can tap **$** next to a per-session student who is present to record that session's payment (cash), and tap again to undo it (kept as a correction). They see only paid or not paid, never balances.
+
 ## Giving people access
 
 People sign in with their AMA ID Cards login. Card software admins are already prep admins. To add someone else: **More > Users > Add user**, enter their email and tick their roles. If they don't have a login yet, create one in Supabase first (Authentication > Users).
@@ -58,7 +62,8 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Search and filter by belt rank or status
 - Select several, then mark Present, Excused, Absent or Clear, always with a confirmation; "Mark shown as present" for the filtered list
 - Nobody who isn't selected is ever marked absent
-- Import from CSV or pasted rows (Student ID or name, status, optional session), with a preview of what will change and what is skipped
+- **$** button for per-session students to record payment at the session, with a "paid" count for the session
+- **Upload attendance** for a session from a CSV or pasted list. A plain list of names is enough. People in the cycle are marked present; for an admin, students not in the cycle are added to it, and names not in the register become new students (a Belt column gives them their belt). A preview shows every change before anything is saved, and nobody missing from the list is marked absent
 - Summary grid for the whole cycle with attended count, percentage and whether the requirement is met
 
 **More**
@@ -70,7 +75,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 76 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 86 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

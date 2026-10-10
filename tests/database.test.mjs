@@ -39,11 +39,14 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
 }
+ok((await one(`select default_payment_plan from prep_settings`)).default_payment_plan === 'per_session', 'per session is the normal fee option');
+// The general payment tests below use whole-cycle fees; per-session payments are tested in their own section
+await db.exec(`update prep_settings set default_payment_plan = 'upfront'`);
 
 const ADMIN = 'owner@ama.test';
 ok((await one(`select role from prep_roles where email = $1`, [ADMIN]))?.role === 'admin', 'card software admin becomes prep admin');
@@ -339,6 +342,34 @@ await as(ADMIN, () => db.exec(`update prep_cycles set upfront_fee = 220 where cy
 ok(Number((await fee('F3')).amount_due) === 100, 'one-off fee stays when the cycle fee changes');
 await as('inst@ama.test', () => db.exec(`update prep_payments set payment_plan = 'per_session' where student_id = 'F1'`));
 ok((await fee('F1')).payment_plan === 'upfront', 'only the payments role can change a student\'s option');
+
+// ---------------------------------------------------------------------------
+console.log('\nPaid at each session');
+await db.exec(`update prep_settings set default_payment_plan = 'per_session'`);
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name) values ('S1','Sess One'), ('S2','Sess Two')`));
+const cP = (await as(ADMIN, () => one(`select prep_start_new_cycle('Session pay test', null, null, null, null, null, array['S1','S2']) id`))).id;
+const sP = (await rows(`select session_id from prep_sessions where cycle_id = $1 order by session_number`, [cP])).map(r => r.session_id);
+const psum = async id => one(`select * from prep_payment_summary where student_id = $1 and cycle_id = $2`, [id, cP]);
+ok((await psum('S1')).payment_plan === 'per_session', 'new students start on per session');
+await as('att@ama.test', () => db.exec(`select prep_mark_attendance('${sP[0]}', array['S1','S2'], 'present')`));
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'S1', true)`, [sP[0]]));
+let p1 = await psum('S1');
+ok(Number(p1.amount_paid) === 60 && p1.status === 'paid', 'attendance recorder records $60 paid at the session; student is fully paid');
+ok((await psum('S2')).status === 'due' && Number((await psum('S2')).balance) === 60, 'present but not paid: $60 owing');
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'S1', true)`, [sP[0]]));
+ok(Number((await psum('S1')).amount_paid) === 60, 'tapping paid twice does not charge twice');
+const fees = await as('att@ama.test', () => rows(`select * from prep_session_fees($1)`, [cP]));
+ok(fees.length === 2 && fees.find(f => f.student_id === 'S1').paid_sessions.length === 1 && !('amount' in fees[0]), 'attendance screen sees who has paid for which session, with no amounts');
+ok((await as('att@ama.test', () => rows(`select * from prep_payment_summary`))).length === 0, 'attendance recorder still cannot see balances');
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'S1', false)`, [sP[0]]));
+p1 = await psum('S1');
+ok(Number(p1.amount_paid) === 0 && Number(p1.transactions) === 2, 'undoing a session payment records a correction (history kept)');
+await as('att@ama.test', () => db.query(`select prep_record_session_payment($1, 'S1', true)`, [sP[0]]));
+ok(Number((await psum('S1')).amount_paid) === 60, 'can be marked paid again after an undo');
+await fails(() => as('view@ama.test', () => db.query(`select prep_record_session_payment($1, 'S2', true)`, [sP[0]])), /permission/, 'viewers cannot record session payments');
+ok((await as('view@ama.test', () => rows(`select * from prep_session_fees($1)`, [cP]))).length === 0, 'viewers see no payment information');
+const tx = await one(`select method, notes, session_id, recorded_by from prep_payment_transactions where student_id = 'S1' and type = 'payment' order by created_at desc limit 1`);
+ok(tx.method === 'cash' && tx.notes === 'Paid at session 1' && tx.session_id === sP[0] && tx.recorded_by === 'att@ama.test', 'session payment recorded as cash, linked to the session, with who took it');
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);

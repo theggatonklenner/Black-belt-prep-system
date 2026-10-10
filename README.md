@@ -9,7 +9,7 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 ## Folders
 
 - `docs/` the app (published with GitHub Pages, see [spec/stage-3-app.md](spec/stage-3-app.md))
-- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) and `supabase/prep-update-02.sql` (Dan numbers per rank)
+- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) and `supabase/prep-update-03.sql` (paid at each session)
 - `spec/` the specification and stage notes
 - `tests/` database and browser tests
 
