@@ -446,6 +446,16 @@ const readinessFor = (cid, sid) => state.readiness.find(r => r.cycle_id === cid 
 const canReadiness = () => has('instructor');
 const backToMore = () => '<button class="btn ghost sm" data-back style="align-self:flex-start;padding-left:0">‹ More</button>';
 const wireBack = () => $$('[data-back]').forEach(b => b.onclick = () => showView('more'));
+const cardFor = sid => state.cards.find(c => c.student_id === sid) || null;
+function cardState(sid) {
+  const c = cardFor(sid);
+  if (!c) return null;
+  if (c.queue_status) return { tone: 'info', text: 'Card in print queue' };
+  if (c.printed_at) return { tone: 'ok', text: 'ID card printed', date: c.printed_at };
+  if (c.times_printed > 0) return { tone: 'bad', text: 'Card reprint needed' };
+  return { tone: '', text: 'Card not printed yet' };
+}
+const cardTag = sid => { const k = cardState(sid); return k ? `<span class="tag ${k.tone}" title="${k.date ? 'Printed ' + fmt(k.date) : ''}">${k.text}</span>` : ''; };
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
@@ -515,7 +525,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, readiness: [], grading: [], templates: [], certificates: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -553,6 +563,9 @@ async function loadAll() {
   state.danCounters = counters.data || [];
   const [rd, gr, tpl, ce] = await Promise.all([sb.from('prep_readiness').select('*'), sb.from('prep_grading').select('*'), sb.from('prep_report_templates').select('*').order('name'), sb.from('prep_certificates').select('*')]);
   state.certificates = ce.data || [];
+  // ID cards from AMA ID Cards, linked by Student ID (supabase/prep-update-06.sql links them by name)
+  const cards = await sb.rpc('prep_card_people');
+  state.cards = cards.error ? [] : (cards.data || []).filter(c => c.student_id);
   state.readiness = rd.data || [];
   state.grading = gr.data || [];
   state.templates = tpl.data || [];
@@ -733,7 +746,7 @@ function renderStudents() {
     return `<li><button class="item" data-student="${esc(s.student_id)}">
       ${stuSel.on ? `<input type="checkbox" tabindex="-1" ${stuSel.ids.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}" style="pointer-events:none">` : ''}
       <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}</div></div>
-      ${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
+      ${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
   $$('#studentList [data-student]').forEach(b => b.onclick = () => {
@@ -824,7 +837,8 @@ function openStudent(id) {
             ${Number(g.balance) > 0 && cy.status !== 'archived' ? `<div><button class="btn sm" data-gpay="${g.payment_id}" style="margin-top:6px">Record grading fee payment</button></div>` : ''}</dd>`; })()}
         ${ov.grading_status ? `<dt>Grading result</dt><dd>${tag(ov.grading_status)}</dd>` : ''}
         <dt>Certificate</dt><dd>${ov.certificate_status ? tag(ov.certificate_status) : '—'}</dd>
-        <dt>ID card</dt><dd>${ov.id_card_status ? tag(ov.id_card_status) : '—'}</dd>
+        <dt>ID card</dt><dd>${cardFor(id) ? `${cardTag(id)}${cardState(id).date ? ` <span class="small muted">${fmt(cardState(id).date)}</span>` : ''}` : '<span class="muted">No card linked</span>'}
+          ${has('idcards') ? `<button class="btn sm ghost" data-cardlink style="min-height:0;padding:0 6px">${cardFor(id) ? 'Change' : 'Link card'}</button>` : ''}</dd>
       </dl>`;
   };
   openSheet(`<div class="body">
@@ -847,6 +861,7 @@ function openStudent(id) {
   </div>`);
   const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
   const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
+  sheet.querySelectorAll('[data-cardlink]').forEach(b => b.onclick = () => openCardLink(s));
   sheet.querySelectorAll('[data-rdopen]').forEach(b => b.onclick = () => openReadiness(b.dataset.rdopen, id));
   sheet.querySelectorAll('[data-gpay]').forEach(b => b.onclick = () => openGradingPayment(state.payments.find(p => p.payment_id === b.dataset.gpay), s));
   sheet.querySelectorAll('[data-plan]').forEach(sel => sel.onchange = async () => {
@@ -861,6 +876,24 @@ function openStudent(id) {
     try { await run(sb.from('prep_students').update({ is_active: !s.is_active }).eq('student_id', s.student_id), s.is_active ? 'Deactivated' : 'Reactivated'); await loadAll(); render(); openStudent(id); }
     catch (e) { toast('Could not save: ' + errMsg(e), 6000); }
   };
+}
+
+async function openCardLink(s) {
+  const { data, error } = await sb.rpc('prep_unlinked_cards');
+  if (error) return toast(/prep_unlinked_cards|schema cache/i.test(error.message) ? 'Run supabase/prep-update-06.sql in Supabase to link ID cards.' : errMsg(error), 7000);
+  const cur = cardFor(s.student_id), list = data || [];
+  const n = norm(s.full_name).slice(0, 4);
+  list.sort((a, b) => (norm(b.name).includes(n) ? 1 : 0) - (norm(a.name).includes(n) ? 1 : 0) || a.name.localeCompare(b.name));
+  openSheet(`<div class="body">${sheetHead('Link ID card', `${esc(s.full_name)}${cur ? ' · now linked to ' + esc(cur.name) : ''}`)}
+    <p class="hint">Cards in AMA ID Cards that aren't linked to anyone. Linking shows this student's card status here; nothing on the card changes.</p>
+    <input type="search" id="clSearch" placeholder="Search card names" aria-label="Search cards" value="${esc(s.full_name.split(' ').slice(-1)[0] || '')}">
+    <ul class="list" id="clList">${list.map(c => `<li data-name="${esc(c.name.toLowerCase())}"><button class="item" data-person="${c.person_id}"><div class="main"><div class="name">${esc(c.name)}</div><div class="meta">${esc([c.dan, c.printed_at ? 'printed ' + fmt(c.printed_at) : 'not printed'].filter(Boolean).join(' · '))}</div></div></button></li>`).join('') || '<li><div class="empty">No unlinked cards.</div></li>'}</ul>
+    <div class="dlg-actions">${cur ? '<button class="btn danger" id="clUnlink">Unlink card</button>' : ''}<button class="btn" data-close>Cancel</button></div></div>`);
+  const filt = () => { const q = $('#clSearch').value.toLowerCase(); $$('#clList li[data-name]').forEach(li => li.hidden = q && !li.dataset.name.includes(q)); };
+  $('#clSearch').oninput = filt; filt();
+  const link = async pid => { try { await run(sb.rpc('prep_set_card_link', { p_student: s.student_id, p_person: pid })); toast(pid ? 'Card linked' : 'Card unlinked'); await loadAll(); render(); openStudent(s.student_id); } catch (e) { toast(errMsg(e), 6000); } };
+  sheet.querySelectorAll('[data-person]').forEach(b => b.onclick = () => link(b.dataset.person));
+  const ul = $('#clUnlink'); if (ul) ul.onclick = () => link(null);
 }
 
 function openGradingPayment(g, s) {
@@ -1292,7 +1325,7 @@ function renderAttList() {
   const A = state.att, list = visibleAttRows(), editable = canEditAttendance();
   $('#attList').innerHTML = list.length ? list.map(({ s, a }) => `<li><div class="item" style="cursor:default">
     ${A.selecting ? `<input type="checkbox" data-pick="${esc(s.student_id)}" ${A.selected.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}">` : ''}
-    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div></div>
+    <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}${a.notes ? ' · ' + esc(a.notes) : ''}</div>${cardFor(s.student_id) ? `<div style="margin-top:3px">${cardTag(s.student_id)}</div>` : ''}</div>
     ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}${
       (() => { const f = feeInfo(A.cycle, s.student_id); if (!f || !f.payment_plan) return '';
         const paid = paidAt(A.cycle, s.student_id, a.session_id), up = f.payment_plan === 'upfront';
@@ -2254,7 +2287,7 @@ async function renderMore() {
       <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
       <div id="userList" class="small muted">Loading...</div></div>
     <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
-    <p class="hint">Black Belt Prep · Stage 7 build</p>`;
+    <p class="hint">Black Belt Prep · Stage 8 build</p>`;
   $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
   $$('#view-more [data-goto]').forEach(b => b.onclick = () => showView(b.dataset.goto));
   if (!admin) return;
@@ -2355,7 +2388,7 @@ async function start() {
   showView(state.view);
   if (!started) {
     started = true;
-    try { sb.channel('prep-changes').on('postgres_changes', { event: '*', schema: 'public' }, p => { if (String(p.table).startsWith('prep_')) scheduleReload(); }).subscribe(); } catch (e) { console.warn(e); }
+    try { sb.channel('prep-changes').on('postgres_changes', { event: '*', schema: 'public' }, p => { if (String(p.table).startsWith('prep_') || p.table === 'people' || p.table === 'print_jobs') scheduleReload(); }).subscribe(); } catch (e) { console.warn(e); }
     document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleReload(); });
   }
 }

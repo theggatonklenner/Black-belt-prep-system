@@ -9,7 +9,7 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 ## Folders
 
 - `docs/` the app (published with GitHub Pages, see [spec/stage-3-app.md](spec/stage-3-app.md))
-- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) and `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions)
+- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) and `supabase/prep-update-06.sql` (linking ID cards)
 - `spec/` the specification and stage notes
 - `tests/` database and browser tests
 
@@ -24,6 +24,7 @@ Progress:
 - Stage 4, readiness and payments screens: [spec/stage-4-readiness-payments.md](spec/stage-4-readiness-payments.md)
 - Stage 6, grading and grading lists: [spec/stage-6-grading.md](spec/stage-6-grading.md)
 - Stage 7, certificates and certificate lists: [spec/stage-7-certificates.md](spec/stage-7-certificates.md)
+- Stage 8, ID cards linked to the card software: [spec/stage-8-id-cards.md](spec/stage-8-id-cards.md)
 
 | # | Section |
 |---|---|
@@ -54,7 +55,7 @@ Progress:
 5. Dashboard, summary cards, filters and follow-up lists
 6. Grading management and grading list generator (done)
 7. Certificate management and certificate list generator (done)
-8. ID card records, printing statuses and print history
+8. ID card records, printing statuses and print history (done)
 9. Reports, exports, permissions and automation
 10. Full test with sample data before using real student records
 

@@ -28,6 +28,7 @@ await db.exec(read(join(here, '../supabase/prep-update-02.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-03.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-04.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-05.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-06.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -571,6 +572,36 @@ try {
     await page.selectOption('#cbStatus', 'reprint_required'); await page.click('#cbGo'); await confirm(page); await settle(page);
     ok((await q(`select status from prep_certificates where student_id = 'BB0001'`))[0].status === 'reprint_required', 'several certificates can be set at once (reprint required)');
     await shot(page, 'certificates');
+    await ctx.close();
+  }
+
+  console.log('\nID cards printed in the card software');
+  {
+    // In AMA ID Cards: Riley's card is added (name written differently) and printed
+    await q(`insert into people (name, dan, photo_path) values ('RILEY  chen', '1st Dan', 'photos/r.jpg')`);
+    await q(`insert into people (name, dan) values ('T. Brown', '3rd Dan')`);
+    const rid = (await q(`select id, student_id from people where name = 'RILEY  chen'`))[0];
+    ok(rid.student_id === 'M-0042', 'card added in the card software links itself to the student by name');
+    const job = (await q(`insert into print_jobs (people_ids, card_count, pdf_path) values (array['${rid.id}']::uuid[], 1, 'jobs/r.pdf') returning id`))[0].id;
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'attendance'); await page.waitForSelector('.att button');
+    ok((await page.textContent('#attList')).includes('Card in print queue'), 'session list shows the card waiting in the print queue');
+    await q(`update print_jobs set status = 'printed', printed_at = now() where id = '${job}'`);
+    await page.reload(); await page.waitForFunction(() => !document.querySelector('#app').hidden && !document.querySelector('#view-dashboard').textContent.includes('Loading'));
+    await tab(page, 'attendance'); await page.waitForSelector('.att button');
+    const row = await page.textContent('#attList li:has-text("Riley Chen")');
+    ok(row.includes('ID card printed'), 'once printed in the card software, the session list shows "ID card printed"');
+    await shot(page, 'attendance-card-printed');
+    await tab(page, 'students');
+    ok((await page.textContent('#studentList li:has-text("Riley Chen")')).includes('Card'), 'student list marks students whose card is printed');
+    await page.click('#studentList .item:has-text("Taylor Brown")'); await page.waitForSelector('#sheet [data-cardlink]');
+    ok((await page.textContent('#sheet')).includes('No card linked'), 'student record shows when no card is linked');
+    await page.click('#sheet [data-cardlink]'); await page.waitForSelector('#clList');
+    await page.fill('#clSearch', 'brown');
+    await page.click('#clList [data-person]:visible');
+    await page.waitForSelector('#sheet [data-cardlink]');
+    ok((await q(`select student_id from people where name = 'T. Brown'`))[0].student_id === 'BB0003', 'a card with a different name can be linked by hand');
+    ok((await page.textContent('#sheet')).includes('Card not printed yet'), 'student record shows the linked card status');
     await ctx.close();
   }
 

@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -439,6 +439,29 @@ fU = (await as('att@ama.test', () => rows(`select * from prep_session_fees($1)`,
 ok(fU.prepaid === false && fU.paid_sessions.length === 0, 'undoing the upfront payment clears it from every session');
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+console.log('\nLinking ID cards by name');
+await db.exec(`insert into people (name, dan, photo_path) values ('Kara  O''Neil', '1st Dan', 'photos/k.jpg'), ('Sam Twin', '2nd Dan', null), ('Unique Card', '3rd Dan', null)`);
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('L1','kara oneil','1st Dan Black Belt'), ('L2','Sam Twin','2nd Dan'), ('L3','Sam Twin','2nd Dan'), ('L4','New Person','Cho Dan Bo')`));
+const card = async n => (await one(`select student_id from people where name = $1`, [n])).student_id;
+ok(await card(`Kara  O'Neil`) === 'L1', 'existing card linked to the student when the student is added (ignores capitals, spaces, punctuation)');
+ok(await card('Sam Twin') === null, 'not linked when two students share the name');
+await db.exec(`insert into people (name, dan) values ('NEW person', null)`);
+ok(await card('NEW person') === 'L4', 'a card added later in the card software links itself to the matching student');
+ok(await card('Unique Card') === null, 'cards with no matching student stay unlinked');
+await fails(() => as('view@ama.test', () => db.query(`select prep_set_card_link('L2', (select id from people where name = 'Sam Twin'))`)), /permission/, 'only ID card and admin roles can link cards by hand');
+const twinId = (await one(`select id from people where name = 'Sam Twin'`)).id;
+await as('card@ama.test', () => db.query(`select prep_set_card_link('L2', $1)`, [twinId]));
+ok(await card('Sam Twin') === 'L2', 'card linked by hand');
+ok((await as('card@ama.test', () => rows(`select * from prep_unlinked_cards()`))).some(r => r.name === 'Unique Card'), 'unlinked cards are listed for linking by hand');
+const kid = (await one(`select id from people where student_id = 'L1'`)).id;
+const kjob = (await one(`insert into print_jobs (people_ids, card_count, pdf_path) values (array['${kid}']::uuid[], 1, 'jobs/k.pdf') returning id`)).id;
+let kc = (await as('view@ama.test', () => rows(`select * from prep_card_people() where student_id = 'L1'`)))[0];
+ok(kc.queue_status === 'pending' && !kc.printed_at, 'prep app sees the card waiting in the print queue');
+await db.exec(`update print_jobs set status = 'printed', printed_at = now() where id = '${kjob}'`);
+kc = (await as('view@ama.test', () => rows(`select * from prep_card_people() where student_id = 'L1'`)))[0];
+ok(kc.printed_at && kc.times_printed === 1, 'once printed in the card software, the prep app sees it as printed');
+
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
 ok(noRls.length === 0, 'every prep table has row level security on' + (noRls.length ? ': missing ' + noRls.map(r => r.relname) : ''));
