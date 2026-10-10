@@ -1,0 +1,6 @@
+# Never commit real student data or exports
+*.csv
+*.xlsx
+exports/
+data/
+.DS_Store
