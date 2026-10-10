@@ -305,6 +305,33 @@ await as(ADMIN, () => db.exec(`update prep_settings set sessions_required = 4, e
   update prep_cycles set grading_date = '2026-11-07' where cycle_id = '${cS}'`));
 ok((await one(`select grading_date::text g from prep_cycles where cycle_id = $1`, [cS])).g === '2026-11-07', 'cycle has a grading date');
 
+// ---------------------------------------------------------------------------
+console.log('\nFees: upfront or per session');
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name) values ('F1','Fee Upfront'), ('F2','Fee Session'), ('F3','Fee Oneoff')`));
+const cF = (await as(ADMIN, () => one(`select prep_start_new_cycle('Fee test', null, null, null, null, null, array['F1','F2','F3']) id`))).id;
+ok((await one(`select upfront_fee::text u, per_session_fee::text p from prep_cycles where cycle_id = $1`, [cF])).u === '200.00', 'new cycle takes $200 upfront and $60 per session from Settings');
+const fee = async id => one(`select * from prep_payment_summary where student_id = $1 and cycle_id = $2`, [id, cF]);
+ok(Number((await fee('F1')).amount_due) === 200 && (await fee('F1')).payment_plan === 'upfront', 'students start on the upfront option ($200)');
+await as('pay@ama.test', () => db.exec(`update prep_payments set payment_plan = 'per_session' where student_id = 'F2' and cycle_id = '${cF}'`));
+let f2 = await fee('F2');
+ok(Number(f2.amount_due) === 0 && f2.status === 'not_invoiced', 'per-session student who has attended nothing owes nothing yet');
+const sF = (await rows(`select session_id from prep_sessions where cycle_id = $1 order by session_number`, [cF])).map(r => r.session_id);
+await as('att@ama.test', () => db.exec(`select prep_mark_attendance('${sF[0]}', array['F1','F2'], 'present'); select prep_mark_attendance('${sF[1]}', array['F2'], 'present');
+  select prep_mark_attendance('${sF[2]}', array['F2'], 'absent');`));
+f2 = await fee('F2');
+ok(Number(f2.amount_due) === 120 && f2.status === 'due', 'per-session student owes $60 for each session marked present (2 x $60)');
+ok(Number((await fee('F1')).amount_due) === 200, 'upfront student still owes $200 whatever they attend');
+await as('att@ama.test', () => db.exec(`select prep_mark_attendance('${sF[1]}', array['F2'], 'excused')`));
+ok(Number((await fee('F2')).amount_due) === 60, 'correcting attendance corrects the fee');
+await as(ADMIN, () => db.exec(`update prep_cycles set per_session_fee = 65, upfront_fee = 210 where cycle_id = '${cF}'`));
+ok(Number((await fee('F2')).amount_due) === 65 && Number((await fee('F1')).amount_due) === 210, 'changing a cycle\'s fees updates everyone in it');
+await fails(() => as('pay@ama.test', () => db.exec(`update prep_payments set fee_override = 100 where student_id = 'F3' and cycle_id = '${cF}'`)), /reason/, 'a one-off fee needs a reason');
+await as('pay@ama.test', () => db.exec(`update prep_payments set fee_override = 100, notes = 'Sibling discount' where student_id = 'F3' and cycle_id = '${cF}'`));
+await as(ADMIN, () => db.exec(`update prep_cycles set upfront_fee = 220 where cycle_id = '${cF}'`));
+ok(Number((await fee('F3')).amount_due) === 100, 'one-off fee stays when the cycle fee changes');
+await as('inst@ama.test', () => db.exec(`update prep_payments set payment_plan = 'per_session' where student_id = 'F1'`));
+ok((await fee('F1')).payment_plan === 'upfront', 'only the payments role can change a student\'s option');
+
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
 ok(noRls.length === 0, 'every prep table has row level security on' + (noRls.length ? ': missing ' + noRls.map(r => r.relname) : ''));

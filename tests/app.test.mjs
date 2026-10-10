@@ -86,7 +86,8 @@ try {
   await shot(page, 'dashboard-empty');
   await tab(page, 'students');
   await page.click('#addStudentBtn');
-  await page.fill('#fName', 'Alex Smith'); await page.selectOption('#fRank', 'Cho Dan Bo'); await page.fill('#fDob', '2010-03-01');
+  await page.fill('#fName', 'Alex Smith'); await page.selectOption('#fRank', 'Cho Dan Bo');
+  ok(!(await page.$('#fDob')) && !(await page.$('#fEmail')) && !(await page.$('#fPhone')), 'student form has no birth date, email or phone');
   await shot(page, 'add-student');
   await page.click('#fSave');
   ok((await toastText(page)).includes('as BB0001'), 'student added and given Student ID BB0001');
@@ -100,25 +101,24 @@ try {
 
   await page.click('#importStudentsBtn');
   await page.fill('#impText', [
-    'First name,Last name,Belt,DOB,Student ID',
-    'Jordan,Lee,cho dan bo,12/07/2008,',
-    'Taylor,Brown,3rd dan lvl 2,20/01/2011,',
-    'Sam,Nguyen,Cho Dan Bo,31/02/2012,',
+    'First name,Last name,Belt,Phone,Student ID',
+    'Jordan,Lee,cho dan bo,0400 000 000,',
+    'Taylor,Brown,3rd dan lvl 2,,',
     'alex,smith,,,',
-    'Riley,Chen,Cho Dan Bo,5 Mar 2010,M-0042',
+    'Riley,Chen,Cho Dan Bo,,M-0042',
     'Jordan,Lee,,,',
     'Kim,Park,Blue belt,,'
   ].join('\n'));
   await page.waitForSelector('#impPreview table');
   const prev = await page.textContent('#impPreview');
-  ok(prev.includes('3 to add') && prev.includes('4 skipped'), 'import preview: 3 to add, 4 skipped');
-  ok(prev.includes('not understood') && prev.includes('Already in the register') && prev.includes('Repeated in this list') && prev.includes('"Blue belt" is not in the list'),
-     'preview explains each skipped row (bad date, existing, repeated, unknown belt)');
+  ok(prev.includes('3 to add') && prev.includes('3 skipped'), 'import preview: 3 to add, 3 skipped (extra columns such as Phone ignored)');
+  ok(prev.includes('Already in the register') && prev.includes('Repeated in this list') && prev.includes('"Blue belt" is not in the list'),
+     'preview explains each skipped row (existing, repeated, unknown belt)');
   await shot(page, 'import-preview');
   await page.click('#impGo'); await confirm(page); await settle(page);
-  const imported = await q(`select student_id, full_name, dob::text from prep_students order by student_id`);
-  ok(imported.length === 4 && imported.some(s => s.student_id === 'M-0042' && s.dob === '2010-03-05'), 'import kept the supplied Student ID and read "5 Mar 2010"');
-  ok(imported.some(s => s.full_name === 'Jordan Lee' && s.dob === '2008-07-12'), 'import read Australian date 12/07/2008 correctly');
+  const imported = await q(`select student_id, full_name, contact_phone from prep_students order by student_id`);
+  ok(imported.length === 4 && imported.some(s => s.student_id === 'M-0042'), 'import kept the supplied Student ID');
+  ok(imported.every(s => !s.contact_phone), 'phone numbers in the file are not stored');
   const belts = Object.fromEntries((await q(`select full_name, belt_rank from prep_students`)).map(r => [r.full_name, r.belt_rank]));
   ok(belts['Jordan Lee'] === 'Cho Dan Bo' && belts['Taylor Brown'] === '3rd Dan Level 2', 'imported belts matched to the list ("cho dan bo", "3rd dan lvl 2")');
   const opts = await page.$$eval('#studentBelt option', os => os.map(o => o.textContent));
@@ -156,11 +156,11 @@ try {
   await page.fill('#ncS1', '2026-10-05'); await page.dispatchEvent('#ncS1', 'change');
   ok(await page.inputValue('#ncS4') === '2026-10-26', 'sessions 2 to 4 filled in weekly from session 1');
   await page.fill('#ncGrade', '2026-11-01');
-  ok(await page.inputValue('#ncFee') === '120.00', 'fee defaults from settings');
+  ok(await page.inputValue('#ncFee') === '200.00' && await page.inputValue('#ncPer') === '60.00', 'fees default to $200 upfront and $60 per session');
   await shot(page, 'new-cycle');
   await page.click('#ncGo');
   const review = await confirm(page);
-  ok(review.includes('4 students enrolled') && review.includes('becomes the active cycle') && review.includes('sign-off on') && review.includes('Grading on'), 'review step summarises the cycle, sign-off and grading date');
+  ok(review.includes('4 students enrolled') && review.includes('becomes the active cycle') && review.includes('sign-off on') && review.includes('Grading on') && review.includes('$200 upfront or $60 per session'), 'review step summarises the cycle, sign-off, grading date and fees');
   await page.waitForSelector('#cyclePill:not([hidden])');
   ok((await page.textContent('#cyclePillText')) === 'Term 4 2026', 'new cycle is active and shown in the header');
   const c1 = (await q(`select cycle_id, status from prep_cycles where name = 'Term 4 2026'`))[0];
@@ -269,6 +269,12 @@ try {
   ok((await q(`select count(*)::int n from prep_enrolments e join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and e.student_id = 'BB0002'`))[0].n === 0, 'student added by mistake can be removed');
   await page.click('#sheet [data-close]');
   await tab(page, 'students'); await page.click('[data-student="BB0001"]');
+  ok((await page.textContent('#sheet')).includes('Fee option'), 'student record shows the fee option');
+  await page.selectOption('#sheet [data-plan]', 'per_session'); await settle(page);
+  const t1 = (await q(`select c.cycle_id from prep_cycles c where c.name = 'Term 1 2027'`))[0].cycle_id;
+  ok((await q(`select payment_plan, amount_due::text a from prep_payments where student_id = 'BB0001' and cycle_id = $1`, [t1]))[0].payment_plan === 'per_session', 'fee option switched to per session');
+  const t4 = (await q(`select p.amount_due::text a from prep_payments p join prep_cycles c using (cycle_id) where c.name = 'Term 4 2026' and p.student_id = 'BB0001'`))[0].a;
+  ok(t4 === '200.00', 'earlier cycle fee unchanged ($200 upfront)');
   const hist = await page.textContent('#sheet');
   ok(hist.includes('Current cycle') && hist.includes('History') && hist.includes('Term 4 2026'), 'student record shows current cycle and history');
   await shot(page, 'student-detail');

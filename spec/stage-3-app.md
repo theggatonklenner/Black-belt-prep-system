@@ -17,6 +17,7 @@ Run `supabase/prep-update-01.sql` once in Supabase > SQL Editor (after `prep-set
   Cho Dan Bo > Probationary Black Belt, Probationary Black Belt > 1st Dan Black Belt, 1st Dan Level 1 > 2nd Dan, 2nd Dan Level 2 > 3rd Dan, 3rd Dan Level 3 > 4th Dan, 4th Dan Level 4 > 5th Dan.
 - **Sign-off.** The last session of every cycle is the sign-off. A student only meets the attendance requirement if they are marked Present at it; excused does not count.
 - **Grading date** for each cycle.
+- **Fees: $200 upfront or $60 per session.** Both are set per cycle (defaults in Settings). Students start on upfront; anyone with the Payments role can switch a student on their record. Per-session students owe the fee for each session they are marked Present at, so the amount updates as attendance is recorded or corrected. A one-off fee needs a reason.
 
 The app keeps working before the update is run; Dan numbers and grading dates appear once it is.
 
@@ -34,11 +35,12 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 
 **Students**
 - Search by name or Student ID; filter by belt rank and active or inactive; test records hidden unless asked for
+- Students need only a name and belt rank (no birth date, email or phone)
 - Add and edit; Student IDs are created automatically (BB0001, BB0002 ...) and never change
 - Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan. Imports match "lvl", "level" and capitals to the list
 - Warning before adding a name that already exists, and a banner listing possible duplicates
 - Deactivate and reactivate without losing history
-- Import from CSV or pasted spreadsheet rows, with a preview that skips existing students, repeats and unreadable dates
+- Import from CSV or pasted spreadsheet rows, with a preview that skips existing students, repeats and unknown belts; other columns are ignored
 - Student record: details, current cycle (attendance by session plus readiness, payment, grading, certificate and ID card status) and earlier cycles
 
 **Preparation cycles**
@@ -64,7 +66,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 70 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 74 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

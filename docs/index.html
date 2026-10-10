@@ -371,6 +371,9 @@ const DAN_TARGET = { 'Cho Dan Bo': 'Probationary Black Belt', 'Probationary Blac
   '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan' };
 const danTarget = s => s && DAN_TARGET[s.belt_rank] || null;
 const danFor = s => { const t = danTarget(s); return t ? state.danNumbers.find(d => d.student_id === s.student_id && d.target_rank === t) || null : null; };
+const feeReady = () => 'default_upfront_fee' in state.settings;
+const money = n => '$' + Number(n || 0).toFixed(2).replace(/\.00$/, '');
+const PLAN = { upfront: 'Upfront', per_session: 'Per session' };
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
 const beltOptions = (cur, blank = 'Choose belt') => `<option value="">${blank}</option>` +
@@ -440,7 +443,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, danNumbers: [], danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, payments: [], danNumbers: [], danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -468,15 +471,16 @@ async function loadAll() {
     q('prep_settings'), q('prep_students', ['full_name']), q('prep_cycles', ['created_at', false]), q('prep_sessions', ['session_number']),
     q('prep_enrolments'), q('prep_attendance'), q('prep_attendance_summary'), q('prep_overview'),
     has('admin') ? q('prep_possible_duplicates') : Promise.resolve({ data: [] }),
-    q('prep_dan_numbers', ['dan_number'])
+    q('prep_dan_numbers', ['dan_number']),
+    has('payments') ? q('prep_payment_summary') : Promise.resolve({ data: [] })
   ]);
   // Dan numbers and grading dates arrive with supabase/prep-update-01.sql; the rest works without it
   state.danReady = !res[9].error;
   if (res[9].error) res[9] = { data: [] };
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
-  const [settings, students, cycles, sessions, enrolments, attendance, summary, overview, dups, danNumbers] = res.map(r => r.data || []);
-  Object.assign(state, { settings: settings[0] || {}, danNumbers, students, cycles, sessions, enrolments, attendance, summary, overview, duplicates: dups, loaded: true });
+  const [settings, students, cycles, sessions, enrolments, attendance, summary, overview, dups, danNumbers, payments] = res.map(r => r.data || []);
+  Object.assign(state, { settings: settings[0] || {}, payments, danNumbers, students, cycles, sessions, enrolments, attendance, summary, overview, duplicates: dups, loaded: true });
   if (!state.att.cycle || !cycle(state.att.cycle)) state.att.cycle = (currentCycle() || cycles[0] || {}).cycle_id || null;
 }
 
@@ -614,7 +618,11 @@ function openStudent(id) {
       <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''} · sign-off: ${label(sum.signoff_status || 'not_recorded').toLowerCase()}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
       <dl class="kv">
         <dt>Readiness</dt><dd>${tag(ov.readiness)}</dd>
-        ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${tag(ov.payment_status)} <span class="small muted">$${Number(ov.amount_paid || 0).toFixed(2)} of $${Number(ov.amount_due || 0).toFixed(2)}</span></dd>` : ''}
+        ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${ov.payment_status === 'not_invoiced' && Number(ov.amount_due) === 0 && state.payments.some(x => x.cycle_id === cy.cycle_id && x.student_id === id && x.payment_plan === 'per_session') ? tag('', 'Nothing owed yet') : tag(ov.payment_status)} <span class="small muted">${money(ov.amount_paid)} of ${money(ov.amount_due)}</span></dd>` : ''}
+        ${(() => { const p = state.payments.find(x => x.cycle_id === cy.cycle_id && x.student_id === id); if (!p || !p.payment_plan) return '';
+          const how = p.fee_override != null ? `one-off fee ${money(p.fee_override)}` : p.payment_plan === 'per_session' ? `${sum.attended ?? 0} × ${money(cy.per_session_fee)}` : money(cy.upfront_fee);
+          return `<dt>Fee option</dt><dd>${PLAN[p.payment_plan]} <span class="small muted">${how}</span>
+            ${cy.status !== 'archived' ? `<select data-plan="${p.payment_id}" aria-label="Fee option" style="margin-top:6px;min-height:40px"><option value="upfront"${p.payment_plan === 'upfront' ? ' selected' : ''}>Upfront · ${money(cy.upfront_fee)}</option><option value="per_session"${p.payment_plan === 'per_session' ? ' selected' : ''}>Per session · ${money(cy.per_session_fee)}</option></select>` : ''}</dd>`; })()}
         <dt>Grading</dt><dd>${ov.grading_status ? tag(ov.grading_status) : '—'}</dd>
         <dt>Certificate</dt><dd>${ov.certificate_status ? tag(ov.certificate_status) : '—'}</dd>
         <dt>ID card</dt><dd>${ov.id_card_status ? tag(ov.id_card_status) : '—'}</dd>
@@ -628,9 +636,6 @@ function openStudent(id) {
         <dt>Belt rank</dt><dd>${esc(s.belt_rank || '—')}</dd>
         ${danTarget(s) ? `<dt>Going for</dt><dd>${esc(danTarget(s))}</dd><dt>Dan number</dt><dd>${danFor(s) ? `<b>${danFor(s).dan_number}</b>` : '<span class="muted">Not assigned yet</span>'}
           ${danFor(s) ? '<button class="btn sm ghost need-admin" id="stDan" style="min-height:0;padding:0 6px">Change</button>' : ''}</dd>` : ''}
-        <dt>Date of birth</dt><dd>${fmt(s.dob)}</dd>
-        <dt>Email</dt><dd>${esc(s.contact_email || '—')}</dd>
-        <dt>Phone</dt><dd>${esc(s.contact_phone || '—')}</dd>
         <dt>Added</dt><dd>${fmt(s.date_added)}</dd>
         ${s.notes ? `<dt>Notes</dt><dd>${esc(s.notes)}</dd>` : ''}
       </dl>
@@ -642,6 +647,10 @@ function openStudent(id) {
   </div>`);
   const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
   const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
+  sheet.querySelectorAll('[data-plan]').forEach(sel => sel.onchange = async () => {
+    try { await run(sb.from('prep_payments').update({ payment_plan: sel.value }).eq('payment_id', sel.dataset.plan), `Fee option: ${PLAN[sel.value]}`); await loadAll(); render(); openStudent(id); }
+    catch (e) { toast(errMsg(e), 6000); }
+  });
   const ac = $('#stActive');
   if (ac) ac.onclick = async () => {
     if (s.is_active && !await ask(`Deactivate ${s.full_name}? Their records are kept and they can be reactivated at any time.`, 'Deactivate', true)) return;
@@ -672,14 +681,7 @@ function openStudentForm(s = null) {
     ${sheetHead(s ? 'Edit student' : 'Add student', s ? esc(s.student_id) + ' (Student IDs never change)' : 'A Student ID is created automatically.')}
     <div class="field"><label for="fName">Full name</label><input type="text" id="fName" required value="${v('full_name')}" autocomplete="off"></div>
     <div class="field"><label for="fCert">Name on certificate, if different</label><input type="text" id="fCert" value="${v('certificate_name')}" autocomplete="off"></div>
-    <div class="grid2">
-      <div class="field"><label for="fRank">Belt rank</label><select id="fRank">${beltOptions(s ? s.belt_rank : '')}</select></div>
-      <div class="field"><label for="fDob">Date of birth</label><input type="date" id="fDob" value="${v('dob')}"></div>
-    </div>
-    <div class="grid2">
-      <div class="field"><label for="fEmail">Email</label><input type="email" id="fEmail" value="${v('contact_email')}"></div>
-      <div class="field"><label for="fPhone">Phone</label><input type="tel" id="fPhone" value="${v('contact_phone')}"></div>
-    </div>
+    <div class="field"><label for="fRank">Belt rank</label><select id="fRank">${beltOptions(s ? s.belt_rank : '')}</select></div>
     <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${v('notes')}</textarea></div>
     ${s ? '' : '<label class="check"><input type="checkbox" id="fTest"> Test record (kept out of real lists and new cycles)</label>'}
     <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="fSave">${s ? 'Save' : 'Add student'}</button></div>
@@ -687,8 +689,7 @@ function openStudentForm(s = null) {
   $('#stForm').onsubmit = async e => {
     e.preventDefault();
     const rec = { full_name: $('#fName').value.trim(), certificate_name: $('#fCert').value.trim() || null,
-      belt_rank: $('#fRank').value || null, dob: $('#fDob').value || null, contact_email: $('#fEmail').value.trim() || null,
-      contact_phone: $('#fPhone').value.trim() || null, notes: $('#fNotes').value.trim() || null };
+      belt_rank: $('#fRank').value || null, notes: $('#fNotes').value.trim() || null };
     if (!rec.full_name) return;
     if (!s) {
       rec.is_test = $('#fTest').checked;
@@ -707,7 +708,7 @@ function openStudentForm(s = null) {
 
 function openDuplicates(dups) {
   openSheet(`<div class="body">${sheetHead('Possible duplicates', 'Names that match ignoring capitals, spaces and punctuation. Deactivate the extra record to hide it; its history is kept.')}
-    <ul class="list">${dups.map(d => [d.student_a, d.student_b].map(id => { const s = student(id); return `<li><button class="item" data-student="${esc(id)}"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([id, s.belt_rank, s.dob && fmt(s.dob)].filter(Boolean).join(' · '))}</div></div>${d.same_dob ? tag('warn', 'Same birth date') : ''}</button></li>`; }).join('')).join('<li style="height:8px;background:var(--bg)"></li>')}</ul></div>`);
+    <ul class="list">${dups.map(d => [d.student_a, d.student_b].map(id => { const s = student(id); return `<li><button class="item" data-student="${esc(id)}"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([id, s.belt_rank].filter(Boolean).join(' · '))}</div></div></button></li>`; }).join('')).join('<li style="height:8px;background:var(--bg)"></li>')}</ul></div>`);
   sheet.querySelectorAll('[data-student]').forEach(b => b.onclick = () => openStudent(b.dataset.student));
 }
 
@@ -736,9 +737,8 @@ const STUDENT_HEADERS = {
   name: 'full_name', fullname: 'full_name', studentname: 'full_name', membername: 'full_name',
   firstname: 'first', givenname: 'first', first: 'first', middlename: 'middle', middle: 'middle', lastname: 'last', surname: 'last', familyname: 'last', last: 'last',
   certificatename: 'certificate_name', nameoncertificate: 'certificate_name',
-  dob: 'dob', dateofbirth: 'dob', birthdate: 'dob', birthday: 'dob',
   belt: 'belt_rank', beltrank: 'belt_rank', rank: 'belt_rank', grade: 'belt_rank', currentbeltrank: 'belt_rank', currentbelt: 'belt_rank',
-  email: 'contact_email', emailaddress: 'contact_email', phone: 'contact_phone', mobile: 'contact_phone', phonenumber: 'contact_phone', notes: 'notes'
+  notes: 'notes'
 };
 function importSheet(title, hint, onText) {
   openSheet(`<div class="body">
@@ -755,7 +755,7 @@ function importSheet(title, hint, onText) {
 }
 function openImportStudents() {
   let plan = [];
-  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Date of birth, Belt rank, Email, Phone, Certificate name, Notes. Existing students are skipped.', text => {
+  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Belt rank, Certificate name, Notes. Other columns are ignored. Existing students are skipped.', text => {
     const rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], STUDENT_HEADERS) : null;
     plan = [];
     if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
@@ -767,10 +767,8 @@ function openImportStudents() {
       const o = {}; cols.forEach((k, i) => { if (k && r[i]) o[k] = r[i]; });
       const full = (o.full_name || [o.first, o.middle, o.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
       const rec = { full_name: full, student_id: o.student_id || undefined, certificate_name: o.certificate_name || null,
-        belt_rank: matchBelt(o.belt_rank), contact_email: o.contact_email || null, contact_phone: o.contact_phone || null, notes: o.notes || null };
+        belt_rank: matchBelt(o.belt_rank), notes: o.notes || null };
       let why = '';
-      const dob = parseDate(o.dob);
-      if (dob === undefined) why = `Date of birth "${o.dob}" not understood`; else rec.dob = dob;
       if (o.belt_rank && !rec.belt_rank) why = `Belt "${o.belt_rank}" is not in the list`;
       if (!full) why = 'No name';
       else if (rec.student_id && !/^[A-Za-z0-9-]{2,20}$/.test(rec.student_id)) why = 'Student ID can only use letters, numbers and dashes';
@@ -822,7 +820,7 @@ function renderCycles() {
 function openNewCycle() {
   const others = activeCycles();
   const pool = state.students.filter(s => s.is_active && !s.is_test);
-  const fee = Number(state.settings.default_session_fee || 0);
+  const S = state.settings, fee = Number((feeReady() ? S.default_upfront_fee : S.default_session_fee) || 0), perFee = Number(S.default_per_session_fee || 0);
   openSheet(`<form id="ncForm">
     ${sheetHead('Start new preparation cycle', 'Creates fresh attendance, readiness and fee records. Earlier cycles are not changed.')}
     <div class="field"><label for="ncName">Cycle name</label><input type="text" id="ncName" required placeholder="e.g. Term 4 2026" autocomplete="off"></div>
@@ -831,9 +829,11 @@ function openNewCycle() {
       ${state.danReady ? '<div class="field"><label for="ncGrade">Grading date</label><input type="date" id="ncGrade"></div>' : ''}</div>
     <div class="section"><h3>Fee</h3>
       <div class="grid2">
-        <div class="field"><label for="ncFee">Session fee ($)</label><input type="number" id="ncFee" min="0" step="0.01" required value="${fee.toFixed(2)}"></div>
-        <div class="field"><label for="ncDue">Payment due</label><input type="date" id="ncDue"></div>
-      </div></div>
+        <div class="field"><label for="ncFee">${feeReady() ? 'Upfront fee ($)' : 'Session fee ($)'}</label><input type="number" id="ncFee" min="0" step="0.01" required value="${fee.toFixed(2)}"></div>
+        ${feeReady() ? `<div class="field"><label for="ncPer">Per-session fee ($)</label><input type="number" id="ncPer" min="0" step="0.01" required value="${perFee.toFixed(2)}"></div>` : ''}
+      </div>
+      <div class="field"><label for="ncDue">Payment due</label><input type="date" id="ncDue"></div>
+      ${feeReady() ? `<p class="hint">Students pay upfront or per session. Per-session students are charged for each session they're marked present at. Everyone starts on ${PLAN[S.default_payment_plan || 'upfront'].toLowerCase()}; change it on the student's record.</p>` : ''}</div>
     <div class="section"><h3>Students</h3>
       <label class="check"><input type="radio" name="ncWho" value="all" checked> All active students (${pool.length})</label>
       <label class="check"><input type="radio" name="ncWho" value="pick"> Choose students</label>
@@ -868,14 +868,14 @@ function openNewCycle() {
     if (pick && !ids.length) return toast('Choose at least one student, or pick "All active students".', 5000);
     const count = pick ? ids.length : pool.length, feeV = Number($('#ncFee').value || 0), activate = act.checked;
     const msg = `${name}: sessions on ${dates.slice(0, 3).map(fmtShort).join(', ')}, sign-off on ${fmt(dates[3])}. ${grading ? `Grading on ${fmt(grading)}. ` : 'No grading date yet. '}` +
-      `Fee $${feeV.toFixed(2)}. ${count} student${count === 1 ? '' : 's'} enrolled.` +
+      `${$('#ncPer') ? `Fees ${money(feeV)} upfront or ${money($('#ncPer').value)} per session` : `Fee ${money(feeV)}`}. ${count} student${count === 1 ? '' : 's'} enrolled.` +
       (activate ? ` It becomes the active cycle${others.length ? ' and ' + others.map(o => o.name).join(', ') + ' is marked Completed' : ''}.` : ' It stays Planned until you activate it.');
     if (!await ask(msg, 'Start cycle', false, 'Start this cycle?')) return;
     $('#ncGo').disabled = true;
     try {
       const id = await run(sb.rpc('prep_start_new_cycle', { p_name: name, p_start: dates[0], p_end: dates[3], p_session_dates: dates,
         p_fee: feeV, p_payment_due: $('#ncDue').value || null, p_student_ids: pick ? ids : null, p_notes: null }));
-      if (grading) await run(sb.from('prep_cycles').update({ grading_date: grading }).eq('cycle_id', id));
+      if (grading || $('#ncPer')) await run(sb.from('prep_cycles').update({ ...(grading ? { grading_date: grading } : {}), ...($('#ncPer') ? { per_session_fee: Number($('#ncPer').value || 0) } : {}) }).eq('cycle_id', id));
       if (activate) await run(sb.rpc('prep_activate_cycle', { p_cycle: id, p_complete_current: true }));
       sheet.close(); toast(`${name} started`); await loadAll(); state.att.cycle = id; render();
     } catch (err) { $('#ncGo').disabled = false; toast('Could not start the cycle: ' + errMsg(err), 7000); await loadAll(); render(); }
@@ -894,11 +894,14 @@ function openCycle(id) {
     <div class="grid2">${sess.map(s => `<div class="field"><label for="cySess${s.session_number}">${esc(sessName(s))}</label><input type="date" id="cySess${s.session_number}" data-sid="${s.session_id}" value="${esc(s.session_date || '')}" ${admin ? '' : 'disabled'}></div>`).join('')}</div>
     ${state.danReady ? `<div class="field"><label for="cyGrade">Grading date</label><input type="date" id="cyGrade" value="${esc(c.grading_date || '')}" ${admin ? '' : 'disabled'}></div>` : ''}
     <div class="grid2">
-      <div class="field"><label for="cyFee">Session fee ($)</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
+      <div class="field"><label for="cyFee">${feeReady() ? 'Upfront fee ($)' : 'Session fee ($)'}</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(feeReady() ? c.upfront_fee : c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
+      ${feeReady() ? `<div class="field"><label for="cyPer">Per-session fee ($)</label><input type="number" id="cyPer" min="0" step="0.01" value="${Number(c.per_session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>` : ''}
+    </div>
+    <div class="grid2">
       <div class="field"><label for="cyDue">Payment due</label><input type="date" id="cyDue" value="${esc(c.payment_due_date || '')}" ${admin ? '' : 'disabled'}></div>
     </div>
     <div class="field"><label for="cyNotes">Notes</label><textarea id="cyNotes" rows="2" ${admin ? '' : 'disabled'}>${esc(c.notes || '')}</textarea></div>
-    ${admin ? `<p class="hint">Changing the fee updates everyone still at the old amount. Fees changed individually are left alone.</p>
+    ${admin ? `<p class="hint">Changing a fee updates everyone in this cycle, except one-off fees.</p>
     <div class="row">
       ${c.status !== 'active' && c.status !== 'archived' ? '<button type="button" class="btn" id="cyActivate">Make active</button>' : ''}
       ${c.status === 'active' ? '<button type="button" class="btn" id="cyComplete">Mark completed</button>' : ''}
@@ -926,7 +929,7 @@ function openCycle(id) {
       if (grading && dates.length && grading < dates[dates.length - 1]) return toast('The grading date is before the sign-off.', 5000);
       await run(sb.from('prep_cycles').update({ name: $('#cyName').value.trim(), start_date: dates[0] || null, end_date: dates[dates.length - 1] || null,
         ...(state.danReady ? { grading_date: grading || null } : {}),
-        session_fee: Number($('#cyFee').value || 0), payment_due_date: $('#cyDue').value || null, notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
+        ...(feeReady() ? { upfront_fee: Number($('#cyFee').value || 0), per_session_fee: Number($('#cyPer').value || 0) } : { session_fee: Number($('#cyFee').value || 0) }), payment_due_date: $('#cyDue').value || null, notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
       for (const inp of $$('#cyForm [data-sid]')) {
         const s = sess.find(x => x.session_id === inp.dataset.sid);
         if ((s.session_date || '') !== inp.value) await run(sb.from('prep_sessions').update({ session_date: inp.value || null }).eq('session_id', s.session_id));
@@ -1155,8 +1158,14 @@ async function renderMore() {
     ${admin ? `<form class="card" id="setForm"><h3>Settings</h3>
       <div class="grid2">
         <div class="field"><label for="setReq">Sessions required for grading</label><input type="number" id="setReq" min="0" max="20" value="${S.sessions_required ?? 4}"></div>
-        <div class="field"><label for="setFee">Default session fee ($)</label><input type="number" id="setFee" min="0" step="0.01" value="${Number(S.default_session_fee || 0).toFixed(2)}"></div>
+        ${feeReady() ? '' : `<div class="field"><label for="setFee">Default session fee ($)</label><input type="number" id="setFee" min="0" step="0.01" value="${Number(S.default_session_fee || 0).toFixed(2)}"></div>`}
       </div>
+      ${feeReady() ? `<div class="grid2">
+        <div class="field"><label for="setUp">Upfront fee ($)</label><input type="number" id="setUp" min="0" step="0.01" value="${Number(S.default_upfront_fee).toFixed(2)}"></div>
+        <div class="field"><label for="setPer">Per-session fee ($)</label><input type="number" id="setPer" min="0" step="0.01" value="${Number(S.default_per_session_fee).toFixed(2)}"></div>
+      </div>
+      <div class="field"><label for="setPlan">Students start on</label><select id="setPlan"><option value="upfront"${S.default_payment_plan === 'upfront' ? ' selected' : ''}>Upfront</option><option value="per_session"${S.default_payment_plan === 'per_session' ? ' selected' : ''}>Per session</option></select></div>
+      <p class="hint">These are used for new cycles. Each cycle's fees can be changed on the cycle.</p>` : ''}
       <div class="field"><label for="setDan">Next Dan number</label><input type="number" id="setDan" min="1" step="1" placeholder="e.g. 1001" value="${S.next_dan_number ?? ''}" ${state.danReady ? '' : 'disabled'}></div>
       <p class="hint">${state.danReady ? 'Students going for Probationary Black Belt or a Dan get this number when they join a cycle, then it goes up by one for each person. Numbers are never reused, and someone repeating the same grading keeps theirs.'
         : 'To use Dan numbers, run supabase/prep-update-01.sql in Supabase &gt; SQL Editor, then reload.'}</p>
@@ -1175,7 +1184,9 @@ async function renderMore() {
   $('#setForm').onsubmit = async e => {
     e.preventDefault();
     try {
-      await run(sb.from('prep_settings').update({ sessions_required: +$('#setReq').value, default_session_fee: Number($('#setFee').value || 0),
+      await run(sb.from('prep_settings').update({ sessions_required: +$('#setReq').value,
+        ...(feeReady() ? { default_upfront_fee: Number($('#setUp').value || 0), default_per_session_fee: Number($('#setPer').value || 0), default_payment_plan: $('#setPlan').value }
+          : { default_session_fee: Number($('#setFee').value || 0) }),
         excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked,
         ...(state.danReady ? { next_dan_number: $('#setDan').value ? +$('#setDan').value : null } : {}) }).eq('id', 1), 'Settings saved');
       await loadAll();
