@@ -31,4 +31,12 @@ Where it shows:
 - **Students** list: a "Card" tag for students whose card is printed.
 - **Student record**: the card status and print date.
 
+## ID card filter
+
+The **Students** and **Attendance** screens have an ID card filter:
+- **No ID card printed**: students going for 1st Dan or higher whose card hasn't been printed (no card linked, not printed yet, in the print queue, or reprint needed).
+- **ID card printed**.
+
+The **ID cards** report has the same option, and a ready-made "No ID card printed" list to export.
+
 Changes in the card software show here when the app is reopened or refreshed (and straight away for people who also have a card software role).

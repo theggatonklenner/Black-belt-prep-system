@@ -287,6 +287,7 @@
       <select id="studentStatus" aria-label="Status">
         <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">Active and inactive</option>
       </select>
+      <select id="studentCard" aria-label="ID card" style="grid-column:1 / -1"><option value="">All ID card statuses</option><option value="notprinted">No ID card printed</option><option value="printed">ID card printed</option></select>
     </div>
     <label class="check need-admin"><input type="checkbox" id="studentShowTest"> Show test records</label>
     <ul class="list" id="studentList"></ul>
@@ -462,6 +463,8 @@ function cardState(sid) {
   if (c.times_printed > 0) return { tone: 'bad', text: 'Card reprint needed' };
   return { tone: '', text: 'Card not printed yet' };
 }
+// Card filter: '' any, 'notprinted' going for 1st Dan+ and card not printed (not linked, not printed, in queue, reprint), 'printed'
+const cardMatch = (sid, f) => !f || (getsCard(sid) && ((cardState(sid) || {}).text === 'ID card printed') === (f === 'printed'));
 const cardTag = sid => { const k = cardState(sid); return k ? `<span class="tag ${k.tone}" title="${k.date ? 'Printed ' + fmt(k.date) : ''}">${k.text}</span>` : ''; };
 const danMeta = s => { const d = danFor(s); return d ? `Dan no. ${d.dan_number}` : ''; };
 const matchBelt = b => BELTS.find(x => beltKey(x) === beltKey(b)) || null;
@@ -533,7 +536,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
   settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
-  att: { cycle: null, session: 1, search: '', belt: '', status: '', mode: 'sessions', selecting: false, selected: new Set() }
+  att: { cycle: null, session: 1, search: '', belt: '', status: '', card: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
 const canEditAttendance = () => has('instructor', 'attendance');
@@ -730,15 +733,15 @@ function renderDashboard() {
 /* =========================================================================
    Students
    ========================================================================= */
-['#studentSearch', '#studentBelt', '#studentStatus', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
+['#studentSearch', '#studentBelt', '#studentStatus', '#studentCard', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
 $('#addStudentBtn').onclick = () => openStudentForm();
 $('#exportStudentsBtn').onclick = () => REPORTS.register.open();
 $('#importStudentsBtn').onclick = () => openImportStudents();
 
 function visibleStudents() {
-  const q = $('#studentSearch').value.trim().toLowerCase(), belt = $('#studentBelt').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked;
+  const q = $('#studentSearch').value.trim().toLowerCase(), belt = $('#studentBelt').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked, card = $('#studentCard').value;
   return state.students.filter(s =>
-    (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!belt || s.belt_rank === belt) &&
+    (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!belt || s.belt_rank === belt) && cardMatch(s.student_id, card) &&
     (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q)));
 }
 function renderStudents() {
@@ -1276,7 +1279,7 @@ function attRows() {
 }
 function visibleAttRows() {
   const A = state.att, q = A.search.toLowerCase();
-  return attRows().rows.filter(r => (!A.belt || r.s.belt_rank === A.belt) && (!A.status || r.a.status === A.status) &&
+  return attRows().rows.filter(r => (!A.belt || r.s.belt_rank === A.belt) && (!A.status || r.a.status === A.status) && cardMatch(r.s.student_id, A.card) &&
     (!q || r.s.full_name.toLowerCase().includes(q) || r.s.student_id.toLowerCase().includes(q)));
 }
 function renderAttendance() {
@@ -1312,6 +1315,7 @@ function renderAttendance() {
       <div class="filters">
         <select id="attBelt" aria-label="Belt">${beltOptions(A.belt, 'All belts').replace(' (not in list)', '')}</select>
         <select id="attStatus" aria-label="Status"><option value="">Everyone</option>${['not_recorded', 'present', 'absent', 'excused'].map(s => `<option value="${s}"${s === A.status ? ' selected' : ''}>${label(s)}</option>`).join('')}</select>
+        <select id="attCard" aria-label="ID card" style="grid-column:1 / -1">${'<option value="">All ID card statuses</option><option value="notprinted">No ID card printed</option><option value="printed">ID card printed</option>'.replace(`value="${A.card}"`, `value="${A.card}" selected`)}</select>
       </div>
       ${editable && rows.length ? `<div class="row"><button class="btn grow" id="attSelect">${A.selecting ? 'Cancel selecting' : 'Select several'}</button><button class="btn grow" id="attAllPresent">Mark shown as present</button></div>` : ''}
     </div>
@@ -1322,6 +1326,7 @@ function renderAttendance() {
   if (keepFocus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
   $('#attBelt').onchange = e => { A.belt = e.target.value; renderAttList(); };
   $('#attStatus').onchange = e => { A.status = e.target.value; renderAttList(); };
+  $('#attCard').onchange = e => { A.card = e.target.value; renderAttList(); };
   const sel = $('#attSelect'); if (sel) sel.onclick = () => { A.selecting ? stopSelecting() : startSelecting(); renderAttendance(); };
   const allP = $('#attAllPresent'); if (allP) allP.onclick = () => {
     const ids = visibleAttRows().filter(r => r.a.status !== 'present').map(r => r.s.student_id);
@@ -2426,12 +2431,13 @@ const REPORTS = {
         return ({ id: s.student_id, name: s.full_name, belt: s.belt_rank || '', dan: (danFor(s) || {}).dan_number ?? '', card: k2 ? k2.text : 'No card linked',
           printed: c.printed_at ? fmt(c.printed_at) : '', times: c.times_printed ?? '', cardname: c.name || '' })[k] ?? ''; },
       filters: [{ key: 'cycle', label: 'Students going for a Dan', options: [['', 'All active'], ...cycleOptions()] },
-        { key: 'card', label: 'Card', options: [['', 'Any'], ['printed', 'Printed'], ['queue', 'In print queue'], ['reprint', 'Reprint needed'], ['notyet', 'Not printed yet'], ['none', 'No card linked']] }, beltFilter],
+        { key: 'card', label: 'Card', options: [['', 'Any'], ['notprinted', 'No ID card printed'], ['printed', 'Printed'], ['queue', 'In print queue'], ['reprint', 'Reprint needed'], ['notyet', 'Not printed yet'], ['none', 'No card linked']] }, beltFilter],
       rows: F => (F.cycle ? inCycle(F.cycle, F) : state.students.filter(s => s.is_active && !s.is_test && (!F.belt || s.belt_rank === F.belt)).sort((a, b) => a.full_name.localeCompare(b.full_name)))
         .filter(s => getsCard(s.student_id))
         .filter(s => { if (!F.card) return true; const t = (cardState(s.student_id) || {}).text || '';
-          return ({ printed: t === 'ID card printed', queue: t === 'Card in print queue', reprint: t === 'Card reprint needed', notyet: t === 'Card not printed yet', none: !t })[F.card]; }),
-      presets: { all: { name: 'ID cards', audience: 'instructor', columns: ['name', 'belt', 'dan', 'card', 'printed'], filters: {} } }, defaultPreset: 'all'
+          return ({ notprinted: t !== 'ID card printed', printed: t === 'ID card printed', queue: t === 'Card in print queue', reprint: t === 'Card reprint needed', notyet: t === 'Card not printed yet', none: !t })[F.card]; }),
+      presets: { all: { name: 'ID cards', audience: 'instructor', columns: ['name', 'belt', 'dan', 'card', 'printed'], filters: {} },
+        notprinted: { name: 'No ID card printed', audience: 'instructor', columns: ['name', 'belt', 'dan', 'card'], filters: { card: 'notprinted' } } }, defaultPreset: 'all'
     })
   },
   grading: { title: 'Grading list', desc: 'Who is grading, to which belt, with attendance and readiness', open: () => openGradingList((currentCycle() || state.cycles[0]).cycle_id) },
