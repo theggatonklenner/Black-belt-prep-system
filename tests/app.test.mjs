@@ -580,6 +580,8 @@ try {
 
   console.log('\nID cards printed in the card software');
   {
+    // Riley and Jordan are going for 1st Dan (Probationary Black Belt); Cho Dan Bo students get no ID card
+    await q(`update prep_students set belt_rank = 'Probationary Black Belt' where student_id in ('M-0042', 'BB0002')`);
     // In AMA ID Cards: Riley's card is added (name written differently) and printed
     await q(`insert into people (name, dan, photo_path) values ('RILEY  chen', '1st Dan', 'photos/r.jpg')`);
     await q(`insert into people (name, dan) values ('J. Lee', '1st Dan'), ('Taylor Brown', '3rd Dan')`);
@@ -597,6 +599,10 @@ try {
     await shot(page, 'attendance-card-printed');
     await tab(page, 'students');
     ok((await page.textContent('#studentList li:has-text("Riley Chen")')).includes('Card'), 'student list marks students whose card is printed');
+    await page.click('#studentList .item:has-text("Alex Smith")'); await page.waitForSelector('#sheet #stEdit');
+    const alexRec = await page.textContent('#sheet');
+    ok(alexRec.includes('Dan number') && !alexRec.includes('ID card'), 'Cho Dan Bo student (going for Probationary) has a Dan number but no ID card');
+    await page.click('#sheet [data-close]');
     await page.click('#studentList .item:has-text("Taylor Brown")'); await page.waitForSelector('#sheet #stEdit');
     ok(!(await page.textContent('#sheet')).includes('ID card') && !(await page.$('#sheet [data-cardlink]')), 'no ID card shown for a student not going for a Dan (3rd Dan Level 2), even with a matching card');
     await page.click('#sheet [data-close]');
@@ -633,7 +639,7 @@ try {
     await page.click('#sheet [data-close]');
     await page.click('[data-report="cards"]'); await page.waitForSelector('#lbPreview');
     const cardsRep = await page.textContent('#lbPreview');
-    ok(cardsRep.includes('Riley Chen') && !cardsRep.includes('Taylor Brown') && !cardsRep.includes('Brand New'), 'ID cards report lists only students going for a Dan');
+    ok(cardsRep.includes('Riley Chen') && !cardsRep.includes('Taylor Brown') && !cardsRep.includes('Brand New') && !cardsRep.includes('Alex Smith'), 'ID cards report lists only students going for 1st Dan or higher (not Cho Dan Bo)');
     await page.click('#sheet [data-close]');
     await page.click('[data-report="followup"]'); await page.waitForSelector('#lbPreview');
     ok((await page.textContent('#lbPreview tr')).includes('Issues'), 'follow-up list opens');

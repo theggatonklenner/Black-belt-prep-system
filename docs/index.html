@@ -450,8 +450,9 @@ const readinessFor = (cid, sid) => state.readiness.find(r => r.cycle_id === cid 
 const canReadiness = () => has('instructor');
 const backToMore = () => '<button class="btn ghost sm" data-back style="align-self:flex-start;padding-left:0">‹ More</button>';
 const wireBack = () => $$('[data-back]').forEach(b => b.onclick = () => showView('more'));
-// ID cards are only for students going for a Dan (see DAN_TARGET)
-const getsCard = sid => !!danTarget(student(sid));
+// ID cards are only for students going for a Dan: Probationary Black Belt to 1st Dan, and the last level before
+// 2nd to 5th Dan. Cho Dan Bo students (going for Probationary) get a Dan number but no ID card.
+const getsCard = sid => { const t = danTarget(student(sid)); return !!t && t !== 'Probationary Black Belt'; };
 const cardFor = sid => getsCard(sid) ? state.cards.find(c => c.student_id === sid) || null : null;
 function cardState(sid) {
   const c = cardFor(sid);
@@ -2416,7 +2417,7 @@ const REPORTS = {
     })
   },
   cards: {
-    title: 'ID cards', desc: 'Students going for a Dan: card printed, in queue, reprint needed or not linked',
+    title: 'ID cards', desc: 'Students going for 1st Dan or higher: card printed, in queue, reprint needed or not linked',
     open: () => openListBuilder({
       type: 'report_cards', heading: 'ID cards', fileStem: 'id-cards', title: () => 'ID cards',
       columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' }, { k: 'dan', t: 'Dan number' }, { k: 'card', t: 'Card status' },

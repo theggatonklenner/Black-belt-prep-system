@@ -4,7 +4,7 @@ Run `supabase/prep-update-06.sql` once in Supabase > SQL Editor (after update 05
 
 ## Who gets an ID card
 
-Only students going for a Dan: those on Cho Dan Bo, Probationary Black Belt, 1st Dan Level 1, 2nd Dan Level 2, 3rd Dan Level 3 or 4th Dan Level 4. Card status, the Link card button and the ID cards report only appear for them. Other students show no card information, even if a card with their name exists in the card software.
+Only students going for 1st Dan or higher: those on Probationary Black Belt, 1st Dan Level 1, 2nd Dan Level 2, 3rd Dan Level 3 or 4th Dan Level 4. Cho Dan Bo students (going for Probationary Black Belt) get a Dan number but no ID card. Card status, the Link card button and the ID cards report only appear for them. Other students show no card information, even if a card with their name exists in the card software.
 
 ## How cards are linked
 
