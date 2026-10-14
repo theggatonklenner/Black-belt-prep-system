@@ -486,6 +486,15 @@ function fmt(iso, opts = { day: 'numeric', month: 'short', year: 'numeric' }) {
   return isNaN(d) ? '—' : d.toLocaleDateString('en-AU', opts);
 }
 const fmtShort = iso => fmt(iso, { day: 'numeric', month: 'short' });
+const ordinalDay = d => d + (d % 100 >= 11 && d % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][d % 10] || 'th');
+const DATE_FORMATS = {
+  short: ['14 Nov 2026', iso => fmt(iso)],
+  long: ['14 November 2026', iso => fmt(iso, { day: 'numeric', month: 'long', year: 'numeric' })],
+  ordinal: ['14th November 2026', iso => { const d = new Date(iso + 'T00:00:00'); return `${ordinalDay(d.getDate())} ${d.toLocaleDateString('en-AU', { month: 'long' })} ${d.getFullYear()}`; }],
+  numeric: ['14/11/2026', iso => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; }],
+  iso: ['2026-11-14', iso => iso]
+};
+const fmtDateAs = (iso, f) => iso ? (DATE_FORMATS[f] || DATE_FORMATS.short)[1](String(iso).slice(0, 10)) : '';
 const fmtTime = iso => iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '—';
 const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
 // Dates as people type them in Australia: 31/01/2010, 31-1-10, 2010-01-31, 31 Jan 2010
@@ -2020,11 +2029,19 @@ function openListBuilder(cfg) {
   const blankFilters = () => Object.fromEntries(cfg.filters.map(f => [f.key, f.options[0][0]]));
   const presetsAllowed = Object.entries(cfg.presets).filter(([, p]) => p.audience !== 'admin' || has('payments'));
   let L;
-  const load = (t, id = null) => { L = { name: t.name || '', columns: expand(t.columns), filters: { ...blankFilters(), ...(t.filters || {}) }, templateId: id }; };
+  const load = (t, id = null) => {
+    const { headings, dateFmt, plain, ...f } = t.filters || {};
+    L = { name: t.name || '', columns: expand(t.columns), filters: { ...blankFilters(), ...f }, templateId: id,
+          headings: { ...(t.headings || headings || {}) }, dateFmt: t.dateFmt || dateFmt || 'short', plain: !!(t.plain ?? plain) };
+  };
+  const head = col => (L.headings[col.k] || '').trim() || col.t;
+  const cellVal = (col, r) => { const v = cfg.value(col.k, r); return col.date ? fmtDateAs(v, L.dateFmt) : v; };
   load(cfg.presets[cfg.defaultPreset]); L.name = '';
   const saved = () => state.templates.filter(t => t.report_type === cfg.type);
   function draw() {
-    const cols = L.columns.map(k => all.find(x => x.k === k)).filter(Boolean), rows = cfg.rows(L.filters);
+    const cols = L.columns.map(k => all.find(x => x.k === k)).filter(Boolean), rows = cfg.rows(L.filters), hasDate = cols.some(x => x.date);
+    const preview = () => `<table class="grid"><tr>${cols.map(x => `<th>${esc(head(x))}</th>`).join('')}</tr>
+        ${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cellVal(x, r))}</td>`).join('')}</tr>`).join('')}</table>`;
     openSheet(`<div class="body">
       ${sheetHead(cfg.heading, esc(cfg.subtitle || ''))}
       <div class="field"><label for="lbTpl">Template</label><select id="lbTpl"><option value="">Choose…</option>
@@ -2036,36 +2053,45 @@ function openListBuilder(cfg) {
           return `<div class="check" style="justify-content:space-between"><label class="check" style="min-height:0;flex:1"><input type="checkbox" data-col="${col.k}" ${on ? 'checked' : ''}> ${esc(col.t)}${col.money ? ' <span class="tag warn">$</span>' : ''}</label>
             ${on ? `<span><button class="btn sm ghost" data-up="${col.k}" ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(col.t)} up">↑</button><button class="btn sm ghost" data-down="${col.k}" ${i === L.columns.length - 1 ? 'disabled' : ''} aria-label="Move ${esc(col.t)} down">↓</button></span>` : ''}</div>`; }).join('')}</div>
       </details>
+      <details id="lbFmt"><summary><b>Headings and format</b> <span class="muted small">rename columns${hasDate ? ', date format' : ''}</span></summary>
+        <div style="padding-top:8px">${cols.map(col => `<div class="field"><label for="lbH_${col.k}">${esc(col.t)}</label><input type="text" id="lbH_${col.k}" data-head="${col.k}" placeholder="${esc(col.t)}" value="${esc(L.headings[col.k] || '')}"></div>`).join('')}
+        ${hasDate ? `<div class="field"><label for="lbDate">Date format</label><select id="lbDate">${Object.entries(DATE_FORMATS).map(([k, [t]]) => `<option value="${k}"${L.dateFmt === k ? ' selected' : ''}>${t}</option>`).join('')}</select></div>` : ''}
+        <label class="check"><input type="checkbox" id="lbPlain" ${L.plain ? 'checked' : ''}> Excel and CSV start with the column headings (no title rows), ready for a printing company or mail merge</label></div>
+      </details>
       <p class="hint"><b>${rows.length}</b> row${rows.length === 1 ? '' : 's'}. ${cols.some(x => x.money) ? 'This list includes fees, so share it only with admins.' : ''}</p>
-      <div class="preview" id="lbPreview"><table class="grid"><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>
-        ${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cfg.value(x.k, r))}</td>`).join('')}</tr>`).join('')}</table></div>
+      <div class="preview" id="lbPreview">${preview()}</div>
       <div class="row"><button class="btn primary" id="lbXlsx">Excel</button><button class="btn" id="lbCsv">CSV</button><button class="btn" id="lbPrint">Print / PDF</button></div>
       <div class="row"><input type="text" id="lbName" placeholder="Template name" value="${esc(L.name)}" style="flex:1 1 160px;width:auto"><button class="btn" id="lbSave">Save template</button>${L.templateId ? '<button class="btn danger" id="lbDel">Delete</button>' : ''}</div>
       <div class="dlg-actions"><button class="btn primary" data-close>Done</button></div>
     </div>`);
     $('#lbTpl').onchange = e => { const v = e.target.value; if (v.startsWith('preset:')) { load(cfg.presets[v.slice(7)]); L.name = ''; } else { const t = saved().find(x => x.template_id === v); if (t) load(t, t.template_id); } draw(); };
     sheet.querySelectorAll('[data-filter]').forEach(sel => sel.onchange = () => { L.filters[sel.dataset.filter] = sel.value; draw(); });
-    const redraw = () => { const d = sheet.querySelector('details'), open = d && d.open; draw(); if (open) sheet.querySelector('details').open = true; };
+    const redraw = () => { const open = [...sheet.querySelectorAll('details')].map(d => d.open); draw(); sheet.querySelectorAll('details').forEach((d, i) => { if (open[i]) d.open = true; }); };
+    sheet.querySelectorAll('[data-head]').forEach(inp => inp.oninput = () => { L.headings[inp.dataset.head] = inp.value.trim(); $('#lbPreview').innerHTML = preview(); });
+    const dfs = $('#lbDate'); if (dfs) dfs.onchange = () => { L.dateFmt = dfs.value; redraw(); };
+    $('#lbPlain').onchange = e => { L.plain = e.target.checked; redraw(); };
     sheet.querySelectorAll('[data-col]').forEach(cb => cb.onchange = () => { const k = cb.dataset.col; L.columns = cb.checked ? [...L.columns, k] : L.columns.filter(x => x !== k); redraw(); });
     sheet.querySelectorAll('[data-up],[data-down]').forEach(b => b.onclick = () => { const k = b.dataset.up || b.dataset.down, i = L.columns.indexOf(k), j = b.dataset.up ? i - 1 : i + 1;
       [L.columns[i], L.columns[j]] = [L.columns[j], L.columns[i]]; redraw(); });
     const cell = v => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
     $('#lbCsv').onclick = () => {
-      const lines = [[cfg.title()], [`Generated ${fmt(today())}`], [], cols.map(x => x.t), ...rows.map(r => cols.map(x => cfg.value(x.k, r)))];
+      const lines = [...(L.plain ? [] : [[cfg.title()], [`Generated ${fmt(today())}`], []]), cols.map(head), ...rows.map(r => cols.map(x => cellVal(x, r)))];
       const blob = new Blob(['﻿' + lines.map(l => l.map(cell).join(',')).join('\r\n') + '\r\n'], { type: 'text/csv' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${cfg.fileStem}-${today()}.csv`; a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000); toast('CSV downloaded. It opens in Excel or Google Sheets.');
     };
-    $('#lbXlsx').onclick = () => downloadExcel(cfg.fileStem, [{ name: cfg.heading, title: cfg.title(), head: cols.map(x => x.t), rows: rows.map(r => cols.map(x => cfg.value(x.k, r))) }]);
+    $('#lbXlsx').onclick = () => downloadExcel(cfg.fileStem, [{ name: cfg.heading, title: L.plain ? null : cfg.title(), head: cols.map(head), rows: rows.map(r => cols.map(x => cellVal(x, r))) }]);
     $('#lbPrint').onclick = () => {
       const w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print.');
       w.document.write(`<!doctype html><title>${esc(cfg.title())}</title><style>body{font:13px Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{color:#555;margin:0 0 12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:5px 6px;text-align:left}th{background:#eee}</style>
-        <h1>${esc(cfg.title())}</h1><p>Generated ${fmt(today())} · ${rows.length} rows</p><table><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cfg.value(x.k, r))}</td>`).join('')}</tr>`).join('')}</table>`);
+        <h1>${esc(cfg.title())}</h1><p>Generated ${fmt(today())} · ${rows.length} rows</p><table><tr>${cols.map(x => `<th>${esc(head(x))}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cellVal(x, r))}</td>`).join('')}</tr>`).join('')}</table>`);
       w.document.close(); w.focus(); w.print();
     };
     $('#lbSave').onclick = async () => {
       const name = $('#lbName').value.trim(); if (!name) return toast('Give the template a name.');
-      const rec = { name, report_type: cfg.type, audience: cols.some(x => x.money) ? 'admin' : 'instructor', columns: L.columns, filters: L.filters };
+      const hd = Object.fromEntries(Object.entries(L.headings).filter(([k, v]) => v && L.columns.includes(k)));
+      const rec = { name, report_type: cfg.type, audience: cols.some(x => x.money) ? 'admin' : 'instructor', columns: L.columns,
+        filters: { ...L.filters, ...(Object.keys(hd).length ? { headings: hd } : {}), ...(L.dateFmt !== 'short' ? { dateFmt: L.dateFmt } : {}), ...(L.plain ? { plain: true } : {}) } };
       const same = saved().find(t => t.name.toLowerCase() === name.toLowerCase());
       try {
         if (same) await run(sb.from('prep_report_templates').update(rec).eq('template_id', same.template_id));
@@ -2241,11 +2267,11 @@ function openCertificateList(cid) {
   state.ce.cycle = cid; state.gr.cycle = cid;
   const COLS = [{ k: 'student_id', t: 'Student ID' }, { k: 'cert_name', t: 'Certificate name' }, { k: 'full_name', t: 'Full name' }, { k: 'type', t: 'Certificate type' },
     { k: 'rank', t: 'Awarded rank' }, { k: 'number', t: 'Certificate number' }, { k: 'dan', t: 'Dan number' }, { k: 'from', t: 'Previous belt' },
-    { k: 'grading_date', t: 'Grading date' }, { k: 'result', t: 'Grading result' }, { k: 'issue_date', t: 'Issue date' }, { k: 'status', t: 'Certificate status' }, { k: 'notes', t: 'Notes' }];
+    { k: 'grading_date', t: 'Grading date', date: true }, { k: 'result', t: 'Grading result' }, { k: 'issue_date', t: 'Issue date', date: true }, { k: 'status', t: 'Certificate status' }, { k: 'notes', t: 'Notes' }];
   const val = (k, x) => { const d = x.cert || certDefaults(x); return ({
     student_id: x.s.student_id, cert_name: d.certificate_name, full_name: x.s.full_name, type: d.certificate_type, rank: d.awarded_rank || '', number: d.certificate_number || '',
-    dan: (danFor(x.s) || {}).dan_number ?? '', from: x.s.belt_rank || '', grading_date: c.grading_date ? fmt(c.grading_date) : '', result: x.result ? label(x.result) : '',
-    issue_date: x.cert && x.cert.issue_date ? fmt(x.cert.issue_date) : '', status: label(x.cst), notes: x.cert && x.cert.notes || '' })[k] ?? ''; };
+    dan: (danFor(x.s) || {}).dan_number ?? '', from: x.s.belt_rank || '', grading_date: c.grading_date || '', result: x.result ? label(x.result) : '',
+    issue_date: x.cert && x.cert.issue_date || '', status: label(x.cst), notes: x.cert && x.cert.notes || '' })[k] ?? ''; };
   const base = ['cert_name', 'rank', 'number', 'grading_date', 'status'];
   openListBuilder({
     type: 'certificate', heading: 'Certificate list', subtitle: c.name, fileStem: `certificate-list-${c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`,
@@ -2258,6 +2284,8 @@ function openCertificateList(cid) {
     rows: F => ceRows().filter(x => !F.status || x.cst === F.status).filter(x => !F.result || (F.result === 'none' ? !x.result : x.result === F.result))
       .filter(x => !F.rank || (x.cert ? x.cert.awarded_rank : x.target) === F.rank),
     presets: {
+      printer: { name: 'For the printing company', audience: 'instructor', columns: ['cert_name', 'rank', 'grading_date', 'dan'], filters: { status: '', result: 'passed' },
+        headings: { cert_name: 'Name', rank: 'Belt', grading_date: 'Date', dan: 'Dan number' }, dateFmt: 'long', plain: true },
       awaiting: { name: 'Awaiting approval', audience: 'instructor', columns: [...base, 'student_id'], filters: { status: 'awaiting_approval', result: 'passed' } },
       production: { name: 'Ready for production', audience: 'instructor', columns: base, filters: { status: 'ready_for_production', result: 'passed' } },
       printed: { name: 'Printed', audience: 'instructor', columns: base, filters: { status: 'printed', result: 'passed' } },
@@ -2265,7 +2293,7 @@ function openCertificateList(cid) {
       reprints: { name: 'Reprints', audience: 'instructor', columns: [...base, 'notes'], filters: { status: 'reprint_required', result: 'passed' } },
       all: { name: 'All passed', audience: 'instructor', columns: [...base, 'type', 'dan'], filters: { status: '', result: 'passed' } }
     },
-    defaultPreset: 'all'
+    defaultPreset: 'printer'
   });
 }
 

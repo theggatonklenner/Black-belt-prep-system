@@ -27,4 +27,15 @@ From the Certificates screen, **Certificate list**. It has its own templates, se
 - Columns: Student ID, certificate name, full name, certificate type, awarded rank, certificate number, Dan number, previous belt, grading date, grading result, issue date, certificate status, notes. Tick to add or remove, ↑ ↓ to reorder.
 - Preview, **Download CSV**, **Print**, **Save template**.
 
+## For the printing company
+
+The certificate list opens on **For the printing company**: Name, Belt (the belt they graded for), Date (the grading date, written out) and Dan number, for everyone with a pass. Excel and CSV start straight with the column headings, so the file can go to the printer as it is.
+
+Under **Headings and format** you can:
+- Rename any column heading (e.g. "Belt" to "Belt applying for").
+- Choose the date format: 14 Nov 2026, 14 November 2026, 14th November 2026, 14/11/2026 or 2026-11-14.
+- Turn the title rows at the top of Excel and CSV files on or off.
+
+Use **Columns** to add or reorder fields (e.g. certificate number or certificate type), then **Save template** to keep the layout. Headings and format are saved with the template. These options work on every list and report.
+
 The grading list and certificate list now share the same list builder, so they work the same way.
