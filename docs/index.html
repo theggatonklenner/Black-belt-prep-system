@@ -402,7 +402,7 @@ const LABEL = {
   planned: 'Planned', active: 'Active', completed: 'Completed', archived: 'Archived',
   not_assessed: 'Not yet assessed', on_track: 'On track', needs_preparation: 'Needs more preparation',
   not_ready: 'Not ready for grading', ready: 'Ready for grading', awaiting_review: 'Awaiting instructor review',
-  not_invoiced: 'Not yet invoiced', due: 'Payment due', partially_paid: 'Partially paid', paid: 'Paid',
+  not_invoiced: 'Nothing owed yet', due: 'Payment due', partially_paid: 'Partially paid', paid: 'Paid',
   overdue: 'Payment overdue', waived: 'Waived', refund_pending: 'Refund pending', refunded: 'Refunded',
   awaiting_result: 'Awaiting grading result', awaiting_approval: 'Awaiting approval', details_check: 'Details to be checked',
   approved: 'Approved for issue', ready_for_production: 'Ready for production', printed: 'Printed', issued: 'Issued',
@@ -422,23 +422,27 @@ const ROLE_NAMES = { admin: 'Admin', instructor: 'Instructor', attendance: 'Atte
 const BELTS = ['Cho Dan Bo', 'Probationary Black Belt', '1st Dan Black Belt', '1st Dan Level 1',
   '2nd Dan', '2nd Dan Level 1', '2nd Dan Level 2',
   '3rd Dan', '3rd Dan Level 1', '3rd Dan Level 2', '3rd Dan Level 3',
-  '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4', '5th Dan'];
+  '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4',
+  '5th Dan', '5th Dan Level 1', '5th Dan Level 2', '5th Dan Level 3', '5th Dan Level 4', '5th Dan Level 5',
+  '6th Dan', '7th Dan', '8th Dan', '9th Dan'];
 // Matches how people type them: "3rd dan lvl 2", "1st Dan", "probationary"
-const ORDINAL = { first: '1st', second: '2nd', third: '3rd', fourth: '4th', fifth: '5th', one: '1st', two: '2nd', three: '3rd', four: '4th', five: '5th',
-  '1': '1st', '2': '2nd', '3': '3rd', '4': '4th', '5': '5th' };
+const ORDINAL = { first: '1st', second: '2nd', third: '3rd', fourth: '4th', fifth: '5th', sixth: '6th', seventh: '7th', eighth: '8th', ninth: '9th',
+  one: '1st', two: '2nd', three: '3rd', four: '4th', five: '5th', six: '6th', seven: '7th', eight: '8th', nine: '9th',
+  '1': '1st', '2': '2nd', '3': '3rd', '4': '4th', '5': '5th', '6': '6th', '7': '7th', '8': '8th', '9': '9th' };
 // Matches how people write belts: "3rd dan lvl 2", "Third Dan Level 1", "First Dan", "1 dan", "1st Dan Black Belt", "probationary"
 const beltKey = b => String(b || '').toLowerCase().replace(/\blvl\b|\blv\b/g, 'level').replace(/black\s*belt/g, '')
-  .replace(/\b(first|second|third|fourth|fifth|one|two|three|four|five|[1-5])(?:st|nd|rd|th)?\s*dan\b/g, (m, n) => ORDINAL[n] + ' dan')
+  .replace(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|one|two|three|four|five|six|seven|eight|nine|[1-9])(?:st|nd|rd|th)?\s*dan\b/g, (m, n) => ORDINAL[n] + ' dan')
   .replace(/[^a-z0-9]/g, '');
 // Students on these belts are going for Probationary Black Belt or a Dan, and get a Dan number
 const DAN_TARGET = { 'Cho Dan Bo': 'Probationary Black Belt', 'Probationary Black Belt': '1st Dan Black Belt', '1st Dan Level 1': '2nd Dan',
-  '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan' };
+  '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan', '5th Dan Level 5': '6th Dan',
+  '6th Dan': '7th Dan', '7th Dan': '8th Dan', '8th Dan': '9th Dan' };
 const danTarget = s => s && DAN_TARGET[s.belt_rank] || null;
 const danFor = s => { const t = danTarget(s); return t ? state.danNumbers.find(d => d.student_id === s.student_id && d.target_rank === t) || null : null; };
 const feeReady = () => 'default_upfront_fee' in state.settings;
 const money = n => '$' + Number(n || 0).toFixed(2).replace(/\.00$/, '');
 const PLAN = { upfront: 'Upfront', per_session: 'Per session' };
-const DAN_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan'];
+const DAN_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan', '6th Dan', '7th Dan', '8th Dan', '9th Dan'];
 const nextDan = rank => (state.danCounters.find(c => c.target_rank === rank) || {}).next_number ?? null;
 const feeInfo = (cid, sid) => state.sessionFees.find(f => f.cycle_id === cid && f.student_id === sid) || null;
 const paidAt = (cid, sid, sessionId) => { const f = feeInfo(cid, sid); return !!f && (!!f.prepaid || (f.paid_sessions || []).includes(sessionId)); };
@@ -1100,7 +1104,6 @@ function openNewCycle() {
         <div class="field"><label for="ncFee">${feeReady() ? 'Upfront fee ($)' : 'Session fee ($)'}</label><input type="number" id="ncFee" min="0" step="0.01" required value="${fee.toFixed(2)}"></div>
         ${feeReady() ? `<div class="field"><label for="ncPer">Per-session fee ($)</label><input type="number" id="ncPer" min="0" step="0.01" required value="${perFee.toFixed(2)}"></div>` : ''}
       </div>
-      <div class="field"><label for="ncDue">Payment due</label><input type="date" id="ncDue"></div>
       ${feeReady() ? `<p class="hint">Students pay upfront or per session. Per-session students are charged for each session they're marked present at. Everyone starts on ${PLAN[S.default_payment_plan || 'upfront'].toLowerCase()}; change it on the student's record.</p>` : ''}</div>
     <div class="section"><h3>Students</h3>
       <label class="check"><input type="radio" name="ncWho" value="all" checked> All active students (${pool.length})</label>
@@ -1118,10 +1121,9 @@ function openNewCycle() {
     if (!start.value) return;
     [2, 3, 4].forEach(i => { if (!$('#ncS' + i).dataset.touched) $('#ncS' + i).value = addDays(start.value, (i - 1) * 14); });
     const g = $('#ncGrade'); if (g && !g.dataset.touched) g.value = addDays(start.value, 4 * 14);
-    if (!$('#ncDue').dataset.touched) $('#ncDue').value = addDays(start.value, 7);
   });
   $('#ncS4').addEventListener('change', () => { const g = $('#ncGrade'); if (g && !g.dataset.touched && $('#ncS4').value) g.value = addDays($('#ncS4').value, 14); });
-  ['#ncS2', '#ncS3', '#ncS4', '#ncDue', '#ncGrade'].forEach(s => { const el = $(s); if (el) el.addEventListener('input', e => e.target.dataset.touched = '1'); });
+  ['#ncS2', '#ncS3', '#ncS4', '#ncGrade'].forEach(s => { const el = $(s); if (el) el.addEventListener('input', e => e.target.dataset.touched = '1'); });
   sheet.querySelectorAll('[name=ncWho]').forEach(r => r.onchange = () => $('#ncPick').hidden = r.value !== 'pick' || !r.checked);
   $('#ncSearch').oninput = e => { const q = e.target.value.toLowerCase(); $$('#ncList .check').forEach(l => l.hidden = !l.textContent.toLowerCase().includes(q)); };
   const act = $('#ncActivate'), hint = $('#ncActHint'); if (hint) act.onchange = () => hint.hidden = !act.checked;
@@ -1144,7 +1146,7 @@ function openNewCycle() {
     $('#ncGo').disabled = true;
     try {
       const id = await run(sb.rpc('prep_start_new_cycle', { p_name: name, p_start: dates[0], p_end: dates[3], p_session_dates: dates,
-        p_fee: feeV, p_payment_due: $('#ncDue').value || null, p_student_ids: pick ? ids : null, p_notes: null }));
+        p_fee: feeV, p_payment_due: null, p_student_ids: pick ? ids : null, p_notes: null }));
       if (grading || $('#ncPer')) await run(sb.from('prep_cycles').update({ ...(grading ? { grading_date: grading } : {}), ...($('#ncPer') ? { per_session_fee: Number($('#ncPer').value || 0) } : {}) }).eq('cycle_id', id));
       if (activate) await run(sb.rpc('prep_activate_cycle', { p_cycle: id, p_complete_current: true }));
       sheet.close(); toast(`${name} started`); await loadAll(); state.att.cycle = id; render();
@@ -1169,9 +1171,6 @@ function openCycle(id) {
     <div class="grid2">
       <div class="field"><label for="cyFee">${feeReady() ? 'Upfront fee ($)' : 'Session fee ($)'}</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(feeReady() ? c.upfront_fee : c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
       ${feeReady() ? `<div class="field"><label for="cyPer">Per-session fee ($)</label><input type="number" id="cyPer" min="0" step="0.01" value="${Number(c.per_session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>` : ''}
-    </div>
-    <div class="grid2">
-      <div class="field"><label for="cyDue">Payment due</label><input type="date" id="cyDue" value="${esc(c.payment_due_date || '')}" ${admin ? '' : 'disabled'}></div>
     </div>
     <div class="field"><label for="cyNotes">Notes</label><textarea id="cyNotes" rows="2" ${admin ? '' : 'disabled'}>${esc(c.notes || '')}</textarea></div>
     ${admin ? `<p class="hint">Changing a fee updates everyone in this cycle, except one-off fees.</p>
@@ -1214,7 +1213,7 @@ function openCycle(id) {
       if (grading && dates.length && grading < dates[dates.length - 1]) return toast('The grading date is before the sign-off.', 5000);
       await run(sb.from('prep_cycles').update({ name: $('#cyName').value.trim(), start_date: dates[0] || null, end_date: dates[dates.length - 1] || null,
         ...(state.danReady ? { grading_date: grading || null } : {}),
-        ...(feeReady() ? { upfront_fee: Number($('#cyFee').value || 0), per_session_fee: Number($('#cyPer').value || 0) } : { session_fee: Number($('#cyFee').value || 0) }), payment_due_date: $('#cyDue').value || null, notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
+        ...(feeReady() ? { upfront_fee: Number($('#cyFee').value || 0), per_session_fee: Number($('#cyPer').value || 0) } : { session_fee: Number($('#cyFee').value || 0) }), notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
       for (const inp of $$('#cyForm [data-sid]')) {
         const s = sess.find(x => x.session_id === inp.dataset.sid);
         if ((s.session_date || '') !== inp.value) await run(sb.from('prep_sessions').update({ session_date: inp.value || null }).eq('session_id', s.session_id));
@@ -2503,7 +2502,6 @@ async function renderMore() {
     ${admin ? `<form class="card" id="setForm"><h3>Settings</h3>
       <div class="grid2">
         <div class="field"><label for="setReq">Sessions required for grading</label><input type="number" id="setReq" min="0" max="20" value="${S.sessions_required ?? 4}"></div>
-        ${feeReady() ? '' : `<div class="field"><label for="setFee">Default session fee ($)</label><input type="number" id="setFee" min="0" step="0.01" value="${Number(S.default_session_fee || 0).toFixed(2)}"></div>`}
       </div>
       ${feeReady() ? `<div class="grid2">
         <div class="field"><label for="setUp">Upfront fee ($)</label><input type="number" id="setUp" min="0" step="0.01" value="${Number(S.default_upfront_fee).toFixed(2)}"></div>
@@ -2520,7 +2518,6 @@ async function renderMore() {
       <p class="hint">Each rank has its own numbers. Students going for that rank get the next number when they join a cycle, then it goes up by one per person. Numbers are never reused, and someone repeating the same grading keeps theirs. Leave blank to stop numbering for that rank.</p>`
         : '<p class="hint">To use Dan numbers, run supabase/prep-update-02.sql in Supabase &gt; SQL Editor, then reload.</p>'}</div>
       <label class="check"><input type="checkbox" id="setExc" ${S.excused_counts_as_attended ? 'checked' : ''}> Excused sessions count towards the requirement</label>
-      <label class="check"><input type="checkbox" id="setInv" ${S.invoice_on_enrol ? 'checked' : ''}> Fees are due as soon as a student joins a cycle</label>
       <label class="check"><input type="checkbox" id="setMulti" ${S.allow_multiple_active ? 'checked' : ''}> Allow more than one active cycle</label>
       <p class="hint">Students must also be present at the sign-off (the last session of a cycle). The attendance requirement only informs the grading decision. It never marks anyone ready or eligible.</p>
       <div class="row"><button class="btn primary" type="submit">Save settings</button></div></form>
@@ -2537,8 +2534,8 @@ async function renderMore() {
     try {
       await run(sb.from('prep_settings').update({ sessions_required: +$('#setReq').value,
         ...(feeReady() ? { default_upfront_fee: Number($('#setUp').value || 0), default_per_session_fee: Number($('#setPer').value || 0), default_payment_plan: $('#setPlan').value }
-          : { default_session_fee: Number($('#setFee').value || 0) }),
-        excused_counts_as_attended: $('#setExc').checked, invoice_on_enrol: $('#setInv').checked, allow_multiple_active: $('#setMulti').checked }).eq('id', 1));
+          : {}),
+        excused_counts_as_attended: $('#setExc').checked, allow_multiple_active: $('#setMulti').checked }).eq('id', 1));
       for (const inp of $$('#setForm [data-rank]')) {
         const rank = inp.dataset.rank, cur = nextDan(rank), want = inp.value ? +inp.value : null;
         if (want === cur) continue;

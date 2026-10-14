@@ -25,7 +25,7 @@ It must run after the card software's `setup.sql`, `roles.sql` and `printed.sql`
 | Spec tab | Table | Notes |
 |---|---|---|
 | Students | `prep_students` | Student ID like `BB0001`, permanent. `is_test` marks test records |
-| PreparationCycles | `prep_cycles` | Fee and payment due date per cycle |
+| PreparationCycles | `prep_cycles` | Per-session and upfront fees per cycle (no payment due date since update 07) |
 | Sessions | `prep_sessions` | Four per cycle by default |
 | (new) | `prep_enrolments` | Who is taking part in each cycle |
 | Attendance | `prep_attendance` | One row per student per session, starts as "not recorded" |
@@ -37,7 +37,7 @@ It must run after the card software's `setup.sql`, `roles.sql` and `printed.sql`
 | IDCards | `prep_id_cards` + card software `people` | Collection tracked here; card details stay in the card software |
 | IDCardPrintHistory | card software `print_jobs` + `prep_print_event_notes` | Read from the card software, not copied; reprint reasons added here |
 | ReportTemplates | `prep_report_templates` | Instructor or admin audience |
-| Settings | `prep_settings` | Sessions required, excused counting, multiple active cycles, default fee |
+| Settings | `prep_settings` | Sessions required, excused counting, multiple active cycles, per-session and upfront fee defaults |
 | AuditLog | `prep_audit_log` | Every change, who made it and when |
 
 ## Calculations

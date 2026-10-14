@@ -17,7 +17,7 @@ Run `supabase/prep-update-01.sql` once in Supabase > SQL Editor (after `prep-set
   Cho Dan Bo > Probationary Black Belt, Probationary Black Belt > 1st Dan Black Belt, 1st Dan Level 1 > 2nd Dan, 2nd Dan Level 2 > 3rd Dan, 3rd Dan Level 3 > 4th Dan, 4th Dan Level 4 > 5th Dan.
 - **Sign-off.** The last session of every cycle is the sign-off. A student only meets the attendance requirement if they are marked Present at it; excused does not count.
 - **Grading date** for each cycle.
-- **Fees: $200 upfront or $60 per session.** Both are set per cycle (defaults in Settings). Students start on upfront; anyone with the Payments role can switch a student on their record. Per-session students owe the fee for each session they are marked Present at, so the amount updates as attendance is recorded or corrected. A one-off fee needs a reason.
+- **Fees: $200 upfront or $60 per session.** Both are set per cycle (defaults in Settings). Students start on per session (since update 03); anyone with the Payments role can switch a student on their record. Per-session students owe the fee for each session they are marked Present at, so the amount updates as attendance is recorded or corrected. A one-off fee needs a reason.
 
 The app keeps working before the update is run; Dan numbers and grading dates appear once it is.
 
@@ -27,7 +27,7 @@ Run `supabase/prep-update-02.sql` once (after update 01). Dan numbers now run se
 
 ## Database update 03
 
-Run `supabase/prep-update-03.sql` once (after update 02). Per session ($60, paid at each session) becomes the normal fee option; $200 upfront is the exception, switched on the student's record. Whoever takes attendance can tap **$** next to a per-session student who is present to record that session's payment (cash), and tap again to undo it (kept as a correction). They see only paid or not paid, never balances.
+Run `supabase/prep-update-03.sql` once (after update 02). Per session ($60, paid at each session) becomes the normal fee option; $200 upfront is the exception, switched on the student's record. Whoever takes attendance can tap **$** next to a per-session student to record that session's payment (cash), and tap again to undo it (kept as a correction). They see only paid or not paid, never balances.
 
 ## Database update 04
 
@@ -42,6 +42,12 @@ Run `supabase/prep-update-04.sql` once (after update 03). Grading fees are separ
 Run `supabase/prep-update-05.sql` once (after update 04).
 - **Delete students** added by mistake, from the student record or several at once. Students with payments, grading records or certificates are skipped and listed with the reason (deactivate them instead). Their cycle places, attendance and Dan numbers go with them; the audit log keeps a record.
 - **Upfront payments at a session.** Tapping $ for an upfront student records the full upfront fee, and every session then shows as paid. Attendance is still recorded separately.
+
+## Database update 07
+
+Run `supabase/prep-update-07.sql` once (after update 06).
+- **Session fees have no due date.** They are paid at each session (or upfront), so they never show as overdue. Unpaid session fees show as "Payment due"; a student who owes nothing yet shows "Nothing owed yet". Only grading fees have a due date (3 weeks before grading). The cycle's payment due date and the old "fees due on joining" and "default fee" settings are gone.
+- **Belts up to 9th Dan.** 5th Dan Levels 1 to 5, then 6th, 7th, 8th and 9th Dan. 5th Dan Level 5 goes for 6th Dan, then 6th for 7th, 7th for 8th and 8th for 9th. Each of 6th to 9th Dan has its own Dan numbers (set the next number in Settings), an ID card and a grading fee.
 
 ## Giving people access
 
@@ -59,7 +65,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Search by name or Student ID; filter by belt rank and active or inactive; test records hidden unless asked for
 - Students need only a name and belt rank (no birth date, email or phone)
 - Add and edit; Student IDs are created automatically (BB0001, BB0002 ...) and never change
-- Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan. Imports match belts however they are written: "First Dan", "Third Dan Level 1", "3rd dan lvl 2", "1st Dan"
+- Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan, 5th Dan Levels 1 to 5, 6th Dan, 7th Dan, 8th Dan, 9th Dan. Imports match belts however they are written: "First Dan", "Third Dan Level 1", "3rd dan lvl 2", "1st Dan"
 - Warning before adding a name that already exists, and a banner listing possible duplicates
 - Deactivate and reactivate without losing history
 - **Select** several students (tap them, or Select all shown) to add them to a cycle, deactivate, reactivate or delete them
@@ -67,7 +73,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Student record: details, current cycle (attendance by session plus readiness, payment, grading, certificate and ID card status) and earlier cycles
 
 **Preparation cycles**
-- Start New Preparation Cycle: name, four session dates (session 1 sets the rest every two weeks; session 4 is the sign-off), grading date (two weeks after the sign-off), fee, payment due date, all active students or chosen students, a review step, and the option to make it active (the previous active cycle is marked Completed; its records are kept)
+- Start New Preparation Cycle: name, four session dates (session 1 sets the rest every two weeks; session 4 is the sign-off), grading date (two weeks after the sign-off), fees, all active students or chosen students, a review step, and the option to make it active (the previous active cycle is marked Completed; its records are kept)
 - A cycle name can't be used twice, so pressing the button again can't create duplicates
 - Edit session dates, grading date, fee and notes (cycles have no separate start or end date); add students mid-cycle; remove a student added by mistake (blocked once a payment is recorded)
 - Make active, mark completed, archive and restore
@@ -83,7 +89,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - Summary grid for the whole cycle with attended count, percentage and whether the requirement is met
 
 **More**
-- Settings: sessions required, whether excused counts, fees due on joining, default fee, allowing more than one active cycle
+- Settings: sessions required, whether excused counts, per-session and upfront fees, grading fees, next Dan numbers, allowing more than one active cycle
 - Users and roles
 - Recent changes from the audit log
 
@@ -91,7 +97,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 114 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 195 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

@@ -20,7 +20,7 @@ The phone tab bar has room for five tabs: **Dashboard, Students, Attendance, Rea
 ## Payments (More > Payments; admins and the payments role)
 
 - Choose a cycle and show all fees, session fees or grading fees.
-- Totals: outstanding, received, overdue.
+- Totals: outstanding, received, overdue (only grading fees can be overdue; session fees have no due date).
 - Filters: owing, overdue, part paid, paid, other (waived, refunds, nothing owed yet), all.
 - Tap a fee to see what's owed, paid, the balance, due date and every transaction, and to:
   - **Record payment** (amount, date, method, receipt or reference). A receipt number can't be used twice for the same fee.

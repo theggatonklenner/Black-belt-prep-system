@@ -34,9 +34,11 @@ var LABEL = {
 var REASONS = { technique: 'Technique requires improvement', fitness: 'Fitness or conditioning', attendance: 'Attendance concerns',
   more_practice: 'Additional practice required', instructor_recommendation: 'Instructor recommendation', other: 'Other' };
 var BELTS = ['Cho Dan Bo', 'Probationary Black Belt', '1st Dan Black Belt', '1st Dan Level 1', '2nd Dan', '2nd Dan Level 1', '2nd Dan Level 2',
-  '3rd Dan', '3rd Dan Level 1', '3rd Dan Level 2', '3rd Dan Level 3', '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4', '5th Dan'];
+  '3rd Dan', '3rd Dan Level 1', '3rd Dan Level 2', '3rd Dan Level 3', '4th Dan', '4th Dan Level 1', '4th Dan Level 2', '4th Dan Level 3', '4th Dan Level 4',
+  '5th Dan', '5th Dan Level 1', '5th Dan Level 2', '5th Dan Level 3', '5th Dan Level 4', '5th Dan Level 5', '6th Dan', '7th Dan', '8th Dan', '9th Dan'];
 var DAN_TARGET = { 'Cho Dan Bo': 'Probationary Black Belt', 'Probationary Black Belt': '1st Dan Black Belt', '1st Dan Level 1': '2nd Dan',
-  '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan' };
+  '2nd Dan Level 2': '3rd Dan', '3rd Dan Level 3': '4th Dan', '4th Dan Level 4': '5th Dan', '5th Dan Level 5': '6th Dan',
+  '6th Dan': '7th Dan', '7th Dan': '8th Dan', '8th Dan': '9th Dan' };
 var OWING = ['due', 'partially_paid', 'overdue'];
 
 /* ---------------------------------------------------------------- Menu ---------------------------------------------------------------- */

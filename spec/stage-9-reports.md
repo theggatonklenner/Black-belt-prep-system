@@ -19,7 +19,7 @@ Each report has filters, ready-made versions, a column picker (tick to add, ↑ 
 | Attendance by session | Each session and the sign-off (P, A, E), attended, absent, excused, %, requirement met, paid sessions |
 | Attendance history | Every student in every cycle: attended, sign-off, requirement met, readiness, grading result |
 | Readiness | Status, reason, notes, next action, last reviewed; ready-made: not ready, needs more preparation, awaiting assessment |
-| Payments (admins and payments role) | Fee, option, amount due, paid, balance, status, due date; ready-made: outstanding, overdue, partially paid, fully paid |
+| Payments (admins and payments role) | Fee, option, amount due, paid, balance, status, due date (grading fees only); ready-made: outstanding, overdue, partially paid, fully paid |
 | Follow-up list | Everyone with a readiness, attendance or payment issue, with the issues listed (amounts only for admins and payments role) |
 | ID cards | Card printed, in print queue, reprint needed, not printed, or no card linked |
 | Grading list, Certificate list | As in stages 6 and 7 |

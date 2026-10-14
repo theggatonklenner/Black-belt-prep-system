@@ -31,6 +31,7 @@ await db.exec(read(join(here, '../supabase/prep-update-03.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-04.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-05.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-06.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-07.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -138,7 +139,7 @@ try {
   const belts = Object.fromEntries((await q(`select full_name, belt_rank from prep_students`)).map(r => [r.full_name, r.belt_rank]));
   ok(belts['Jordan Lee'] === 'Cho Dan Bo' && belts['Taylor Brown'] === '3rd Dan Level 2', 'imported belts matched to the list ("cho dan bo", "3rd dan lvl 2")');
   const opts = await page.$$eval('#studentBelt option', os => os.map(o => o.textContent));
-  ok(opts.slice(1, 4).join('|') === 'Cho Dan Bo|Probationary Black Belt|1st Dan Black Belt' && opts[opts.length - 1] === '5th Dan' && opts.length === 18, 'belt list is in grading order, Cho Dan Bo to 5th Dan');
+  ok(opts.slice(1, 4).join('|') === 'Cho Dan Bo|Probationary Black Belt|1st Dan Black Belt' && opts[opts.length - 1] === '9th Dan' && opts.length === 27 && opts.includes('5th Dan Level 5'), 'belt list is in grading order, Cho Dan Bo to 9th Dan');
   // The way the club's list is written: tab-separated, belts in words
   await page.click('#importStudentsBtn');
   await page.fill('#impText', 'Name\tBelt\nIvy Abbatantuono\tFirst Dan\nDali Connelly\tThird Dan Level 1\nPersia Dowling\tThird Dan Level 2\nMichael Esen\tThird Dan\nBillie-Rose Barton-Hall\tFirst Dan');
@@ -175,6 +176,7 @@ try {
   await page.click('#newCycleBtn');
   await page.fill('#ncName', 'Term 4 2026');
   ok(!(await page.$('#ncStart')) && !(await page.$('#ncEnd')), 'no cycle start or end date, only session dates');
+  ok(!(await page.$('#ncDue')), 'no payment due date for session fees');
   ok((await page.textContent('label[for=ncS4]')).includes('Sign-off'), 'session 4 is labelled as the sign-off');
   await page.fill('#ncS1', '2026-10-05'); await page.dispatchEvent('#ncS1', 'change');
   ok(await page.inputValue('#ncS2') === '2026-10-19' && await page.inputValue('#ncS4') === '2026-11-16', 'sessions 2 to 4 filled in every two weeks from session 1');
@@ -344,6 +346,7 @@ try {
   await page.waitForSelector('#userList ul');
   ok(await page.inputValue('#setDan0') === '504' && await page.inputValue('#setDan1') === '701' && await page.inputValue('#setDan2') === '', 'settings show a next Dan number for each rank (Probationary 504, 1st Dan 701, 2nd Dan not set)');
   await page.fill('#setDan2', '301');
+  ok(!(await page.$('#setInv')) && !(await page.$('#setFee')), 'old settings (fees due on joining, single session fee) are gone');
   await page.fill('#setReq', '3'); await page.click('#setForm button[type=submit]'); await settle(page);
   ok((await q(`select sessions_required from prep_settings`))[0].sessions_required === 3, 'settings saved');
   ok((await q(`select next_number from prep_dan_counters where target_rank = '2nd Dan'`))[0]?.next_number === 301, 'next number for 2nd Dan saved');
@@ -359,7 +362,7 @@ try {
   {
     const { ctx, page } = await open('owner@ama.test');
     await tab(page, 'more'); await page.waitForSelector('#setForm');
-    ok((await page.$$('#setForm [data-gfee]')).length === 16, 'Settings has a grading fee for each belt (16)');
+    ok((await page.$$('#setForm [data-gfee]')).length === 25, 'Settings has a grading fee for each belt (25)');
     await page.fill('[data-gfee="Probationary Black Belt"]', '150'); await page.fill('[data-gfee="1st Dan Level 1"]', '90');
     await page.click('#setForm button[type=submit]'); await settle(page);
     ok((await q(`select fee::text f from prep_grading_fee_rates where target_rank = 'Probationary Black Belt'`))[0]?.f === '150.00', 'grading fee saved for Probationary Black Belt');

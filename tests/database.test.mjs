@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -461,6 +461,34 @@ ok(kc.queue_status === 'pending' && !kc.printed_at, 'prep app sees the card wait
 await db.exec(`update print_jobs set status = 'printed', printed_at = now() where id = '${kjob}'`);
 kc = (await as('view@ama.test', () => rows(`select * from prep_card_people() where student_id = 'L1'`)))[0];
 ok(kc.printed_at && kc.times_printed === 1, 'once printed in the card software, the prep app sees it as printed');
+
+// ---------------------------------------------------------------------------
+console.log('\nNo due date for session fees');
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('Q1','Due Session','Cho Dan Bo')`));
+const cQ = (await as(ADMIN, () => one(`select prep_start_new_cycle('Due date test', null, null, null, null, '2020-01-01', array['Q1']) id`))).id;
+const sQ = (await rows(`select session_id from prep_sessions where cycle_id = $1 order by session_number`, [cQ])).map(r => r.session_id);
+await as('att@ama.test', () => db.exec(`select prep_mark_attendance('${sQ[0]}', array['Q1'], 'present')`));
+let qs = await one(`select * from prep_payment_summary where student_id = 'Q1' and cycle_id = $1 and kind = 'sessions'`, [cQ]);
+ok(qs.status === 'due' && qs.due_date === null, 'attended but not paid: "Payment due", never overdue, even with an old cycle due date');
+await as('pay@ama.test', () => db.exec(`update prep_payments set payment_plan = 'upfront' where student_id = 'Q1' and cycle_id = '${cQ}'`));
+ok((await one(`select status from prep_payment_summary where student_id = 'Q1' and cycle_id = $1 and kind = 'sessions'`, [cQ])).status === 'due', 'upfront fees are not overdue either');
+await as(ADMIN, () => db.exec(`update prep_cycles set grading_date = '2020-02-01' where cycle_id = '${cQ}'; insert into prep_grading_fee_rates (target_rank, fee) values ('Probationary Black Belt', 150) on conflict (target_rank) do update set fee = 150`));
+await as('grade@ama.test', () => db.query(`select prep_set_grading($1, 'Q1', true)`, [cQ]));
+ok((await one(`select status from prep_payment_summary where student_id = 'Q1' and cycle_id = $1 and kind = 'grading'`, [cQ])).status === 'overdue', 'grading fees still become overdue after their due date');
+
+console.log('\nBelts up to 9th Dan');
+ok((await one(`select prep_dan_target('5th Dan Level 5') t`)).t === '6th Dan' && (await one(`select prep_dan_target('8th Dan') t`)).t === '9th Dan', '5th Dan Level 5 goes for 6th Dan, 8th Dan for 9th Dan');
+ok((await one(`select prep_dan_target('5th Dan Level 2') t`)).t === null && (await one(`select prep_dan_target('9th Dan') t`)).t === null, '5th Dan levels below 5 and 9th Dan get no Dan number');
+ok((await one(`select prep_next_belt('5th Dan') t`)).t === '5th Dan Level 1' && (await one(`select prep_next_belt('5th Dan Level 5') t`)).t === '6th Dan'
+  && (await one(`select prep_next_belt('7th Dan') t`)).t === '8th Dan' && (await one(`select prep_next_belt('9th Dan') t`)).t === null, 'next belt runs 5th Dan, Levels 1 to 5, 6th, 7th, 8th, 9th Dan');
+await as(ADMIN, () => db.exec(`insert into prep_dan_counters (target_rank, next_number) values ('6th Dan', 601), ('9th Dan', 901) on conflict (target_rank) do update set next_number = excluded.next_number`));
+await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('H1', 'Hana Six', '5th Dan Level 5'), ('H2', 'Hugo Nine', '8th Dan')`));
+const cH = (await as(ADMIN, () => one(`select prep_start_new_cycle('High Dan test', null, null, null, 0, null, array['H1','H2']) id`))).id;
+const hd = await rows(`select student_id, target_rank, dan_number from prep_dan_numbers where student_id in ('H1','H2') order by student_id`);
+ok(hd[0]?.target_rank === '6th Dan' && hd[0].dan_number === 601 && hd[1]?.target_rank === '9th Dan' && hd[1].dan_number === 901, '6th and 9th Dan have their own Dan numbers');
+await as(ADMIN, () => db.exec(`insert into prep_grading_fee_rates (target_rank, fee) values ('6th Dan', 300) on conflict (target_rank) do update set fee = excluded.fee`));
+await as(ADMIN, () => db.query(`select prep_set_grading($1, 'H1', true)`, [cH]));
+ok(Number((await one(`select amount_due from prep_payment_summary where student_id = 'H1' and cycle_id = $1 and kind = 'grading'`, [cH])).amount_due) === 300, 'grading fee for 6th Dan is charged');
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
