@@ -582,7 +582,7 @@ try {
   {
     // In AMA ID Cards: Riley's card is added (name written differently) and printed
     await q(`insert into people (name, dan, photo_path) values ('RILEY  chen', '1st Dan', 'photos/r.jpg')`);
-    await q(`insert into people (name, dan) values ('T. Brown', '3rd Dan')`);
+    await q(`insert into people (name, dan) values ('J. Lee', '1st Dan'), ('Taylor Brown', '3rd Dan')`);
     const rid = (await q(`select id, student_id from people where name = 'RILEY  chen'`))[0];
     ok(rid.student_id === 'M-0042', 'card added in the card software links itself to the student by name');
     const job = (await q(`insert into print_jobs (people_ids, card_count, pdf_path) values (array['${rid.id}']::uuid[], 1, 'jobs/r.pdf') returning id`))[0].id;
@@ -597,13 +597,16 @@ try {
     await shot(page, 'attendance-card-printed');
     await tab(page, 'students');
     ok((await page.textContent('#studentList li:has-text("Riley Chen")')).includes('Card'), 'student list marks students whose card is printed');
-    await page.click('#studentList .item:has-text("Taylor Brown")'); await page.waitForSelector('#sheet [data-cardlink]');
+    await page.click('#studentList .item:has-text("Taylor Brown")'); await page.waitForSelector('#sheet #stEdit');
+    ok(!(await page.textContent('#sheet')).includes('ID card') && !(await page.$('#sheet [data-cardlink]')), 'no ID card shown for a student not going for a Dan (3rd Dan Level 2), even with a matching card');
+    await page.click('#sheet [data-close]');
+    await page.click('#studentList .item:has-text("Jordan Lee")'); await page.waitForSelector('#sheet [data-cardlink]');
     ok((await page.textContent('#sheet')).includes('No card linked'), 'student record shows when no card is linked');
     await page.click('#sheet [data-cardlink]'); await page.waitForSelector('#clList');
-    await page.fill('#clSearch', 'brown');
+    await page.fill('#clSearch', 'lee');
     await page.click('#clList [data-person]:visible');
     await page.waitForSelector('#sheet [data-cardlink]');
-    ok((await q(`select student_id from people where name = 'T. Brown'`))[0].student_id === 'BB0003', 'a card with a different name can be linked by hand');
+    ok((await q(`select student_id from people where name = 'J. Lee'`))[0].student_id === 'BB0002', 'a card with a different name can be linked by hand');
     ok((await page.textContent('#sheet')).includes('Card not printed yet'), 'student record shows the linked card status');
     await ctx.close();
   }
@@ -617,6 +620,8 @@ try {
     ok(['Student register', 'Attendance by session', 'Attendance history', 'Readiness', 'Payments', 'Follow-up list', 'ID cards', 'Grading list', 'Certificate list'].every(t => rep.includes(t)), 'Reports screen lists every report');
     await page.click('[data-report="register"]'); await page.waitForSelector('#lbPreview');
     ok((await page.textContent('#lbPreview')).includes('Alex Smith') && (await page.textContent('#lbPreview tr')).includes('ID card'), 'student register shows students with their ID card status');
+    const taylorRow = await page.textContent('#lbPreview tr:has-text("Taylor Brown")');
+    ok(!taylorRow.includes('card'), 'register shows no card status for students not going for a Dan');
     let dl = page.waitForEvent('download'); await page.click('#lbXlsx'); let f = await dl;
     let wb = await readXlsx(f), rowsX = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
     ok(/student-register-.*\.xlsx$/.test(f.suggestedFilename()) && rowsX[0][0] === 'Student register' && rowsX.some(r => r.includes('Alex Smith')), 'Excel download contains the report with a title');
@@ -625,6 +630,10 @@ try {
     ok((await page.textContent('#lbPreview tr')).includes('Balance'), 'payments report shows amounts');
     await page.selectOption('#lbTpl', 'preset:all');
     ok((await page.textContent('#lbPreview')).includes('Riley Chen'), 'payments report "All fees" lists fees');
+    await page.click('#sheet [data-close]');
+    await page.click('[data-report="cards"]'); await page.waitForSelector('#lbPreview');
+    const cardsRep = await page.textContent('#lbPreview');
+    ok(cardsRep.includes('Riley Chen') && !cardsRep.includes('Taylor Brown') && !cardsRep.includes('Brand New'), 'ID cards report lists only students going for a Dan');
     await page.click('#sheet [data-close]');
     await page.click('[data-report="followup"]'); await page.waitForSelector('#lbPreview');
     ok((await page.textContent('#lbPreview tr')).includes('Issues'), 'follow-up list opens');
