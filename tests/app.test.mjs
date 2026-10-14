@@ -10,6 +10,8 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './fake-supabase.mjs';
+import { createRequire } from 'node:module';
+const XLSX = createRequire(import.meta.url)('xlsx');
 
 const { chromium } = await import(process.env.PLAYWRIGHT || '/opt/npm-tools/node_modules/playwright/index.mjs');
 const here = dirname(fileURLToPath(import.meta.url));
@@ -51,6 +53,7 @@ async function open(email) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'en-AU', timezoneId: 'Australia/Sydney' });
   await ctx.route('https://cdn.jsdelivr.net/**', r => r.fulfill({ contentType: 'text/javascript', body: read(join(here, 'node_modules/@supabase/supabase-js/dist/umd/supabase.js')) }));
   await ctx.route('https://fonts.googleapis.com/**', r => r.fulfill({ contentType: 'text/css', body: '' }));
+  await ctx.route('https://cdnjs.cloudflare.com/ajax/libs/xlsx/**', r => r.fulfill({ contentType: 'text/javascript', body: read(join(here, 'node_modules/xlsx/dist/xlsx.full.min.js')) }));
   await ctx.route('**/config.js', r => r.fulfill({ contentType: 'text/javascript', body: configJs }));
   const page = await ctx.newPage();
   page.on('console', m => { if (m.type() === 'error' && !/websocket|realtime|ERR_CONNECTION|Failed to load resource/i.test(m.text())) consoleErrors.push(`${email}: ${m.text()}`); });
@@ -68,7 +71,7 @@ async function open(email) {
 const shot = async (page, name) => page.screenshot({ path: join(SHOTS, `${String(++shotN).padStart(2, '0')}-${name}.png`), fullPage: false });
 const confirm = async page => { await page.waitForSelector('#askDlg[open]'); const t = await page.textContent('#askText'); await page.click('#askYes'); await page.waitForSelector('#askDlg:not([open])', { state: 'attached' }); return t; };
 const tab = async (page, v) => {
-  if (['cycles', 'payments', 'grading', 'certificates'].includes(v)) { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
+  if (['cycles', 'payments', 'grading', 'certificates', 'reports'].includes(v)) { await page.click('.tab[data-view="more"]'); await page.click(`[data-goto="${v}"]`); }
   else await page.click(`.tab[data-view="${v}"]`);
 };
 const settle = page => page.waitForTimeout(450);
@@ -157,7 +160,7 @@ try {
   ok(!(await page.textContent('#view-students')).toLowerCase().includes('club'), 'no club or school shown');
   await shot(page, 'students');
 
-  await page.click('[data-student="BB0002"]');
+  await page.click('#studentList [data-student="BB0002"]');
   await page.click('#stEdit'); await page.fill('#fCert', 'Jordan Michael Lee'); await page.click('#fSave'); await settle(page);
   ok((await q(`select certificate_name from prep_students where student_id = 'BB0002'`))[0].certificate_name === 'Jordan Michael Lee', 'student edited');
   await page.click('#stActive'); await confirm(page); await settle(page);
@@ -313,7 +316,7 @@ try {
   await page.click('[data-unenrol="BB0002"]'); await confirm(page); await settle(page);
   ok((await q(`select count(*)::int n from prep_enrolments e join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and e.student_id = 'BB0002'`))[0].n === 0, 'student added by mistake can be removed');
   await page.click('#sheet [data-close]');
-  await tab(page, 'students'); await page.click('[data-student="BB0001"]');
+  await tab(page, 'students'); await page.click('#studentList [data-student="BB0001"]');
   ok((await page.textContent('#sheet')).includes('Fee option'), 'student record shows the fee option');
   await page.selectOption('#sheet [data-plan]', 'upfront'); await settle(page);
   const t1 = (await q(`select c.cycle_id from prep_cycles c where c.name = 'Term 1 2027'`))[0].cycle_id;
@@ -371,7 +374,7 @@ try {
     await page.waitForSelector('#sheet [data-res="passed"]');
     ok((await page.textContent('#sheet')).includes('Put forward'), 'grading record shows they are put forward');
     await page.click('#sheet [data-close]');
-    await tab(page, 'students'); await page.click('[data-student="BB0001"]');
+    await tab(page, 'students'); await page.click('#studentList [data-student="BB0001"]');
     const rec = await page.textContent('#sheet');
     ok(rec.includes('Yes, to Probationary Black Belt') && rec.includes('Grading fee'), 'student record shows grading and the grading fee');
     await page.click('#sheet [data-gpay]'); await page.selectOption('#gpMethod', 'bank_transfer'); await page.click('#gpGo'); await settle(page);
@@ -602,6 +605,51 @@ try {
     await page.waitForSelector('#sheet [data-cardlink]');
     ok((await q(`select student_id from people where name = 'T. Brown'`))[0].student_id === 'BB0003', 'a card with a different name can be linked by hand');
     ok((await page.textContent('#sheet')).includes('Card not printed yet'), 'student record shows the linked card status');
+    await ctx.close();
+  }
+
+  console.log('\nReports and exports');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    const readXlsx = async dl => XLSX.readFile(await dl.path());
+    await tab(page, 'reports');
+    const rep = await page.textContent('#view-reports');
+    ok(['Student register', 'Attendance by session', 'Attendance history', 'Readiness', 'Payments', 'Follow-up list', 'ID cards', 'Grading list', 'Certificate list'].every(t => rep.includes(t)), 'Reports screen lists every report');
+    await page.click('[data-report="register"]'); await page.waitForSelector('#lbPreview');
+    ok((await page.textContent('#lbPreview')).includes('Alex Smith') && (await page.textContent('#lbPreview tr')).includes('ID card'), 'student register shows students with their ID card status');
+    let dl = page.waitForEvent('download'); await page.click('#lbXlsx'); let f = await dl;
+    let wb = await readXlsx(f), rowsX = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    ok(/student-register-.*\.xlsx$/.test(f.suggestedFilename()) && rowsX[0][0] === 'Student register' && rowsX.some(r => r.includes('Alex Smith')), 'Excel download contains the report with a title');
+    await page.click('#sheet [data-close]');
+    await page.click('[data-report="payments"]'); await page.waitForSelector('#lbPreview');
+    ok((await page.textContent('#lbPreview tr')).includes('Balance'), 'payments report shows amounts');
+    await page.selectOption('#lbTpl', 'preset:all');
+    ok((await page.textContent('#lbPreview')).includes('Riley Chen'), 'payments report "All fees" lists fees');
+    await page.click('#sheet [data-close]');
+    await page.click('[data-report="followup"]'); await page.waitForSelector('#lbPreview');
+    ok((await page.textContent('#lbPreview tr')).includes('Issues'), 'follow-up list opens');
+    await page.click('#sheet [data-close]');
+    dl = page.waitForEvent('download'); await page.click('#exportAll'); f = await dl;
+    wb = await readXlsx(f);
+    ok(['Students', 'Cycles', 'Sessions', 'Attendance', 'Readiness', 'Grading', 'Certificates', 'Fees', 'Payment transactions'].every(n => wb.SheetNames.includes(n)), 'Export everything gives one workbook with a sheet per table');
+    ok(XLSX.utils.sheet_to_json(wb.Sheets['Payment transactions']).length > 0, 'payment transactions are included for admins');
+    await tab(page, 'attendance'); await page.waitForSelector('#attExport');
+    await page.click('#attExport'); await page.waitForSelector('#lbPreview');
+    const ah = await page.textContent('#lbPreview tr');
+    ok(ah.includes('Session 1') && ah.includes('Sign-off') && ah.includes('Attendance %'), 'Export on the attendance screen gives attendance by session for that cycle');
+    await page.click('#sheet [data-close]');
+    await tab(page, 'students'); await page.click('#exportStudentsBtn'); await page.waitForSelector('#lbPreview');
+    ok((await page.textContent('#sheet')).includes('Student register'), 'Export on the students screen opens the register');
+    await shot(page, 'export');
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open('view@ama.test');
+    await tab(page, 'reports');
+    const rep = await page.textContent('#view-reports');
+    ok(!rep.includes('Session and grading fees') && !(await page.$('#exportAll')), 'viewers get no payments report and no Export everything');
+    await page.click('[data-report="register"]'); await page.waitForSelector('#lbPreview');
+    ok(await page.isVisible('#lbXlsx'), 'viewers can still export the register');
     await ctx.close();
   }
 

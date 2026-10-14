@@ -273,10 +273,11 @@
   <section class="view" id="view-students" hidden>
     <div class="view-head">
       <h2>Students <span class="muted small" id="studentCount"></span></h2>
-      <div class="row need-admin">
-        <button class="btn sm" id="selectStudentsBtn">Select</button>
-        <button class="btn sm" id="importStudentsBtn">Import</button>
-        <button class="btn primary sm" id="addStudentBtn">Add student</button>
+      <div class="row">
+        <button class="btn sm" id="exportStudentsBtn">Export</button>
+        <button class="btn sm need-admin" id="selectStudentsBtn">Select</button>
+        <button class="btn sm need-admin" id="importStudentsBtn">Import</button>
+        <button class="btn primary sm need-admin" id="addStudentBtn">Add student</button>
       </div>
     </div>
     <div id="dupBanner"></div>
@@ -305,6 +306,9 @@
 
   <!-- Certificates -->
   <section class="view" id="view-certificates" hidden></section>
+
+  <!-- Reports -->
+  <section class="view" id="view-reports" hidden></section>
 
   <!-- Payments -->
   <section class="view" id="view-payments" hidden></section>
@@ -597,7 +601,7 @@ function scheduleReload() {
 /* ---------- Navigation ---------- */
 function showView(v) {
   state.view = v;
-  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates'].includes(v)))));
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates', 'reports'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
   if (v !== 'students') stopStudentSelect();
@@ -614,7 +618,7 @@ function render() {
   const c = currentCycle();
   $('#cyclePill').hidden = !c;
   if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
-  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, more: renderMore })[state.view]();
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, reports: renderReports, more: renderMore })[state.view]();
 }
 
 /* =========================================================================
@@ -725,6 +729,7 @@ function renderDashboard() {
    ========================================================================= */
 ['#studentSearch', '#studentBelt', '#studentStatus', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
 $('#addStudentBtn').onclick = () => openStudentForm();
+$('#exportStudentsBtn').onclick = () => REPORTS.register.open();
 $('#importStudentsBtn').onclick = () => openImportStudents();
 
 function visibleStudents() {
@@ -1281,13 +1286,14 @@ function renderAttendance() {
   const editable = canEditAttendance();
   const keepFocus = document.activeElement && document.activeElement.id === 'attSearch';
   v.innerHTML = `<div class="view-head"><h2>Attendance</h2>
-      ${editable ? '<button class="btn sm primary" id="attImport">Upload attendance</button>' : ''}</div>
+      <div class="row"><button class="btn sm" id="attExport">Export</button>${editable ? '<button class="btn sm primary" id="attImport">Upload attendance</button>' : ''}</div></div>
     <div class="field"><label for="attCycle">Preparation cycle</label><select id="attCycle">${state.cycles.map(c => `<option value="${c.cycle_id}"${c.cycle_id === A.cycle ? ' selected' : ''}>${esc(c.name)}${c.status === 'active' ? ' (active)' : ` (${label(c.status).toLowerCase()})`}</option>`).join('')}</select></div>
     <div class="seg" role="group" aria-label="View"><button data-mode="sessions" aria-pressed="${A.mode === 'sessions'}">Take attendance</button><button data-mode="summary" aria-pressed="${A.mode === 'summary'}">Summary</button></div>
     <div id="attBody"></div>`;
   $('#attCycle').onchange = e => { A.cycle = e.target.value; A.selected.clear(); renderAttendance(); };
   $$('#view-attendance [data-mode]').forEach(b => b.onclick = () => { A.mode = b.dataset.mode; stopSelecting(); renderAttendance(); });
   const imp = $('#attImport'); if (imp) imp.onclick = () => openImportAttendance();
+  $('#attExport').onclick = () => REPORTS.attendance.open(A.cycle);
   const body = $('#attBody');
   if (A.mode === 'summary') return renderAttSummary(body);
   body.innerHTML = `
@@ -2016,7 +2022,7 @@ function openListBuilder(cfg) {
       <p class="hint"><b>${rows.length}</b> row${rows.length === 1 ? '' : 's'}. ${cols.some(x => x.money) ? 'This list includes fees, so share it only with admins.' : ''}</p>
       <div class="preview" id="lbPreview"><table class="grid"><tr>${cols.map(x => `<th>${esc(x.t)}</th>`).join('')}</tr>
         ${rows.map(r => `<tr>${cols.map(x => `<td>${esc(cfg.value(x.k, r))}</td>`).join('')}</tr>`).join('')}</table></div>
-      <div class="row"><button class="btn" id="lbCsv">Download CSV</button><button class="btn" id="lbPrint">Print</button></div>
+      <div class="row"><button class="btn primary" id="lbXlsx">Excel</button><button class="btn" id="lbCsv">CSV</button><button class="btn" id="lbPrint">Print / PDF</button></div>
       <div class="row"><input type="text" id="lbName" placeholder="Template name" value="${esc(L.name)}" style="flex:1 1 160px;width:auto"><button class="btn" id="lbSave">Save template</button>${L.templateId ? '<button class="btn danger" id="lbDel">Delete</button>' : ''}</div>
       <div class="dlg-actions"><button class="btn primary" data-close>Done</button></div>
     </div>`);
@@ -2033,6 +2039,7 @@ function openListBuilder(cfg) {
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${cfg.fileStem}-${today()}.csv`; a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000); toast('CSV downloaded. It opens in Excel or Google Sheets.');
     };
+    $('#lbXlsx').onclick = () => downloadExcel(cfg.fileStem, [{ name: cfg.heading, title: cfg.title(), head: cols.map(x => x.t), rows: rows.map(r => cols.map(x => cfg.value(x.k, r))) }]);
     $('#lbPrint').onclick = () => {
       const w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print.');
       w.document.write(`<!doctype html><title>${esc(cfg.title())}</title><style>body{font:13px Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{color:#555;margin:0 0 12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:5px 6px;text-align:left}th{background:#eee}</style>
@@ -2246,6 +2253,229 @@ function openCertificateList(cid) {
 }
 
 /* =========================================================================
+   Excel export (SheetJS, loaded only when needed)
+   ========================================================================= */
+let xlsxLoading = null;
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!xlsxLoading) xlsxLoading = new Promise((ok, bad) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = () => ok(window.XLSX); sc.onerror = () => { xlsxLoading = null; bad(new Error('Could not load the Excel exporter. Check your connection.')); };
+    document.head.appendChild(sc);
+  });
+  return xlsxLoading;
+}
+// sheets: [{ name, title, head: [...], rows: [[...]] }]
+async function downloadExcel(fileStem, sheets) {
+  toast('Preparing Excel file...', 0);
+  try {
+    const X = await loadXlsx(), wb = X.utils.book_new();
+    for (const sh of sheets) {
+      const aoa = [...(sh.title ? [[sh.title], [`Generated ${fmt(today())}`], []] : []), sh.head, ...sh.rows];
+      const ws = X.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = sh.head.map((h, i) => ({ wch: Math.min(40, Math.max(String(h).length, ...sh.rows.slice(0, 200).map(r => String(r[i] ?? '').length)) + 2) }));
+      X.utils.book_append_sheet(wb, ws, sh.name.replace(/[\\/?*[\]:]/g, '').slice(0, 31) || 'Sheet');
+    }
+    X.writeFile(wb, `${fileStem}-${today()}.xlsx`);
+    toast('Excel file downloaded.');
+  } catch (e) { toast(errMsg(e), 7000); }
+}
+
+/* =========================================================================
+   Reports and exports
+   ========================================================================= */
+const cycleOptions = () => { const cur = currentCycle(); return [...(cur ? [cur] : []), ...state.cycles.filter(c => c !== cur)].map(c => [c.cycle_id, c.name + (c.status === 'active' ? ' (active)' : '')]); };
+const beltFilter = { key: 'belt', label: 'Belt', options: [['', 'All belts'], ...BELTS.map(b => [b, b])] };
+const stem = (t, c) => `${t}${c ? '-' + c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() : ''}`;
+const cardText = sid => { const k = cardState(sid); return k ? k.text + (k.date ? ' ' + fmt(k.date) : '') : 'No card linked'; };
+const attCell = (cid, se, sid) => { const a = state.attendance.find(x => x.session_id === se.session_id && x.student_id === sid); return a ? ({ present: 'P', absent: 'A', excused: 'E', not_recorded: '' })[a.status] : ''; };
+const inCycle = (cid, F) => [...enrolledIds(cid)].map(student).filter(Boolean).filter(s => !F.belt || s.belt_rank === F.belt).sort((a, b) => a.full_name.localeCompare(b.full_name));
+
+const REPORTS = {
+  register: {
+    title: 'Student register', desc: 'Every student with belt, Dan number, card status and notes',
+    open: () => openListBuilder({
+      type: 'report_register', heading: 'Student register', fileStem: 'student-register', title: () => 'Student register',
+      columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Full name' }, { k: 'cert', t: 'Certificate name' }, { k: 'belt', t: 'Belt' }, { k: 'next', t: 'Next belt' },
+        { k: 'dan', t: 'Dan number' }, { k: 'active', t: 'Active' }, { k: 'test', t: 'Test record' }, { k: 'added', t: 'Date added' }, { k: 'card', t: 'ID card' },
+        { k: 'cycles', t: 'Cycles' }, { k: 'notes', t: 'Notes' }],
+      value: (k, s) => ({ id: s.student_id, name: s.full_name, cert: s.certificate_name || '', belt: s.belt_rank || '', next: nextBelt(s.belt_rank) || '', dan: (danFor(s) || {}).dan_number ?? '',
+        active: s.is_active ? 'Yes' : 'No', test: s.is_test ? 'Yes' : '', added: fmt(s.date_added), card: cardText(s.student_id),
+        cycles: state.cycles.filter(c => enrolledIds(c.cycle_id).has(s.student_id)).map(c => c.name).join(', '), notes: s.notes || '' })[k] ?? '',
+      filters: [{ key: 'status', label: 'Students', options: [['active', 'Active'], ['inactive', 'Inactive'], ['all', 'Active and inactive']] }, beltFilter,
+        { key: 'test', label: 'Test records', options: [['hide', 'Leave out'], ['show', 'Include']] }],
+      rows: F => state.students.filter(s => (F.status === 'all' || (F.status === 'active') === s.is_active) && (F.test === 'show' || !s.is_test) && (!F.belt || s.belt_rank === F.belt))
+        .sort((a, b) => a.full_name.localeCompare(b.full_name)),
+      presets: { all: { name: 'Register', audience: 'instructor', columns: ['id', 'name', 'belt', 'dan', 'card', 'notes'], filters: {} } }, defaultPreset: 'all'
+    })
+  },
+  attendance: {
+    title: 'Attendance by session', desc: 'One row per student: each session, sign-off, attended and %',
+    open: (cid0) => openListBuilder({
+      type: 'report_attendance', heading: 'Attendance by session', fileStem: 'attendance', title: () => 'Attendance',
+      columns: () => { const c = cycle(cid0) || currentCycle() || state.cycles[0]; return [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' },
+        ...cycleSessions(c.cycle_id).map(se => ({ k: 's' + se.session_number, t: isSignoff(se) ? 'Sign-off' : 'Session ' + se.session_number, group: 'sessions' })),
+        { k: 'att', t: 'Attended' }, { k: 'abs', t: 'Absent' }, { k: 'exc', t: 'Excused' }, { k: 'pct', t: 'Attendance %' }, { k: 'met', t: 'Requirement met' }, { k: 'paid', t: 'Paid sessions' }]; },
+      value: (k, r) => { const { s, cid } = r, sum = summaryFor(cid, s.student_id) || {};
+        if (/^s\d+$/.test(k)) { const se = cycleSessions(cid).find(x => 's' + x.session_number === k); return se ? attCell(cid, se, s.student_id) : ''; }
+        return ({ id: s.student_id, name: s.full_name, belt: s.belt_rank || '', att: sum.attended ?? 0, abs: sum.absences ?? 0, exc: sum.excused ?? 0,
+          pct: sum.attendance_pct != null ? sum.attendance_pct + '%' : '', met: sum.attendance_eligible ? 'Yes' : 'No',
+          paid: (() => { const f = feeInfo(cid, s.student_id); return !f ? '' : f.prepaid ? 'Paid upfront' : `${(f.paid_sessions || []).length}`; })() })[k] ?? ''; },
+      filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, beltFilter, { key: 'who', label: 'Show', options: [['all', 'Everyone'], ['notmet', 'Requirement not met'], ['absent', 'With absences']] }],
+      rows: F => { const cid = F.cycle || cid0; return inCycle(cid, F).map(s => ({ s, cid })).filter(r => { const sum = summaryFor(cid, r.s.student_id) || {};
+        return F.who === 'notmet' ? !sum.attendance_eligible : F.who === 'absent' ? sum.absences > 0 : true; }); },
+      presets: { all: { name: 'Attendance', audience: 'instructor', columns: ['name', 'belt', 'sessions', 'att', 'pct', 'met'], filters: cid0 ? { cycle: cid0 } : {} } }, defaultPreset: 'all'
+    })
+  },
+  history: {
+    title: 'Attendance history', desc: 'Every student in every cycle, one row each',
+    open: () => openListBuilder({
+      type: 'report_history', heading: 'Attendance history', fileStem: 'attendance-history', title: () => 'Attendance history',
+      columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'cycle', t: 'Cycle' }, { k: 'att', t: 'Attended' }, { k: 'pct', t: 'Attendance %' },
+        { k: 'signoff', t: 'Sign-off' }, { k: 'met', t: 'Requirement met' }, { k: 'rd', t: 'Readiness' }, { k: 'result', t: 'Grading result' }],
+      value: (k, r) => { const sum = summaryFor(r.c.cycle_id, r.s.student_id) || {}, g = gradingFor(r.c.cycle_id, r.s.student_id);
+        return ({ id: r.s.student_id, name: r.s.full_name, cycle: r.c.name, att: `${sum.attended ?? 0}/${cycleSessions(r.c.cycle_id).length}`, pct: sum.attendance_pct != null ? sum.attendance_pct + '%' : '',
+          signoff: label(sum.signoff_status || 'not_recorded'), met: sum.attendance_eligible ? 'Yes' : 'No', rd: label((readinessFor(r.c.cycle_id, r.s.student_id) || {}).status || 'not_assessed'),
+          result: g && g.result ? label(g.result) : '' })[k] ?? ''; },
+      filters: [{ key: 'student', label: 'Student', options: [['', 'Everyone'], ...[...state.students].sort((a, b) => a.full_name.localeCompare(b.full_name)).map(s => [s.student_id, s.full_name])] }, beltFilter],
+      rows: F => state.cycles.flatMap(c => inCycle(c.cycle_id, F).filter(s => !F.student || s.student_id === F.student).map(s => ({ s, c }))).sort((a, b) => a.s.full_name.localeCompare(b.s.full_name)),
+      presets: { all: { name: 'History', audience: 'instructor', columns: ['name', 'cycle', 'att', 'signoff', 'met', 'rd', 'result'], filters: {} } }, defaultPreset: 'all'
+    })
+  },
+  readiness: {
+    title: 'Readiness', desc: 'Status, reason, instructor notes and next action',
+    open: () => openListBuilder({
+      type: 'report_readiness', heading: 'Readiness', fileStem: 'readiness', title: () => 'Readiness',
+      columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' }, { k: 'status', t: 'Readiness' }, { k: 'reason', t: 'Reason' },
+        { k: 'notes', t: 'Instructor notes' }, { k: 'next', t: 'Next action' }, { k: 'reviewed', t: 'Last reviewed' }, { k: 'by', t: 'Reviewed by' }, { k: 'att', t: 'Attended' }],
+      value: (k, r) => { const x = readinessFor(r.cid, r.s.student_id) || {}, sum = summaryFor(r.cid, r.s.student_id) || {};
+        return ({ id: r.s.student_id, name: r.s.full_name, belt: r.s.belt_rank || '', status: label(x.status || 'not_assessed'), reason: x.reason ? RD_REASONS[x.reason] : '',
+          notes: x.notes || '', next: x.next_action || '', reviewed: x.reviewed_at ? fmt(x.reviewed_at) : '', by: x.reviewed_by || '', att: `${sum.attended ?? 0}/${cycleSessions(r.cid).length}` })[k] ?? ''; },
+      filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, { key: 'status', label: 'Readiness', options: [['', 'Any'], ...RD_STATUSES.map(st => [st, label(st)])] }, beltFilter],
+      rows: F => { const cid = F.cycle; return inCycle(cid, F).map(s => ({ s, cid })).filter(r => !F.status || ((readinessFor(cid, r.s.student_id) || {}).status || 'not_assessed') === F.status); },
+      presets: {
+        all: { name: 'All', audience: 'instructor', columns: ['name', 'belt', 'status', 'reason', 'notes', 'next'], filters: {} },
+        not_ready: { name: 'Not ready for grading', audience: 'instructor', columns: ['name', 'belt', 'reason', 'notes', 'next'], filters: { status: 'not_ready' } },
+        needs: { name: 'Needs more preparation', audience: 'instructor', columns: ['name', 'belt', 'reason', 'notes', 'next'], filters: { status: 'needs_preparation' } },
+        awaiting: { name: 'Awaiting assessment', audience: 'instructor', columns: ['name', 'belt', 'att'], filters: { status: 'not_assessed' } }
+      }, defaultPreset: 'all'
+    })
+  },
+  payments: {
+    title: 'Payments', desc: 'Session and grading fees: owed, paid, balance, status', money: true,
+    open: () => openListBuilder({
+      type: 'report_payments', heading: 'Payments', fileStem: 'payments', title: () => 'Payments',
+      columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'fee', t: 'Fee' }, { k: 'plan', t: 'Fee option' },
+        { k: 'due', t: 'Amount due', money: true }, { k: 'paid', t: 'Amount paid', money: true }, { k: 'bal', t: 'Balance', money: true },
+        { k: 'status', t: 'Status' }, { k: 'duedate', t: 'Due date' }, { k: 'last', t: 'Last payment' }, { k: 'notes', t: 'Notes' }],
+      value: (k, x) => ({ id: x.s.student_id, name: x.s.full_name, fee: x.p.kind === 'grading' ? `Grading to ${x.p.target_rank}` : 'Session fees',
+        plan: x.p.kind === 'grading' ? '' : x.p.fee_override != null ? 'One-off fee' : PLAN[x.p.payment_plan] || '', due: money(x.p.amount_due), paid: money(x.p.amount_paid),
+        bal: money(x.p.balance), status: label(x.p.status), duedate: x.p.due_date ? fmt(x.p.due_date) : '', last: x.p.last_paid_on ? fmt(x.p.last_paid_on) : '', notes: x.p.notes || '' })[k] ?? '',
+      filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, { key: 'kind', label: 'Fees', options: [['', 'All fees'], ['sessions', 'Session fees'], ['grading', 'Grading fees']] },
+        { key: 'status', label: 'Status', options: [['', 'Any'], ['owing', 'Owing (due, part paid, overdue)'], ...['overdue', 'partially_paid', 'paid', 'waived', 'not_invoiced', 'refunded'].map(st => [st, label(st)])] }],
+      rows: F => state.payments.filter(p => p.cycle_id === F.cycle && (!F.kind || (p.kind || 'sessions') === F.kind)
+          && (!F.status || (F.status === 'owing' ? OWING.includes(p.status) : p.status === F.status)))
+        .map(p => ({ p, s: student(p.student_id) })).filter(x => x.s).sort((a, b) => a.s.full_name.localeCompare(b.s.full_name)),
+      presets: {
+        owing: { name: 'Payments outstanding', audience: 'admin', columns: ['name', 'fee', 'due', 'paid', 'bal', 'status', 'duedate'], filters: { status: 'owing' } },
+        overdue: { name: 'Overdue', audience: 'admin', columns: ['name', 'fee', 'bal', 'duedate'], filters: { status: 'overdue' } },
+        partial: { name: 'Partially paid', audience: 'admin', columns: ['name', 'fee', 'due', 'paid', 'bal'], filters: { status: 'partially_paid' } },
+        paid: { name: 'Fully paid', audience: 'admin', columns: ['name', 'fee', 'paid', 'last'], filters: { status: 'paid' } },
+        all: { name: 'All fees', audience: 'admin', columns: ['name', 'fee', 'plan', 'due', 'paid', 'bal', 'status'], filters: {} }
+      }, defaultPreset: 'owing'
+    })
+  },
+  followup: {
+    title: 'Follow-up list', desc: 'Everyone with a readiness, attendance or payment issue',
+    open: () => openListBuilder({
+      type: 'report_followup', heading: 'Follow-up list', fileStem: 'follow-up', title: () => 'Follow-up list',
+      columns: () => [{ k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' }, { k: 'issues', t: 'Issues' }, { k: 'rd', t: 'Readiness' }, { k: 'next', t: 'Next action' },
+        { k: 'att', t: 'Attended' }, { k: 'owing', t: 'Owing', money: true }],
+      value: (k, r) => ({ name: r.s.full_name, belt: r.s.belt_rank || '', issues: r.issues.join('; '), rd: label((r.x || {}).status || 'not_assessed'), next: (r.x || {}).next_action || '',
+        att: `${r.sum.attended ?? 0}/${cycleSessions(r.cid).length}`, owing: r.owing ? money(r.owing) : '' })[k] ?? '',
+      filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, { key: 'type', label: 'Issues', options: [['', 'Any'], ['readiness', 'Readiness'], ['attendance', 'Attendance'], ['payment', 'Payment']] }, beltFilter],
+      rows: F => { const cid = F.cycle, past = new Set(cycleSessions(cid).filter(se => se.session_date && se.session_date <= today()).map(se => se.session_id));
+        return inCycle(cid, F).map(s => {
+          const x = readinessFor(cid, s.student_id), sum = summaryFor(cid, s.student_id) || {}, issues = [], types = new Set();
+          if (x && ['not_ready', 'needs_preparation'].includes(x.status)) { issues.push(label(x.status) + (x.reason ? ` (${RD_REASONS[x.reason].toLowerCase()})` : '')); types.add('readiness'); }
+          if (x && x.status === 'awaiting_review') { issues.push('Awaiting instructor review'); types.add('readiness'); }
+          if (['absent', 'excused'].includes(sum.signoff_status)) { issues.push('Missed the sign-off'); types.add('attendance'); }
+          const missing = state.attendance.filter(a => a.cycle_id === cid && a.student_id === s.student_id && a.status === 'not_recorded' && past.has(a.session_id)).length;
+          if (missing) { issues.push(`${missing} past session${missing > 1 ? 's' : ''} not recorded`); types.add('attendance'); }
+          if (sum.absences) { issues.push(`${sum.absences} absence${sum.absences > 1 ? 's' : ''}`); types.add('attendance'); }
+          const fees = state.payments.filter(p => p.cycle_id === cid && p.student_id === s.student_id && OWING.includes(p.status));
+          const owing = fees.reduce((t, p) => t + Number(p.balance), 0);
+          fees.forEach(p => { issues.push(`${p.kind === 'grading' ? 'Grading fee' : 'Session fees'} ${p.status === 'overdue' ? 'overdue' : 'owing'}`); types.add('payment'); });
+          return { s, cid, x, sum, issues, types, owing };
+        }).filter(r => r.issues.length && (!F.type || r.types.has(F.type))); },
+      presets: { all: { name: 'Follow-up', audience: 'instructor', columns: ['name', 'belt', 'issues', 'next'], filters: {} },
+        admin: { name: 'Follow-up with amounts', audience: 'admin', columns: ['name', 'belt', 'issues', 'next', 'owing'], filters: {} } }, defaultPreset: 'all'
+    })
+  },
+  cards: {
+    title: 'ID cards', desc: 'Card printed, in queue, reprint needed or not linked',
+    open: () => openListBuilder({
+      type: 'report_cards', heading: 'ID cards', fileStem: 'id-cards', title: () => 'ID cards',
+      columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' }, { k: 'dan', t: 'Dan number' }, { k: 'card', t: 'Card status' },
+        { k: 'printed', t: 'Printed on' }, { k: 'times', t: 'Times printed' }, { k: 'cardname', t: 'Name on card' }],
+      value: (k, s) => { const c = cardFor(s.student_id) || {}, k2 = cardState(s.student_id);
+        return ({ id: s.student_id, name: s.full_name, belt: s.belt_rank || '', dan: (danFor(s) || {}).dan_number ?? '', card: k2 ? k2.text : 'No card linked',
+          printed: c.printed_at ? fmt(c.printed_at) : '', times: c.times_printed ?? '', cardname: c.name || '' })[k] ?? ''; },
+      filters: [{ key: 'cycle', label: 'Students', options: [['', 'All active students'], ...cycleOptions()] },
+        { key: 'card', label: 'Card', options: [['', 'Any'], ['printed', 'Printed'], ['queue', 'In print queue'], ['reprint', 'Reprint needed'], ['notyet', 'Not printed yet'], ['none', 'No card linked']] }, beltFilter],
+      rows: F => (F.cycle ? inCycle(F.cycle, F) : state.students.filter(s => s.is_active && !s.is_test && (!F.belt || s.belt_rank === F.belt)).sort((a, b) => a.full_name.localeCompare(b.full_name)))
+        .filter(s => { if (!F.card) return true; const t = (cardState(s.student_id) || {}).text || '';
+          return ({ printed: t === 'ID card printed', queue: t === 'Card in print queue', reprint: t === 'Card reprint needed', notyet: t === 'Card not printed yet', none: !t })[F.card]; }),
+      presets: { all: { name: 'ID cards', audience: 'instructor', columns: ['name', 'belt', 'dan', 'card', 'printed'], filters: {} } }, defaultPreset: 'all'
+    })
+  },
+  grading: { title: 'Grading list', desc: 'Who is grading, to which belt, with attendance and readiness', open: () => openGradingList((currentCycle() || state.cycles[0]).cycle_id) },
+  certificates: { title: 'Certificate list', desc: 'Certificates by status: awaiting approval, production, issued, reprints', open: () => openCertificateList((currentCycle() || state.cycles[0]).cycle_id) }
+};
+
+function renderReports() {
+  const v = $('#view-reports'), list = Object.entries(REPORTS).filter(([, r]) => !r.money || has('payments'));
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Reports and exports</h2></div>
+    <p class="hint">Choose a report, filter it and pick columns, then download it as Excel or CSV (opens in Google Sheets), or print it (or save as PDF from the print screen).</p>
+    <ul class="list">${list.map(([k, r]) => `<li><button class="item" data-report="${k}" ${(k === 'grading' || k === 'certificates' || k === 'attendance' || k === 'readiness' || k === 'payments' || k === 'followup') && !state.cycles.length ? 'disabled' : ''}><div class="main"><div class="name">${esc(r.title)}</div><div class="meta">${esc(r.desc)}</div></div><span class="muted">›</span></button></li>`).join('')}</ul>
+    ${has('admin') ? `<div class="card"><h3>Export everything</h3><p class="hint">One Excel workbook with every table: students, cycles, sessions, attendance, readiness, grading, certificates${has('payments') ? ', fees and payment transactions' : ''}. Useful as a backup or to share with the committee.</p>
+      <div class="row"><button class="btn primary" id="exportAll">Export everything (Excel)</button></div></div>` : ''}`;
+  wireBack();
+  $$('#view-reports [data-report]').forEach(b => b.onclick = () => REPORTS[b.dataset.report].open());
+  const ea = $('#exportAll'); if (ea) ea.onclick = exportEverything;
+}
+
+async function exportEverything() {
+  const sname = id => (student(id) || {}).full_name || '', cname = id => (cycle(id) || {}).name || '';
+  const sessName2 = id => { const se = state.sessions.find(x => x.session_id === id); return se ? (isSignoff(se) ? 'Sign-off' : 'Session ' + se.session_number) : ''; };
+  const sheets = [
+    { name: 'Students', head: ['Student ID', 'Full name', 'Certificate name', 'Belt', 'Dan number', 'Active', 'Test record', 'Date added', 'ID card', 'Notes'],
+      rows: state.students.map(s => [s.student_id, s.full_name, s.certificate_name || '', s.belt_rank || '', (danFor(s) || {}).dan_number ?? '', s.is_active ? 'Yes' : 'No', s.is_test ? 'Yes' : '', s.date_added || '', cardText(s.student_id), s.notes || '']) },
+    { name: 'Cycles', head: ['Cycle', 'Status', 'Grading date', 'Upfront fee', 'Per-session fee', 'Students', 'Notes'],
+      rows: state.cycles.map(c => [c.name, label(c.status), c.grading_date || '', c.upfront_fee ?? c.session_fee ?? '', c.per_session_fee ?? '', enrolledIds(c.cycle_id).size, c.notes || '']) },
+    { name: 'Sessions', head: ['Cycle', 'Session', 'Date'], rows: state.sessions.map(se => [cname(se.cycle_id), isSignoff(se) ? `${se.session_number} (sign-off)` : se.session_number, se.session_date || '']) },
+    { name: 'Attendance', head: ['Cycle', 'Session', 'Student ID', 'Name', 'Status', 'Recorded', 'Recorded by', 'Notes'],
+      rows: state.attendance.map(a => [cname(a.cycle_id), sessName2(a.session_id), a.student_id, sname(a.student_id), label(a.status), a.recorded_at || '', a.recorded_by || '', a.notes || '']) },
+    { name: 'Readiness', head: ['Cycle', 'Student ID', 'Name', 'Status', 'Reason', 'Notes', 'Next action', 'Reviewed', 'Reviewed by'],
+      rows: state.readiness.map(r => [cname(r.cycle_id), r.student_id, sname(r.student_id), label(r.status), r.reason ? RD_REASONS[r.reason] : '', r.notes || '', r.next_action || '', r.reviewed_at || '', r.reviewed_by || '']) },
+    { name: 'Grading', head: ['Cycle', 'Student ID', 'Name', 'From', 'To', 'Eligibility', 'Reason', 'Decided by', 'Status', 'Result', 'Notes'],
+      rows: state.grading.map(g => [cname(g.cycle_id), g.student_id, sname(g.student_id), g.current_rank || '', g.target_rank || '', label(g.eligibility_decision), g.decision_reason || '', g.decided_by || '', label(g.status), g.result ? label(g.result) : '', g.notes || '']) },
+    { name: 'Certificates', head: ['Student ID', 'Name', 'Certificate name', 'Type', 'Awarded rank', 'Number', 'Issue date', 'Status', 'Notes'],
+      rows: state.certificates.map(c => [c.student_id, sname(c.student_id), c.certificate_name, c.certificate_type, c.awarded_rank || '', c.certificate_number || '', c.issue_date || '', label(c.status), c.notes || '']) }
+  ];
+  if (has('payments')) {
+    sheets.push({ name: 'Fees', head: ['Cycle', 'Student ID', 'Name', 'Fee', 'Fee option', 'Amount due', 'Paid', 'Balance', 'Status', 'Due date', 'Notes'],
+      rows: state.payments.map(p => [cname(p.cycle_id), p.student_id, sname(p.student_id), p.kind === 'grading' ? `Grading to ${p.target_rank}` : 'Session fees', p.kind === 'grading' ? '' : PLAN[p.payment_plan] || '',
+        Number(p.amount_due), Number(p.amount_paid), Number(p.balance), label(p.status), p.due_date || '', p.notes || '']) });
+    const { data: tx } = await sb.from('prep_payment_transactions').select('*').order('created_at');
+    sheets.push({ name: 'Payment transactions', head: ['Date', 'Cycle', 'Student ID', 'Name', 'Type', 'Amount', 'Method', 'Reference', 'Notes', 'Recorded by'],
+      rows: (tx || []).map(t => [t.paid_on, cname(t.cycle_id), t.student_id, sname(t.student_id), t.type, Number(t.amount), t.method ? METHODS[t.method] || t.method : '', t.reference || '', t.notes || '', t.recorded_by || '']) });
+  }
+  downloadExcel('black-belt-prep-export', sheets);
+}
+
+/* =========================================================================
    More: settings, users, audit log
    ========================================================================= */
 async function renderMore() {
@@ -2254,6 +2484,7 @@ async function renderMore() {
     <ul class="list">
       <li><button class="item" data-goto="cycles"><div class="main"><div class="name">Preparation cycles</div><div class="meta">Start a cycle, session and grading dates, fees, who is grading</div></div><span class="muted">›</span></button></li>
       <li><button class="item" data-goto="grading"><div class="main"><div class="name">Grading</div><div class="meta">Eligibility, who is grading, results, grading lists</div></div><span class="muted">›</span></button></li>
+      <li><button class="item" data-goto="reports"><div class="main"><div class="name">Reports and exports</div><div class="meta">Download Excel, CSV or PDF: register, attendance, readiness, payments, follow-up, ID cards</div></div><span class="muted">›</span></button></li>
       <li><button class="item" data-goto="certificates"><div class="main"><div class="name">Certificates</div><div class="meta">Names, numbers, approval, printing and issuing</div></div><span class="muted">›</span></button></li>
       ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
     </ul>
@@ -2287,7 +2518,7 @@ async function renderMore() {
       <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
       <div id="userList" class="small muted">Loading...</div></div>
     <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
-    <p class="hint">Black Belt Prep · Stage 8 build</p>`;
+    <p class="hint">Black Belt Prep · Stage 9 build</p>`;
   $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
   $$('#view-more [data-goto]').forEach(b => b.onclick = () => showView(b.dataset.goto));
   if (!admin) return;

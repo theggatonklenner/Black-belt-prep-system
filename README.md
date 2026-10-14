@@ -25,6 +25,7 @@ Progress:
 - Stage 6, grading and grading lists: [spec/stage-6-grading.md](spec/stage-6-grading.md)
 - Stage 7, certificates and certificate lists: [spec/stage-7-certificates.md](spec/stage-7-certificates.md)
 - Stage 8, ID cards linked to the card software: [spec/stage-8-id-cards.md](spec/stage-8-id-cards.md)
+- Stage 9, reports and exports: [spec/stage-9-reports.md](spec/stage-9-reports.md)
 
 | # | Section |
 |---|---|
@@ -56,7 +57,7 @@ Progress:
 6. Grading management and grading list generator (done)
 7. Certificate management and certificate list generator (done)
 8. ID card records, printing statuses and print history (done)
-9. Reports, exports, permissions and automation
+9. Reports, exports, permissions and automation (done)
 10. Full test with sample data before using real student records
 
 ## Data and privacy
