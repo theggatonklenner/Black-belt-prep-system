@@ -1307,9 +1307,10 @@ function renderAttendance() {
     ${isSignoff(se) ? '<p class="hint" style="margin-top:10px">This is the sign-off session. Students must be marked Present here to grade.</p>' : ''}
     <div class="counts" style="margin-top:12px"><span><b>${n('present')}</b> present</span><span><b>${n('absent')}</b> absent</span><span><b>${n('excused')}</b> excused</span><span><b>${n('not_recorded')}</b> not recorded</span>${(() => {
       const per = rows.filter(r => r.a.status === 'present' && feeInfo(A.cycle, r.s.student_id));
-      return per.length ? `<span><b>${per.filter(r => paidAt(A.cycle, r.s.student_id, se.session_id)).length}</b> of ${per.length} paid</span>` : '';
+      const pre = rows.filter(r => r.a.status !== 'present' && (feeInfo(A.cycle, r.s.student_id) || {}).payment_plan === 'per_session' && paidAt(A.cycle, r.s.student_id, se.session_id)).length;
+      return (per.length ? `<span><b>${per.filter(r => paidAt(A.cycle, r.s.student_id, se.session_id)).length}</b> of ${per.length} present paid</span>` : '') + (pre ? `<span><b>${pre}</b> prepaid</span>` : '');
     })()}</div>
-    ${editable && state.sessionFees.length ? `<p class="hint" style="margin-top:6px">Tap <b>$</b> when a student pays: ${money(cycle(A.cycle).per_session_fee)} for this session, or ${money(cycle(A.cycle).upfront_fee)} upfront, which covers every session. Tap again to undo.</p>` : ''}
+    ${editable && state.sessionFees.length ? `<p class="hint" style="margin-top:6px">Tap <b>$</b> when a student pays: ${money(cycle(A.cycle).per_session_fee)} for this session (they can pay before the session, too), or ${money(cycle(A.cycle).upfront_fee)} upfront, which covers every session. Tap again to undo.</p>` : ''}
     <div class="view" style="gap:8px;margin-top:12px">
       <input type="search" id="attSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(A.search)}">
       <div class="filters">
@@ -1343,7 +1344,7 @@ function renderAttList() {
     ${editable && !A.selecting ? `<div class="att" role="group" aria-label="${esc(s.full_name)}">${['present', 'absent', 'excused'].map(st => `<button data-s="${st}" data-id="${esc(s.student_id)}" aria-pressed="${a.status === st}" title="${label(st)}" aria-label="${label(st)}">${st[0].toUpperCase()}</button>`).join('')}${
       (() => { const f = feeInfo(A.cycle, s.student_id); if (!f || !f.payment_plan) return '';
         const paid = paidAt(A.cycle, s.student_id, a.session_id), up = f.payment_plan === 'upfront';
-        return `<button class="pay" data-pay="${esc(s.student_id)}" aria-pressed="${paid}" ${up || a.status === 'present' || paid ? '' : 'disabled'} title="${up ? (paid ? 'Paid upfront' : 'Upfront: not paid yet') : 'Paid for this session'}" aria-label="${up ? 'Paid upfront' : 'Paid for this session'}">$</button>`; })()}</div>`
+        return `<button class="pay" data-pay="${esc(s.student_id)}" aria-pressed="${paid}"  title="${up ? (paid ? 'Paid upfront' : 'Upfront: not paid yet') : 'Paid for this session'}" aria-label="${up ? 'Paid upfront' : 'Paid for this session'}">$</button>`; })()}</div>`
       : tag(a.status)}
   </div></li>`).join('') : `<li><div class="empty">${attRows().rows.length ? 'No one matches.' : 'No students in this cycle.'}</div></li>`;
   $$('#attList .att button[data-s]').forEach(b => b.onclick = () => markOne(b.dataset.id, b.dataset.s));
@@ -1407,10 +1408,9 @@ async function bulkPaid(se, ids) {
     if (!f || !f.payment_plan) skipped.push(`${s.full_name} (no fee record)`);
     else if (paidAt(cid, id, se.session_id)) skipped.push(`${s.full_name} (already paid)`);
     else if (f.payment_plan === 'upfront') up.push(id);
-    else if (!a || a.status !== 'present') skipped.push(`${s.full_name} (not marked present)`);
     else per.push(id);
   }
-  if (!per.length && !up.length) return toast(`Nothing to record. ${skipped.length === 1 ? skipped[0] : skipped.length + ' students skipped (already paid or not marked present)'}.`, 7000);
+  if (!per.length && !up.length) return toast(`Nothing to record. ${skipped.length === 1 ? skipped[0] : skipped.length + ' students skipped (already paid)'}.`, 7000);
   const parts = [per.length ? `${per.length} × ${money(c.per_session_fee)} for ${name}` : '', up.length ? `${up.length} × ${money(c.upfront_fee)} upfront (covers every session)` : ''].filter(Boolean);
   if (!await ask(`Record payment: ${parts.join(' and ')}?${skipped.length ? ` Skipped: ${skipped.join(', ')}.` : ''}`, `Record ${per.length + up.length} paid`, false, 'Mark as paid?')) return;
   let done = 0;
@@ -1706,7 +1706,7 @@ async function openPayment(pid) {
       <dt>Status</dt><dd>${tag(p.status)}${p.status_overridden ? ` <span class="small muted">set by hand: ${esc(p.override_reason || '')}</span>` : ''}</dd>
       <dt>Owed</dt><dd>${money(p.amount_due)}${p.kind !== 'grading' && p.payment_plan === 'per_session' && p.fee_override == null ? ` <span class="small muted">${(summaryFor(c.cycle_id, s.student_id) || {}).attended ?? 0} sessions present × ${money(c.per_session_fee)}</span>` : ''}${p.fee_override != null ? ' <span class="small muted">one-off fee</span>' : ''}</dd>
       <dt>Paid</dt><dd>${money(p.amount_paid)}</dd>
-      <dt>Balance</dt><dd><b>${money(p.balance)}</b></dd>
+      <dt>Balance</dt><dd><b>${Number(p.balance) < 0 ? `${money(-p.balance)} credit` : money(p.balance)}</b>${Number(p.balance) < 0 && p.payment_plan === 'per_session' ? ' <span class="small muted">prepaid for sessions not yet attended</span>' : ''}</dd>
       ${p.due_date ? `<dt>Due</dt><dd>${fmt(p.due_date)}</dd>` : ''}
       ${p.notes ? `<dt>Notes</dt><dd>${esc(p.notes)}</dd>` : ''}
     </dl>

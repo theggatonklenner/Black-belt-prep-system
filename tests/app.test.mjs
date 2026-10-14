@@ -225,12 +225,22 @@ try {
   ok(await page.isHidden('#selbar'), 'selection mode closes after a bulk change');
   await page.click('.att button[data-id="BB0002"][data-s="excused"]'); await settle(page);
   ok((await q(`select a.status from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and a.student_id = 'BB0002'`, [c1.cycle_id]))[0].status === 'excused', 'recorded attendance can be corrected');
-  ok(await page.isDisabled('.att .pay[data-pay="BB0003"]') && !(await page.isDisabled('.att .pay[data-pay="BB0001"]')), '$ button only works for students marked present');
+  // Prepaying: Riley hasn't been marked for session 1 yet
+  ok(!(await page.isDisabled('.att .pay[data-pay="M-0042"]')), '$ works before a student is marked present (prepaying)');
+  await page.click('.att .pay[data-pay="M-0042"]'); await settle(page);
+  const pre = await q(`select t.amount::text a from prep_payment_transactions t join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and t.student_id = 'M-0042'`, [c1.cycle_id]);
+  ok(pre.length === 1 && pre[0].a === '60.00', 'prepaid $60 recorded against session 1');
+  ok((await q(`select a.status from prep_attendance a join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and a.student_id = 'M-0042'`, [c1.cycle_id]))[0].status === 'not_recorded', 'prepaying does not mark attendance');
+  await page.waitForFunction(() => document.querySelector('#attBody .counts')?.textContent.includes('1 prepaid'), null, { timeout: 5000 }).catch(() => {});
+  ok((await page.textContent('#attBody .counts')).includes('1 prepaid'), 'session shows how many have prepaid');
+  const credit = (await q(`select s.balance::text b, s.status from prep_payment_summary s where s.cycle_id = $1 and s.student_id = 'M-0042' and s.kind = 'sessions'`, [c1.cycle_id]))[0];
+  ok(Number(credit.b) === -60 && credit.status === 'paid', 'before attending, the prepayment shows as a $60 credit');
+  await page.click('.att .pay[data-pay="M-0042"]'); await confirm(page); await settle(page);
   await page.click('.att .pay[data-pay="BB0001"]'); await settle(page);
   const paidTx = await q(`select t.amount::text a, t.method, t.notes from prep_payment_transactions t join prep_sessions s using (session_id) where s.cycle_id = $1 and s.session_number = 1 and t.student_id = 'BB0001'`, [c1.cycle_id]);
   ok(paidTx.length === 1 && paidTx[0].a === '60.00' && paidTx[0].notes === 'Paid at session 1', 'one tap on $ records $60 paid at that session');
-  await page.waitForFunction(() => document.querySelector('#attBody .counts')?.textContent.includes('1 of 1 paid'), null, { timeout: 5000 }).catch(() => {});
-  ok(await page.getAttribute('.att .pay[data-pay="BB0001"]', 'aria-pressed') === 'true' && (await page.textContent('#attBody .counts')).includes('1 of 1 paid'), '$ shows as paid and the session count updates');
+  await page.waitForFunction(() => document.querySelector('#attBody .counts')?.textContent.includes('1 of 1 present paid'), null, { timeout: 5000 }).catch(() => {});
+  ok(await page.getAttribute('.att .pay[data-pay="BB0001"]', 'aria-pressed') === 'true' && (await page.textContent('#attBody .counts')).includes('1 of 1 present paid'), '$ shows as paid and the session count updates');
   await shot(page, 'attendance-paid');
   await page.click('.att .pay[data-pay="BB0001"]'); const undoTxt = await confirm(page); await settle(page);
   ok(undoTxt.includes('Undo') && Number((await q(`select amount_paid from prep_payment_summary p join prep_cycles c using (cycle_id) where c.cycle_id = $1 and p.student_id = 'BB0001'`, [c1.cycle_id]))[0].amount_paid) === 0, 'tapping $ again undoes the payment after confirming');
