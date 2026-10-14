@@ -49,6 +49,10 @@ Run `supabase/prep-update-07.sql` once (after update 06).
 - **Session fees have no due date.** They are paid at each session (or upfront), so they never show as overdue. Unpaid session fees show as "Payment due"; a student who owes nothing yet shows "Nothing owed yet". Only grading fees have a due date (3 weeks before grading). The cycle's payment due date and the old "fees due on joining" and "default fee" settings are gone.
 - **Belts up to 9th Dan.** 5th Dan Levels 1 to 5, then 6th, 7th, 8th and 9th Dan. 5th Dan Level 5 goes for 6th Dan, then 6th for 7th, 7th for 8th and 8th for 9th. Each of 6th to 9th Dan has its own Dan numbers (set the next number in Settings), an ID card and a grading fee.
 
+## Database update 08
+
+Run `supabase/prep-update-08.sql` once (after update 07). When deleting skips students because they have payments, grading records or certificates, an admin can tap **Delete anyway**. After a second warning, the student is deleted with all their history, including payments, so payment totals change. Every removed row is still kept in the audit log (More > Recent changes). Payment transactions still can't be deleted any other way.
+
 ## Giving people access
 
 People sign in with their AMA ID Cards login. Card software admins are already prep admins. To add someone else: **More > Users > Add user**, enter their email and tick their roles. If they don't have a login yet, create one in Supabase first (Authentication > Users).
@@ -97,7 +101,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 195 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 198 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

@@ -784,15 +784,25 @@ $$('#stuSelbar [data-sbulk]').forEach(b => b.onclick = () => bulkStudents(b.data
 
 async function deleteStudents(list) {
   const n = list.length;
-  if (!await ask(`Delete ${n === 1 ? list[0].full_name : n + ' students'} permanently? This removes ${n === 1 ? 'them' : 'them'} from every cycle, with their attendance and Dan numbers. Students with payments, grading records or certificates are skipped; deactivate those instead. This cannot be undone.`, `Delete ${n === 1 ? '' : n}`.trim(), true, 'Delete students?')) return false;
+  if (!await ask(`Delete ${n === 1 ? list[0].full_name : n + ' students'} permanently? This removes ${n === 1 ? 'them' : 'them'} from every cycle, with their attendance and Dan numbers. Students with payments, grading records or certificates are skipped at first; you can then delete them anyway. This cannot be undone.`, `Delete ${n === 1 ? '' : n}`.trim(), true, 'Delete students?')) return false;
   const { data, error } = await sb.rpc('prep_delete_students', { p_ids: list.map(s => s.student_id) });
   if (error) { toast(/prep_delete_students|schema cache/i.test(error.message) ? 'To delete students, run supabase/prep-update-05.sql in Supabase first.' : errMsg(error), 8000); return false; }
   const gone = data.filter(r => r.deleted), kept = data.filter(r => !r.deleted);
   await loadAll(); render();
   if (kept.length) openSheet(`<div class="body">${sheetHead(`${gone.length} deleted, ${kept.length} kept`, 'These students have history, so they were not deleted. Deactivate them instead if they should be hidden.')}
     <ul class="list">${kept.map(r => `<li><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.full_name)}</div><div class="meta">${esc(r.student_id)}</div></div><span class="tag warn">${esc(r.reason)}</span></div></li>`).join('')}</ul>
-    <div class="dlg-actions"><button class="btn primary" data-close>OK</button></div></div>`);
+    <div class="dlg-actions"><button class="btn danger" id="delAnyway">Delete anyway</button><button class="btn primary" data-close>OK</button></div></div>`);
   else toast(`${gone.length} student${gone.length === 1 ? '' : 's'} deleted`);
+  const da = $('#delAnyway');
+  if (kept.length && da) da.onclick = async () => {
+    const k = kept.length, who = k === 1 ? kept[0].full_name : k + ' students';
+    if (!await ask(`Delete ${who} anyway? This also deletes ${k === 1 ? 'their' : 'their'} payments, grading records and certificates, so payment totals will change. The audit log keeps a record. This cannot be undone.`, 'Delete anyway', true, 'Delete with history?')) return;
+    const { data: d2, error: e2 } = await sb.rpc('prep_delete_students', { p_ids: kept.map(r => r.student_id), p_force: true });
+    if (e2) { toast(/prep_delete_students|schema cache/i.test(e2.message) ? 'To delete students with history, run supabase/prep-update-08.sql in Supabase first.' : errMsg(e2), 8000); return; }
+    sheet.close(); await loadAll(); render();
+    const n2 = d2.filter(r => r.deleted).length;
+    toast(`${n2} student${n2 === 1 ? '' : 's'} deleted`);
+  };
   return true;
 }
 

@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -489,6 +489,26 @@ ok(hd[0]?.target_rank === '6th Dan' && hd[0].dan_number === 601 && hd[1]?.target
 await as(ADMIN, () => db.exec(`insert into prep_grading_fee_rates (target_rank, fee) values ('6th Dan', 300) on conflict (target_rank) do update set fee = excluded.fee`));
 await as(ADMIN, () => db.query(`select prep_set_grading($1, 'H1', true)`, [cH]));
 ok(Number((await one(`select amount_due from prep_payment_summary where student_id = 'H1' and cycle_id = $1 and kind = 'grading'`, [cH])).amount_due) === 300, 'grading fee for 6th Dan is charged');
+
+console.log('\nDelete anyway');
+await fails(() => as('grade@ama.test', () => db.query(`select * from prep_delete_students(array['G1'], true)`)), /Only an admin/, 'only admins can delete anyway');
+const gTx = await cnt('prep_payment_transactions', `where student_id = 'G1'`);
+await as(ADMIN, () => db.exec(`delete from prep_payment_transactions where student_id = 'G1'`)).catch(() => {});
+await db.exec(`delete from prep_payment_transactions where student_id = 'G1'`).catch(() => {});
+ok(await cnt('prep_payment_transactions', `where student_id = 'G1'`) === gTx, 'payment transactions still cannot be deleted directly');
+ok(gTx > 0, 'G1 has payments recorded');
+const fd = await as(ADMIN, () => rows(`select * from prep_delete_students(array['G1'], true)`));
+ok(fd[0].deleted && fd[0].reason === null, 'a student with payments is deleted when told to delete anyway');
+ok(await cnt('prep_students', `where student_id = 'G1'`) === 0 && await cnt('prep_payment_transactions', `where student_id = 'G1'`) === 0
+  && await cnt('prep_payments', `where student_id = 'G1'`) === 0, 'their payments go with them');
+ok(await cnt('prep_audit_log', `where table_name = 'prep_payment_transactions' and action = 'delete'`) === gTx, 'every removed payment is kept in the audit log');
+await fails(() => db.exec(`delete from prep_payment_transactions where student_id = 'U1'`), /cannot be changed or deleted/, 'transactions are locked again afterwards');
+const gr = await one(`select student_id from prep_grading limit 1`);
+if (gr) {
+  await as(ADMIN, () => db.query(`select * from prep_delete_students(array[$1], true)`, [gr.student_id]));
+  ok(await cnt('prep_grading', `where student_id = '${gr.student_id}'`) === 0 && await cnt('prep_certificates', `where student_id = '${gr.student_id}'`) === 0
+    && await cnt('prep_students', `where student_id = '${gr.student_id}'`) === 0, 'a student with grading records and certificates is deleted anyway');
+}
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);
