@@ -199,8 +199,10 @@
   .checklist .check { border-bottom: 1px solid var(--line); }
   .checklist .check:last-child { border-bottom: 0; }
 
-  #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 14px);
-    z-index: 50; background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 15px; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
+  #toast { inset: auto; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 14px);
+    z-index: 50; background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 15px; max-width: calc(100% - 32px); box-shadow: var(--shadow);
+    margin: 0; border: 0; overflow: visible; width: max-content; }
+  #toast[hidden] { display: none; }
   body.selecting #toast { bottom: calc(var(--tabbar-h) + 140px); }
   @media (min-width: 900px) { #toast { bottom: 24px; } }
   .auth { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
@@ -378,7 +380,7 @@
 
 <dialog id="sheet" class="sheet"></dialog>
 
-<div id="toast" role="status" hidden></div>
+<div id="toast" role="status" popover="manual" hidden></div>
 
 <script>
 'use strict';
@@ -512,9 +514,16 @@ function parseDate(s) {
 
 /* ---------- Toast and confirm ---------- */
 let toastTimer;
+function raiseToast() {
+  const t = $('#toast');
+  if (t.hidden || !t.showPopover) return;
+  try { if (t.matches(':popover-open')) t.hidePopover(); t.showPopover(); } catch (e) { /* older browsers: plain toast */ }
+}
 function toast(msg, ms = 3500) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer);
-  if (ms) toastTimer = setTimeout(() => t.hidden = true, ms);
+  // Show in the top layer, above any open window or confirm box (re-show so it sits above the newest one)
+  raiseToast();
+  if (ms) toastTimer = setTimeout(() => { t.hidden = true; try { if (t.hidePopover && t.matches(':popover-open')) t.hidePopover(); } catch (e) { /* ignore */ } }, ms);
 }
 function ask(text, yes = 'OK', danger = false, title = 'Are you sure?') {
   return new Promise(resolve => {
@@ -523,7 +532,7 @@ function ask(text, yes = 'OK', danger = false, title = 'Are you sure?') {
     const y = $('#askYes'); y.textContent = yes; y.className = 'btn ' + (danger ? 'danger-solid' : 'primary');
     const done = v => { d.close(); resolve(v); };
     y.onclick = () => done(true); $('#askNo').onclick = () => done(false); d.oncancel = e => { e.preventDefault(); done(false); };
-    d.showModal();
+    d.showModal(); raiseToast();
   });
 }
 const errMsg = e => (e && (e.message || e.error_description)) || String(e);
@@ -540,7 +549,7 @@ function openSheet(html, onClose) {
   sheet.innerHTML = html;
   sheet.onclose = () => { sheet.innerHTML = ''; onClose && onClose(); };
   sheet.querySelectorAll('[data-close]').forEach(b => b.onclick = e => { e.preventDefault(); sheet.close(); });
-  if (!sheet.open) sheet.showModal();
+  if (!sheet.open) { sheet.showModal(); raiseToast(); }
 }
 const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(title)}</h3>${sub ? `<p class="hint">${sub}</p>` : ''}</div><button class="btn ghost x" data-close aria-label="Close">Close</button></div>`;
 

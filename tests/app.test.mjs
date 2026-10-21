@@ -374,6 +374,10 @@ try {
     await page.click('#grListItems [data-gr="BB0001"]');
     ok((await page.textContent('#sheet')).includes('Not met'), 'grading record shows what is not met (attendance, readiness)');
     ok(!(await page.$('[name=grDec]')) && !(await page.$('#grDecSave')), 'there is no separate eligibility step');
+    await page.evaluate(() => toast('Layer check', 5000));
+    const onTop = await page.evaluate(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect();
+      return t.matches(':popover-open') && document.querySelector('#sheet').open && r.left >= 0 && r.right <= innerWidth && r.top > innerHeight / 2 && r.bottom <= innerHeight; });
+    ok(onTop, 'notifications show in the top layer, above an open window, near the bottom of the screen');
     ok((await page.textContent('#sheet')).includes('$150'), 'Put forward shows the grading fee it will charge');
     await page.click('#grPut');
     ok((await toastText(page)).includes('Give a reason'), 'putting forward without meeting requirements needs a reason');
