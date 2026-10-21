@@ -9,13 +9,13 @@ Belts are never changed by the app after grading. The "grading to" belt is alway
 - Filters: To decide, Eligible, Put forward, Not eligible, Results, All. Each student shows current belt → belt they are going to, Dan number, attendance, sign-off and readiness.
 - Tap a student to see the facts side by side: attendance and whether the requirement (including the sign-off) is met, readiness with its reason, and session and grading fee status for people allowed to see money.
 
-**Eligibility**: Eligible or Not eligible. Not eligible needs a reason. Marking someone eligible who hasn't met attendance or isn't marked ready also needs a reason; the decision records who made it, when, and the attendance and readiness at that time.
+**Put forward for grading**: one button. It marks the student eligible and charges the grading fee for their next belt, due 3 weeks before the grading date. If they haven't met attendance or aren't marked ready, a reason is needed first; the decision records who made it, when, and the attendance and readiness at that time. **Take off grading** removes the fee, unless they've paid.
 
-**Put forward for grading**: only after an Eligible decision. This charges the grading fee for their next belt, due 3 weeks before the grading date. Taking someone off removes the fee, unless they've paid. (This replaces the tick boxes on the cycle screen.)
+**Not eligible this cycle** (under the button) records a not eligible decision with a reason. Notes can be added before or after putting someone forward.
 
 **Result**: Passed, Unsuccessful or Deferred, or clear it.
 
-**Select** several to mark eligible (only those who meet the requirements and haven't been decided), put forward (only those eligible), or record as passed.
+**Select** several to put forward in one go (anyone already put forward is skipped; one reason covers those who haven't met the requirements, or leave it blank to skip them), or to record as passed.
 
 ## Grading list
 

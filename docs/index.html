@@ -354,7 +354,6 @@
   <div class="selbar-inner">
     <div class="row"><b id="grSelCount" class="grow">0 selected</b><button class="btn sm ghost" id="grSelAll">Select all shown</button><button class="btn sm ghost" id="grSelDone">Done</button></div>
     <div class="acts">
-      <button class="btn" data-gbulk="eligible">Eligible</button>
       <button class="btn" data-gbulk="put">Put forward</button>
       <button class="btn" data-gbulk="passed">Passed</button>
     </div>
@@ -1911,19 +1910,21 @@ function openGrading(cid, sid) {
       ${f.sp ? `<dt>Session fees</dt><dd>${tag(f.sp.status, f.sp.status === 'not_invoiced' && Number(f.sp.amount_due) === 0 ? 'Nothing owed yet' : '')}${Number(f.sp.balance) > 0 ? ` <span class="small muted">${money(f.sp.balance)} owing</span>` : ''}</dd>` : ''}
       ${f.gp ? `<dt>Grading fee</dt><dd>${tag(f.gp.status, f.gp.status === 'not_invoiced' ? 'Fee not set' : '')}${Number(f.gp.balance) > 0 ? ` <span class="small muted">${money(f.gp.balance)} owing</span>` : ''}</dd>` : ''}
     </dl>
-    <p class="hint">${f.meets ? 'Meets the attendance requirement and is marked ready.' : `Not met: ${esc(f.missing.join('; '))}. Marking them eligible needs a reason.`}</p>
+    <p class="hint">${f.meets ? 'Meets the attendance requirement and is marked ready.' : `Not met: ${esc(f.missing.join('; '))}. Putting them forward anyway needs a reason.`}</p>
     ${f.g && f.g.decided_at ? `<p class="hint">Decision: ${label(d)} by ${esc(f.g.decided_by || 'unknown')} ${fmtTime(f.g.decided_at)}${f.g.decision_reason ? ` · "${esc(f.g.decision_reason)}"` : ''}</p>` : ''}
-    ${edit ? `<form id="grDecide" class="section"><h3>Eligibility</h3>
-      <label class="check"><input type="radio" name="grDec" value="eligible" ${d === 'eligible' ? 'checked' : ''}> Eligible to grade</label>
-      <label class="check"><input type="radio" name="grDec" value="not_eligible" ${d === 'not_eligible' ? 'checked' : ''}> Not eligible</label>
-      <div class="field"><label for="grReason">Reason</label><input type="text" id="grReason" value="${esc(f.g && f.g.decision_reason || '')}" placeholder="Needed if not eligible, or eligible without meeting the above"></div>
-      <div class="field"><label for="grNotes">Notes</label><input type="text" id="grNotes" value="${esc(f.g && f.g.notes || '')}"></div>
-      <div class="row"><button type="submit" class="btn" id="grDecSave">Save decision</button></div></form>` : ''}
-    ${edit && d === 'eligible' ? `<div class="section"><h3>Grading</h3>
-      ${st === 'nominated' || f.e.is_grading ? `<p>${tag('gold', 'Put forward')} grading to ${esc(f.target)}${c.grading_date ? ' on ' + fmt(c.grading_date) : ''}.</p>
-        ${!f.g.result ? '<div class="row"><button class="btn" id="grUnput">Take off grading</button></div>' : ''}`
-        : `<p class="hint">Putting them forward charges the grading fee for ${esc(f.target || '?')}${fee != null ? ` (${money(fee)})` : ' (no fee set for that belt yet)'}${c.grading_date ? `, due ${fmt(addDays(c.grading_date, -21))}` : ''}.</p>
-        <div class="row"><button class="btn primary" id="grPut">Put forward for grading</button></div>`}
+    ${edit ? `<div class="section"><h3>Grading</h3>
+      ${f.e.is_grading ? `<p>${tag('gold', 'Put forward')} grading to ${esc(f.target)}${c.grading_date ? ' on ' + fmt(c.grading_date) : ''}.</p>
+        ${!(f.g && f.g.result) ? '<div class="row"><button class="btn" id="grUnput">Take off grading</button></div>' : ''}
+        ${f.g ? `<form id="grNotesForm" class="row" style="margin-top:8px"><input type="text" id="grNotes" placeholder="Notes" aria-label="Notes" value="${esc(f.g.notes || '')}" style="flex:1 1 160px;width:auto"><button type="submit" class="btn sm">Save notes</button></form>` : ''}`
+      : `<form id="grPutForm">
+        ${d === 'not_eligible' ? `<p>${tag('bad', 'Not eligible')}</p>` : ''}
+        ${!f.meets ? `<div class="field"><label for="grReason">Reason</label><input type="text" id="grReason" value="${esc(d === 'eligible' && f.g.decision_reason || '')}" placeholder="Why they can grade without meeting the above"></div>` : ''}
+        <div class="field"><label for="grNotes">Notes</label><input type="text" id="grNotes" value="${esc(f.g && f.g.notes || '')}"></div>
+        <p class="hint">Putting them forward marks them eligible and charges the grading fee for ${esc(f.target || '?')}${fee != null ? ` (${money(fee)})` : ' (no fee set for that belt yet)'}${c.grading_date ? `, due ${fmt(addDays(c.grading_date, -21))}` : ''}.</p>
+        <div class="row"><button type="submit" class="btn primary" id="grPut">Put forward for grading</button></div></form>
+        ${d !== 'not_eligible' ? `<details class="section"><summary>Not eligible this cycle</summary><form id="grNotForm" style="padding-top:8px">
+          <div class="field"><label for="grNoReason">Reason</label><input type="text" id="grNoReason" value=""></div>
+          <div class="row"><button type="submit" class="btn" id="grNotSave">Mark not eligible</button></div></form></details>` : ''}`}
     </div>` : ''}
     ${edit && f.e.is_grading ? `<div class="section"><h3>Result</h3>
       <div class="seg" role="group" aria-label="Result">${['passed', 'unsuccessful', 'deferred'].map(r => `<button data-res="${r}" aria-pressed="${f.g && f.g.result === r}">${label(r)}</button>`).join('')}</div>
@@ -1932,19 +1933,23 @@ function openGrading(cid, sid) {
   </div>`);
   const again = async msg => { toast(msg); await loadAll(); render(); openGrading(cid, sid); };
   const fail = e => toast(/Give a reason/i.test(errMsg(e)) ? 'Give a reason: they have not met attendance or are not marked ready.' : errMsg(e), 7000);
-  const fm = $('#grDecide');
-  if (fm) fm.onsubmit = async e => {
+  const pf = $('#grPutForm'); if (pf) pf.onsubmit = async e => {
     e.preventDefault();
-    const dec = (sheet.querySelector('[name=grDec]:checked') || {}).value, why = $('#grReason').value.trim();
-    if (!dec) return toast('Choose Eligible or Not eligible.');
-    if (dec === 'not_eligible' && !why) return toast('Give a reason for not eligible.', 6000);
-    if (dec === 'eligible' && !f.meets && !why) return toast('Give a reason: they have not met attendance or are not marked ready.', 7000);
-    try { await saveDecision(cid, sid, dec, why, $('#grNotes').value.trim()); again('Decision saved'); } catch (er) { fail(er); }
-  };
-  const pf = $('#grPut'); if (pf) pf.onclick = async () => {
     if (!f.target) return toast('Set their belt rank first.');
+    const why = f.meets ? '' : $('#grReason').value.trim();
+    if (!f.meets && !why) return toast('Give a reason: they have not met attendance or are not marked ready.', 7000);
     if (!await ask(`Put ${f.s.full_name} forward for grading to ${f.target}?${fee != null ? ` This charges the ${money(fee)} grading fee.` : ''}`, 'Put forward')) return;
-    try { await putForward(cid, sid, true); again(`${f.s.full_name} put forward`); } catch (er) { fail(er); }
+    try { await saveDecision(cid, sid, 'eligible', why, $('#grNotes').value.trim()); await loadAll(); await putForward(cid, sid, true); again(`${f.s.full_name} put forward`); } catch (er) { fail(er); }
+  };
+  const gn = $('#grNotesForm'); if (gn) gn.onsubmit = async e => {
+    e.preventDefault();
+    try { await run(sb.from('prep_grading').update({ notes: $('#grNotes').value.trim() || null }).eq('grading_id', f.g.grading_id)); again('Notes saved'); } catch (er) { fail(er); }
+  };
+  const nf = $('#grNotForm'); if (nf) nf.onsubmit = async e => {
+    e.preventDefault();
+    const why = $('#grNoReason').value.trim();
+    if (!why) return toast('Give a reason for not eligible.', 6000);
+    try { await saveDecision(cid, sid, 'not_eligible', why, undefined); again('Marked not eligible'); } catch (er) { fail(er); }
   };
   const un = $('#grUnput'); if (un) un.onclick = async () => {
     if (!await ask(`Take ${f.s.full_name} off grading? Their grading fee is removed (not possible once they have paid it).`, 'Take off', true)) return;
@@ -1959,25 +1964,49 @@ function openGrading(cid, sid) {
 async function bulkGrading(action) {
   const cid = state.gr.cycle, ids = [...grSel.ids], rows = ids.map(id => ({ ...grFacts(cid, id) })).map(f => ({ ...f, st: grStatus(f) }));
   const go = [], skip = [];
-  const why = { eligible: f => f.g && f.g.eligibility_decision !== 'pending' ? 'already decided' : f.meets ? '' : 'requirements not met, decide one at a time',
-    put: f => f.g && f.g.eligibility_decision === 'eligible' ? (f.e.is_grading ? 'already put forward' : (!f.target ? 'no belt set' : '')) : 'not marked eligible yet',
+  if (action === 'put') return bulkPutForward(cid, rows);
+  const why = {
     passed: f => f.e.is_grading ? (f.g.result === 'passed' ? 'already passed' : '') : 'not put forward' }[action];
   rows.forEach(f => { const w = why(f); (w ? skip : go).push(w ? `${f.s.full_name} (${w})` : f); });
   if (!go.length) return toast(skip.length === 1 ? `Nothing to do: ${skip[0]}.` : `Nothing to do: ${skip.length} skipped (already done, or requirements not met).`, 6000);
-  const text = { eligible: `Mark ${go.length} eligible to grade?`, put: `Put ${go.length} forward for grading? Each is charged the grading fee for their next belt.`,
-    passed: `Record ${go.length} as passed?` }[action];
+  const text = { passed: `Record ${go.length} as passed?` }[action];
   if (!await ask(`${text}${skip.length ? ` Skipped: ${skip.join(', ')}.` : ''}`, 'Go')) return;
   let n = 0;
   try {
     for (const f of go) {
-      if (action === 'eligible') await saveDecision(cid, f.s.student_id, 'eligible', '', undefined);
-      if (action === 'put') await putForward(cid, f.s.student_id, true);
       if (action === 'passed') await recordResult(cid, f.s.student_id, 'passed');
       n++;
     }
     toast(`${n} done`);
   } catch (e) { toast(`${n} done, then stopped: ${errMsg(e)}`, 8000); }
   stopGrSelect(); await loadAll(); render();
+}
+
+// Put several forward in one go: marks them eligible and charges the grading fee
+function bulkPutForward(cid, rows) {
+  const skip = [], met = [], notMet = [];
+  rows.forEach(f => f.e.is_grading ? skip.push(`${f.s.full_name} (already put forward)`) : !f.target ? skip.push(`${f.s.full_name} (no belt set)`) : (f.meets ? met : notMet).push(f));
+  if (!met.length && !notMet.length) return toast(skip.length === 1 ? `Nothing to do: ${skip[0]}.` : `Nothing to do: ${skip.length} skipped (already put forward, or no belt set).`, 6000);
+  openSheet(`<form id="gpBulk">${sheetHead(`Put ${met.length + notMet.length} forward for grading`)}
+    <p class="hint">Each is marked eligible and charged the grading fee for their next belt.</p>
+    ${notMet.length ? `<div class="field"><label for="gpbReason">Reason for those who haven't met attendance or readiness</label><input type="text" id="gpbReason" placeholder="Leave blank to skip them"></div>
+      <p class="hint">Needs a reason: ${esc(notMet.map(f => f.s.full_name).join(', '))}</p>` : ''}
+    ${skip.length ? `<p class="hint">Skipped: ${esc(skip.join(', '))}</p>` : ''}
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="gpbGo">Put forward</button></div></form>`);
+  $('#gpBulk').onsubmit = async e => {
+    e.preventDefault();
+    const why = notMet.length ? $('#gpbReason').value.trim() : '', go = [...met.map(f => [f, '']), ...(why ? notMet.map(f => [f, why]) : [])];
+    if (!go.length) return toast('Give a reason, or select students who meet the requirements.', 6000);
+    $('#gpbGo').disabled = true;
+    let n = 0;
+    try {
+      for (const [f, r] of go) { await saveDecision(cid, f.s.student_id, 'eligible', r, undefined); n++; }
+      await loadAll(); n = 0;
+      for (const [f] of go) { await putForward(cid, f.s.student_id, true); n++; }
+      toast(`${n} put forward${notMet.length && !why ? `, ${notMet.length} skipped (no reason)` : ''}`, 6000);
+    } catch (er) { toast(`${n} done, then stopped: ${errMsg(er)}`, 8000); }
+    sheet.close(); stopGrSelect(); await loadAll(); render();
+  };
 }
 
 /* =========================================================================

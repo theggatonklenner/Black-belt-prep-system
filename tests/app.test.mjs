@@ -373,15 +373,14 @@ try {
     await page.waitForSelector('#grListItems [data-gr="BB0001"]');
     await page.click('#grListItems [data-gr="BB0001"]');
     ok((await page.textContent('#sheet')).includes('Not met'), 'grading record shows what is not met (attendance, readiness)');
-    await page.check('#grDecide [name=grDec][value=eligible]'); await page.click('#grDecSave');
-    ok((await toastText(page)).includes('Give a reason'), 'eligible without meeting requirements needs a reason');
-    await page.fill('#grReason', 'Head instructor approved'); await page.click('#grDecSave'); await settle(page);
+    ok(!(await page.$('[name=grDec]')) && !(await page.$('#grDecSave')), 'there is no separate eligibility step');
+    ok((await page.textContent('#sheet')).includes('$150'), 'Put forward shows the grading fee it will charge');
+    await page.click('#grPut');
+    ok((await toastText(page)).includes('Give a reason'), 'putting forward without meeting requirements needs a reason');
+    await page.fill('#grReason', 'Head instructor approved'); await page.click('#grPut'); await confirm(page); await settle(page);
     const dec = (await q(`select g.eligibility_decision, g.decision_reason, g.decided_by, g.attendance_eligible, g.target_rank from prep_grading g join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and g.student_id = 'BB0001'`))[0];
     ok(dec && dec.eligibility_decision === 'eligible' && dec.decision_reason === 'Head instructor approved' && dec.attendance_eligible === false && dec.target_rank === 'Probationary Black Belt',
-       'override recorded with the reason and the attendance at the time');
-    await page.waitForSelector('#grPut');
-    ok((await page.textContent('#sheet')).includes('$150'), 'putting forward shows the grading fee it will charge');
-    await page.click('#grPut'); await confirm(page); await settle(page);
+       'one button marks them eligible, with the reason and the attendance at the time');
     const gf = (await q(`select p.amount_due::text a, p.due_date::text d, p.target_rank, c.grading_date::text g from prep_payments p join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and p.student_id = 'BB0001' and p.kind = 'grading'`))[0];
     ok(gf && gf.a === '150.00' && gf.target_rank === 'Probationary Black Belt', 'ticking a Cho Dan Bo student charges the Probationary grading fee ($150)');
     ok(gf && gf.d === addDaysIso(gf.g, -21), 'grading fee due 3 weeks before the grading date');
@@ -526,12 +525,21 @@ try {
     await page.click('#view-grading [data-grf="all"]');
     await page.click('#grSelect'); await page.click('#grSelAll');
     ok(!(await page.$('#grSelbar [data-gbulk="promote"]')), 'bulk actions do not include updating belts');
-    await page.click('#grSelbar [data-gbulk="eligible"]');
-    await page.waitForSelector('#askDlg[open], #toast:not([hidden])');
-    const bt = (await page.isVisible('#askDlg[open]')) ? await page.textContent('#askText') : await page.textContent('#toast');
-    ok(/requirements not met|Skipped|Nothing to do/.test(bt), 'bulk "Eligible" skips students who have not met the requirements');
-    if (await page.isVisible('#askDlg[open]')) await page.click('#askNo');
-    await page.click('#grSelDone');
+    ok(!(await page.$('#grSelbar [data-gbulk="eligible"]')), 'bulk actions have no separate Eligible step');
+    await page.click('#grSelbar [data-gbulk="put"]');
+    await page.waitForSelector('#gpBulk');
+    const bt = await page.textContent('#gpBulk');
+    ok(bt.includes('Alex Smith (already put forward)') && bt.includes('marked eligible and charged'), 'bulk Put forward skips anyone already put forward and explains it marks eligible');
+    const before = (await q(`select count(*)::int n from prep_enrolments e join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and e.is_grading`))[0].n;
+    if (await page.$('#gpbReason')) {
+      await page.click('#gpbGo');
+      ok((await toastText(page)).includes('Give a reason') || (await page.isVisible('#gpBulk')) === false, 'students who have not met requirements need a reason');
+    }
+    if (await page.$('#gpbReason')) await page.fill('#gpbReason', 'Approved by head instructor');
+    if (await page.$('#gpBulk')) { await page.click('#gpbGo'); await settle(page); }
+    const after = (await q(`select count(*)::int n from prep_enrolments e join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and e.is_grading`))[0].n;
+    const elig = (await q(`select count(*)::int n from prep_grading g join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and g.eligibility_decision = 'eligible'`))[0].n;
+    ok(after > before && elig === after, 'bulk Put forward marks them eligible and puts them forward in one go');
     await shot(page, 'grading');
 
     await page.click('#grList'); await page.waitForSelector('#lbPreview');
