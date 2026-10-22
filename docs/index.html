@@ -149,6 +149,11 @@
   .ci-row { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 0; }
   .ci-row .item { min-height: 64px; }
   .ci-row .go { flex: none; min-width: 108px; min-height: 48px; border-radius: 12px; border: 0; background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 16px; cursor: pointer; }
+  .ci-btns { display: flex; gap: 6px; flex: none; }
+  .ci-btns .go { min-width: 0; padding: 0 12px; line-height: 1.1; }
+  .ci-btns .go.paid { background: var(--gold); color: var(--on-gold); }
+  .ci-btns .go.unpaid { background: var(--surface); color: var(--accent); border: 1.5px solid var(--accent); }
+  .ci-btns .go small { display: block; font-size: 12px; font-weight: 600; }
   .ci-row .x { flex: none; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 18px; cursor: pointer; }
   .ci-row .pay { flex: none; width: 44px; height: 40px; border-radius: 9px; border: 1px dashed var(--line); background: var(--surface); font-weight: 700; color: var(--muted); cursor: pointer; }
   .ci-row .pay[aria-pressed="true"] { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
@@ -1624,8 +1629,8 @@ function renderCheckin() {
   inp.onkeydown = e => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    const first = $('#ciList [data-ci]');
-    if (first && $$('#ciList [data-ci]').length === 1) first.click();   // one match: Enter checks them in
+    const ids = new Set($$('#ciList [data-ci]').map(b => b.dataset.ci));
+    if (ids.size === 1) { const b = $('#ciList [data-ci][data-pay="0"]'); if (b) b.click(); }   // one match: Enter checks them in (unpaid)
   };
   if (keep) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
   drawCheckinLists();
@@ -1636,6 +1641,15 @@ function checkinRows() {
     const s = student(id), a = state.attendance.find(x => x.session_id === C.session && x.student_id === id);
     return s ? { s, a, here: !!a && a.status === 'present' } : null;
   }).filter(Boolean).sort((x, y) => x.s.full_name.localeCompare(y.s.full_name));
+}
+// Two buttons: check in and record the payment, or check in without paying.
+// Anyone already paid for this session (or upfront) just gets one Check in button.
+function ciButtons(id) {
+  const C = state.ci, c = cycle(C.cycle), f = state.sessionFees.length ? feeInfo(C.cycle, id) : null;
+  if (!f || !f.payment_plan) return `<div class="ci-btns"><button class="go" data-ci="${esc(id)}" data-pay="0">Check in</button></div>`;
+  if (paidAt(C.cycle, id, C.session)) return `<div class="ci-btns"><button class="go" data-ci="${esc(id)}" data-pay="0">Check in<small>${f.payment_plan === 'upfront' ? 'paid upfront' : 'prepaid'}</small></button></div>`;
+  const amt = f.payment_plan === 'upfront' ? c.upfront_fee : c.per_session_fee;
+  return `<div class="ci-btns"><button class="go paid" data-ci="${esc(id)}" data-pay="1">Paid<small>${money(amt)}${f.payment_plan === 'upfront' ? ' upfront' : ''}</small></button><button class="go unpaid" data-ci="${esc(id)}" data-pay="0">Unpaid</button></div>`;
 }
 function drawCheckinLists() {
   const C = state.ci, rows = checkinRows(), q = ciNorm(C.search).trim();
@@ -1648,12 +1662,12 @@ function drawCheckinLists() {
   const alreadyHere = q ? here.filter(r => ciMatch(r.s, q)) : [];
   const meta = s => esc([s.belt_rank, danMeta(s)].filter(Boolean).join(' · '));
   $('#ciList').innerHTML = [
-    ...matches.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}${r.a && r.a.status !== 'not_recorded' ? ' · marked ' + label(r.a.status).toLowerCase() : ''}</div></div></div><button class="go" data-ci="${esc(r.s.student_id)}">Check in</button></li>`),
+    ...matches.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}${r.a && r.a.status !== 'not_recorded' ? ' · marked ' + label(r.a.status).toLowerCase() : ''}</div></div></div>${ciButtons(r.s.student_id)}</li>`),
     ...alreadyHere.map(r => `<li class="ci-row ci-here"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">Already checked in</div></div></div></li>`),
     ...others.map(s => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">Not in this cycle${s.belt_rank ? ' · ' + esc(s.belt_rank) : ''}</div></div></div><button class="go" data-ciadd="${esc(s.student_id)}" style="background:var(--surface);color:var(--accent);border:1px solid var(--accent)">Add + check in</button></li>`)
   ].join('') || `<li><div class="empty">${q ? 'No one by that name in this cycle.' : waiting.length ? '' : 'Everyone is checked in.'}</div></li>`;
   if (!q && waiting.length) $('#ciList').innerHTML = `<li><div class="empty" style="padding:14px">${waiting.length} still to check in. Start typing a name, or tap one below.</div></li>` +
-    waiting.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div></div></div><button class="go" data-ci="${esc(r.s.student_id)}">Check in</button></li>`).join('');
+    waiting.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div></div></div>${ciButtons(r.s.student_id)}</li>`).join('');
   $('#ciHereHead').textContent = here.length ? `Here (${here.length})` : '';
   const canPay = state.sessionFees.length > 0;
   $('#ciHere').innerHTML = here.slice().sort((x, y) => String(y.a.recorded_at || '').localeCompare(String(x.a.recorded_at || '')) || x.s.full_name.localeCompare(y.s.full_name)).map(r => {
@@ -1662,7 +1676,7 @@ function drawCheckinLists() {
       ${f && f.payment_plan ? `<button class="pay" data-cipay="${esc(r.s.student_id)}" aria-pressed="${!!paid}" title="${up ? 'Paid upfront' : 'Paid for this session'}" aria-label="${up ? 'Paid upfront' : 'Paid for this session'}">$</button>` : ''}
       <button class="x" data-ciundo="${esc(r.s.student_id)}" title="Undo check-in" aria-label="Undo check-in for ${esc(r.s.full_name)}">↶</button></li>`; }).join('');
   if (!here.length) $('#ciHere').innerHTML = '';
-  $$('#ciList [data-ci]').forEach(b => b.onclick = () => checkIn(b.dataset.ci, 'present'));
+  $$('#ciList [data-ci]').forEach(b => b.onclick = () => checkIn(b.dataset.ci, 'present', b.dataset.pay === '1'));
   $$('#ciList [data-ciadd]').forEach(b => b.onclick = () => addAndCheckIn(b.dataset.ciadd));
   $$('#ciHere [data-ciundo]').forEach(b => b.onclick = () => checkIn(b.dataset.ciundo, 'not_recorded'));
   $$('#ciHere [data-cipay]').forEach(b => b.onclick = async () => {
@@ -1672,8 +1686,8 @@ function drawCheckinLists() {
     drawCheckinLists();
   });
 }
-async function checkIn(id, status) {
-  const C = state.ci, s = student(id);
+async function checkIn(id, status, pay = false) {
+  const C = state.ci, s = student(id), c = cycle(C.cycle), f = pay ? feeInfo(C.cycle, id) : null;
   let a = state.attendance.find(x => x.session_id === C.session && x.student_id === id);
   const prev = a ? a.status : 'not_recorded';
   if (a) { a.status = status; a.recorded_at = new Date().toISOString(); }
@@ -1681,7 +1695,14 @@ async function checkIn(id, status) {
   drawCheckinLists();
   const { error } = await sb.rpc('prep_mark_attendance', { p_session: C.session, p_student_ids: [id], p_status: status, p_notes: null });
   if (error) { if (a) a.status = prev; drawCheckinLists(); return toast('Not saved: ' + errMsg(error), 6000); }
-  toast(status === 'present' ? `${s.full_name} checked in` : `${s.full_name} un-checked`);
+  if (f) {
+    const up = f.payment_plan === 'upfront', amt = up ? c.upfront_fee : c.per_session_fee;
+    if (up) f.prepaid = true; else f.paid_sessions = [...(f.paid_sessions || []), C.session];
+    drawCheckinLists();
+    const { error: pe } = await sb.rpc('prep_record_session_payment', { p_session: C.session, p_student: id, p_paid: true, p_method: 'cash' });
+    if (pe) { toast(`${s.full_name} checked in, but the payment wasn't saved: ${errMsg(pe)}`, 7000); scheduleReload(); return; }
+    toast(`${s.full_name} checked in and paid ${money(amt)}${up ? ' upfront' : ''}`);
+  } else toast(status === 'present' ? `${s.full_name} checked in` : `${s.full_name} un-checked`);
   scheduleReload();
 }
 async function addAndCheckIn(id) {

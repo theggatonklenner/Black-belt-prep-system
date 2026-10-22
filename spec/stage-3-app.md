@@ -90,7 +90,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 - **$** button to record payment at the session ($60 per session, or the full upfront fee), with a "paid" count for the session. Per-session students can prepay: tap $ before they are marked present; it shows as "prepaid" and as a credit until they attend
 - **Paid $** in the selection bar to record payment for several students at once (including prepaying); anyone already paid is skipped and listed
 - **Upload attendance** for a session from a CSV or pasted list. A plain list of names is enough. People in the cycle are marked present; for an admin, students not in the cycle are added to it, and names not in the register become new students (a Belt column gives them their belt). A preview shows every change before anything is saved, and nobody missing from the list is marked absent
-- **Check in** (Attendance > Check in, or on the dashboard): a quick sign-in screen for the door. It opens on today's session (or the next one) with the search box ready. Type part of a name (first letters of first and last name work, e.g. "ale smi"), tap **Check in** or press Enter when there's one match, and they're marked present; the box clears for the next person. Everyone not yet in is listed to tap without typing. The **Here** list shows who's checked in (latest first), with **$** to record their session payment and **↶** to undo a check-in. Admins can also add someone who isn't in the cycle and check them in. A warning shows if the chosen session isn't today
+- **Check in** (Attendance > Check in, or on the dashboard): a quick sign-in screen for the door. It opens on today's session (or the next one) with the search box ready. Type part of a name (first letters of first and last name work, e.g. "ale smi"), then tap **Paid** (checks them in and records the payment: the session fee, or the full fee for an upfront student who hasn't paid) or **Unpaid** (checks them in only). Anyone already paid for that session, or paid upfront, gets a single **Check in** button. Pressing Enter when there's one match checks them in as Unpaid. The box clears for the next person. Everyone not yet in is listed to tap without typing. The **Here** list shows who's checked in (latest first), with **$** to record their session payment and **↶** to undo a check-in. Admins can also add someone who isn't in the cycle and check them in. A warning shows if the chosen session isn't today
 - Summary grid for the whole cycle with attended count, percentage and whether the requirement is met
 
 **More**
@@ -102,7 +102,7 @@ Changes made on one device appear on others automatically.
 
 ## Tests
 
-`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 222 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
+`tests/app.test.mjs` runs the app in a headless browser at phone size against a local stand-in for Supabase that uses the real database rules. It covers 226 checks, including sign-in, permissions for three roles, student add/edit/duplicate/import, starting cycles, individual, bulk and imported attendance, history being preserved, and no browser errors.
 
 ```
 cd tests && npm install

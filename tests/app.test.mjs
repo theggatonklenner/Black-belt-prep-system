@@ -457,7 +457,7 @@ try {
     ok(who.length >= 2, 'there are students to check in for session 3');
     const [first, last] = who[0].full_name.split(' ');
     await page.fill('#ciSearch', `${first.slice(0, 3)} ${last.slice(0, 2)}`);
-    ok((await page.$$('#ciList [data-ci]')).length === 1, 'typing part of a first and last name narrows to one person');
+    ok(new Set(await page.$$eval('#ciList [data-ci]', bs => bs.map(b => b.dataset.ci))).size === 1, 'typing part of a first and last name narrows to one person');
     await page.press('#ciSearch', 'Enter'); await settle(page);
     const st = async id => (await q(`select status from prep_attendance where session_id = $1 and student_id = $2`, [s3, id]))[0].status;
     ok(await st(who[0].student_id) === 'present', 'Enter checks in the only match');
@@ -465,8 +465,24 @@ try {
     ok((await page.textContent('#ciHere')).includes(who[0].full_name) && /\d+ of \d+/.test(await page.textContent('#ciCount')), 'they move to the Here list and the count goes up');
     await page.click(`#ciHere [data-ciundo="${who[0].student_id}"]`); await settle(page);
     ok(await st(who[0].student_id) === 'not_recorded', 'a check-in can be undone with one tap');
-    await page.click(`#ciList [data-ci="${who[1].student_id}"]`); await settle(page);
-    ok(await st(who[1].student_id) === 'present', 'tapping Check in on the list works without typing');
+    const paidTx = async id => (await q(`select count(*)::int n from prep_payment_transactions where student_id = $1`, [id]))[0].n;
+    const txBefore = await paidTx(who[1].student_id);
+    await page.click(`#ciList [data-ci="${who[1].student_id}"][data-pay="0"]`); await settle(page);
+    ok(await st(who[1].student_id) === 'present', 'tapping Unpaid on the list checks them in without typing');
+    ok(await paidTx(who[1].student_id) === txBefore, 'Unpaid records no payment');
+    // Paid: check in and record the payment in one tap
+    await page.click(`#ciHere [data-ciundo="${who[1].student_id}"]`); await settle(page);
+    await page.waitForSelector(`#ciList [data-ci="${who[1].student_id}"]`, { timeout: 5000 });
+    const btns = await page.$$eval(`#ciList [data-ci="${who[1].student_id}"]`, bs => bs.map(b => b.dataset.pay + ':' + b.textContent.trim()));
+    if (btns.some(b => b.startsWith('1:'))) {
+      ok(btns.some(b => /^1:Paid\$\d+/.test(b)) && btns.some(b => b === '0:Unpaid'), 'each person has a Paid button (with the amount) and an Unpaid button');
+      await shot(page, 'check-in-buttons');
+      const before = await paidTx(who[1].student_id);
+      await page.click(`#ciList [data-ci="${who[1].student_id}"][data-pay="1"]`); await settle(page);
+      ok(await st(who[1].student_id) === 'present' && await paidTx(who[1].student_id) === before + 1, 'Paid checks them in and records the payment');
+      ok(await page.isVisible(`#ciHere [data-cipay="${who[1].student_id}"][aria-pressed="true"]`), 'Here list shows them as paid');
+      await page.click(`#ciHere [data-cipay="${who[1].student_id}"]`); await confirm(page); await settle(page);   // undo, so later payment checks are unchanged
+    } else ok(btns.some(b => b.startsWith('0:Check in')), 'someone already paid gets a single Check in button');
     const outsider = (await q(`select st.student_id, st.full_name from prep_students st where st.is_active and not st.is_test and not exists (select 1 from prep_enrolments e join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and e.student_id = st.student_id) order by 1 limit 1`))[0];
     if (outsider) {
       await page.fill('#ciSearch', outsider.full_name.split(' ')[0]);
