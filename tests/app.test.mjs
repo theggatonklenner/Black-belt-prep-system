@@ -444,6 +444,50 @@ try {
     await ctx.close();
   }
 
+  console.log('\nQuick check-in');
+  {
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'attendance');
+    await page.click('#attCheckin'); await page.waitForSelector('#view-checkin:not([hidden]) #ciSearch');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'ciSearch', null, { timeout: 2000 }).catch(() => {});
+    ok(await page.evaluate(() => document.activeElement && document.activeElement.id === 'ciSearch'), 'Check in opens with the search box ready to type');
+    const s3 = (await q(`select s.session_id from prep_sessions s join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and s.session_number = 3`))[0].session_id;
+    await page.selectOption('#ciSession', s3);
+    const who = (await q(`select st.student_id, st.full_name from prep_attendance a join prep_students st using (student_id) where a.session_id = $1 and a.status <> 'present' order by st.full_name`, [s3]));
+    ok(who.length >= 2, 'there are students to check in for session 3');
+    const [first, last] = who[0].full_name.split(' ');
+    await page.fill('#ciSearch', `${first.slice(0, 3)} ${last.slice(0, 2)}`);
+    ok((await page.$$('#ciList [data-ci]')).length === 1, 'typing part of a first and last name narrows to one person');
+    await page.press('#ciSearch', 'Enter'); await settle(page);
+    const st = async id => (await q(`select status from prep_attendance where session_id = $1 and student_id = $2`, [s3, id]))[0].status;
+    ok(await st(who[0].student_id) === 'present', 'Enter checks in the only match');
+    ok((await page.inputValue('#ciSearch')) === '' && await page.evaluate(() => document.activeElement.id === 'ciSearch'), 'search clears and is ready for the next person');
+    ok((await page.textContent('#ciHere')).includes(who[0].full_name) && /\d+ of \d+/.test(await page.textContent('#ciCount')), 'they move to the Here list and the count goes up');
+    await page.click(`#ciHere [data-ciundo="${who[0].student_id}"]`); await settle(page);
+    ok(await st(who[0].student_id) === 'not_recorded', 'a check-in can be undone with one tap');
+    await page.click(`#ciList [data-ci="${who[1].student_id}"]`); await settle(page);
+    ok(await st(who[1].student_id) === 'present', 'tapping Check in on the list works without typing');
+    const outsider = (await q(`select st.student_id, st.full_name from prep_students st where st.is_active and not st.is_test and not exists (select 1 from prep_enrolments e join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and e.student_id = st.student_id) order by 1 limit 1`))[0];
+    if (outsider) {
+      await page.fill('#ciSearch', outsider.full_name.split(' ')[0]);
+      await page.waitForSelector(`#ciList [data-ciadd="${outsider.student_id}"]`);
+      ok((await page.textContent('#ciList')).includes('Not in this cycle'), 'someone not in the cycle shows as Not in this cycle');
+      await page.click(`#ciList [data-ciadd="${outsider.student_id}"]`); await confirm(page); await settle(page);
+      ok(await st(outsider.student_id) === 'present', 'an admin can add them to the cycle and check them in');
+      await q(`delete from prep_enrolments e using prep_cycles c where c.cycle_id = e.cycle_id and c.name = 'Term 1 2027' and e.student_id = $1`, [outsider.student_id]); // leave the cycle as later tests expect
+    }
+    await shot(page, 'check-in');
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open('att@ama.test');
+    await tab(page, 'attendance');
+    await page.click('#attCheckin'); await page.waitForSelector('#ciSearch');
+    await page.fill('#ciSearch', 'zzz');
+    ok(!(await page.$('#ciList [data-ciadd]')), 'attendance recorders can check people in but not add them to a cycle');
+    await ctx.close();
+  }
+
   console.log('\nReadiness');
   {
     const { ctx, page } = await open('owner@ama.test');

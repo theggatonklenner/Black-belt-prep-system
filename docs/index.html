@@ -142,6 +142,17 @@
   .att .pay[aria-pressed="true"] { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
   .att .pay:disabled { opacity: .35; cursor: default; }
   .counts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; color: var(--muted); }
+  /* Quick check-in */
+  .ci-search { font-size: 20px !important; min-height: 56px !important; padding: 10px 16px !important; border-radius: 14px !important; }
+  .ci-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .ci-big { font-family: var(--font-display); font-size: 34px; font-weight: 700; line-height: 1; }
+  .ci-row { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 0; }
+  .ci-row .item { min-height: 64px; }
+  .ci-row .go { flex: none; min-width: 108px; min-height: 48px; border-radius: 12px; border: 0; background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 16px; cursor: pointer; }
+  .ci-row .x { flex: none; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 18px; cursor: pointer; }
+  .ci-row .pay { flex: none; width: 44px; height: 40px; border-radius: 9px; border: 1px dashed var(--line); background: var(--surface); font-weight: 700; color: var(--muted); cursor: pointer; }
+  .ci-row .pay[aria-pressed="true"] { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
+  .ci-here .name::before { content: "✓ "; color: var(--ok); }
   .counts b { color: var(--fg); }
   .sess-cells { display: flex; gap: 3px; }
   .cell { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--bg); color: var(--muted); }
@@ -297,6 +308,9 @@
 
   <!-- Attendance -->
   <section class="view" id="view-attendance" hidden></section>
+
+  <!-- Quick check-in -->
+  <section class="view" id="view-checkin" hidden></section>
 
   <!-- Cycles -->
   <section class="view" id="view-cycles" hidden></section>
@@ -628,7 +642,7 @@ function scheduleReload() {
 /* ---------- Navigation ---------- */
 function showView(v) {
   state.view = v;
-  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates', 'reports'].includes(v)))));
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'attendance' && v === 'checkin') || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates', 'reports'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
   if (v !== 'students') stopStudentSelect();
@@ -645,7 +659,7 @@ function render() {
   const c = currentCycle();
   $('#cyclePill').hidden = !c;
   if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
-  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, reports: renderReports, more: renderMore })[state.view]();
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, checkin: renderCheckin, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, reports: renderReports, more: renderMore })[state.view]();
 }
 
 /* =========================================================================
@@ -700,7 +714,7 @@ function renderDashboard() {
       <div class="belt-rule"></div>
       <div class="counts"><span>${cycleWhen(c, true)}</span>${next ? `<span>Next: <b>${isSignoff(next) ? 'sign-off' : 'session ' + next.session_number} · ${fmt(next.session_date, { weekday: 'short', day: 'numeric', month: 'short' })}</b></span>` : ''}</div>
       <div class="sess-cells" style="gap:6px;flex-wrap:wrap">${sess.map(s => `<span class="tag ${isSignoff(s) ? 'gold' : s.session_date && s.session_date < today() ? '' : 'info'}">${isSignoff(s) ? 'Sign-off' : 'S' + s.session_number} · ${fmtShort(s.session_date)}</span>`).join('')}${c.grading_date ? `<span class="tag ok">Grading · ${fmtShort(c.grading_date)}</span>` : ''}</div>
-      ${canEditAttendance() ? `<button class="btn primary" id="dashAtt">Take attendance${next ? (isSignoff(next) ? ' for the sign-off' : ' for session ' + next.session_number) : ''}</button>` : ''}
+      ${canEditAttendance() ? `<div class="row"><button class="btn primary grow" id="dashCheckin">Check in</button><button class="btn grow" id="dashAtt">Take attendance${next ? (isSignoff(next) ? ' for the sign-off' : ' for session ' + next.session_number) : ''}</button></div>` : ''}
     </div>
     <div class="stats">
       <button class="stat" data-go="students"><span class="n">${active.length}</span><span class="l">Active students</span></button>
@@ -748,6 +762,7 @@ function renderDashboard() {
     : b.dataset.pid ? openPayment(b.dataset.pid) : openStudent(b.dataset.student));
   $$('#view-dashboard [data-rdgo]').forEach(b => b.onclick = () => { state.rd.cycle = c.cycle_id; state.rd.status = b.dataset.rdgo; showView('readiness'); });
   $$('#view-dashboard [data-paygo]').forEach(b => b.onclick = () => { state.pay.cycle = c.cycle_id; state.pay.filter = b.dataset.paygo; state.pay.kind = ''; showView('payments'); });
+  const dci = $('#dashCheckin'); if (dci) dci.onclick = () => openCheckin(c.cycle_id);
   const da = $('#dashAtt'); if (da) da.onclick = () => { state.att.mode = 'sessions'; state.att.cycle = c.cycle_id; state.att.session = next ? next.session_number : 1; showView('attendance'); };
 }
 
@@ -1318,13 +1333,14 @@ function renderAttendance() {
   const editable = canEditAttendance();
   const keepFocus = document.activeElement && document.activeElement.id === 'attSearch';
   v.innerHTML = `<div class="view-head"><h2>Attendance</h2>
-      <div class="row"><button class="btn sm" id="attExport">Export</button>${editable ? '<button class="btn sm primary" id="attImport">Upload attendance</button>' : ''}</div></div>
+      <div class="row"><button class="btn sm" id="attExport">Export</button>${editable ? '<button class="btn sm" id="attImport">Upload</button><button class="btn sm primary" id="attCheckin">Check in</button>' : ''}</div></div>
     <div class="field"><label for="attCycle">Preparation cycle</label><select id="attCycle">${state.cycles.map(c => `<option value="${c.cycle_id}"${c.cycle_id === A.cycle ? ' selected' : ''}>${esc(c.name)}${c.status === 'active' ? ' (active)' : ` (${label(c.status).toLowerCase()})`}</option>`).join('')}</select></div>
     <div class="seg" role="group" aria-label="View"><button data-mode="sessions" aria-pressed="${A.mode === 'sessions'}">Take attendance</button><button data-mode="summary" aria-pressed="${A.mode === 'summary'}">Summary</button></div>
     <div id="attBody"></div>`;
   $('#attCycle').onchange = e => { A.cycle = e.target.value; A.selected.clear(); renderAttendance(); };
   $$('#view-attendance [data-mode]').forEach(b => b.onclick = () => { A.mode = b.dataset.mode; stopSelecting(); renderAttendance(); });
   const imp = $('#attImport'); if (imp) imp.onclick = () => openImportAttendance();
+  const ci = $('#attCheckin'); if (ci) ci.onclick = () => openCheckin(A.cycle, A.session);
   $('#attExport').onclick = () => REPORTS.attendance.open(A.cycle);
   const body = $('#attBody');
   if (A.mode === 'summary') return renderAttSummary(body);
@@ -1554,6 +1570,129 @@ function openImportAttendance() {
       sheet.close(); toast(`Recorded ${go.length}${creates.length ? `, ${creates.length} new` : ''}`); await loadAll(); render();
     } catch (e) { $('#impGo').disabled = false; toast('Upload stopped: ' + errMsg(e), 7000); await loadAll(); render(); }
   };
+}
+
+/* =========================================================================
+   Quick check-in: search, tap, they're present for today's session
+   ========================================================================= */
+state.ci = { cycle: null, session: null, search: '' };
+// Today's session, else the next one, else the last one
+function checkinSession(cid) {
+  const sess = cycleSessions(cid);
+  return sess.find(s => s.session_date === today()) || sess.find(s => s.session_date && s.session_date > today()) || sess[sess.length - 1] || null;
+}
+function openCheckin(cid, sessionNumber) {
+  const C = state.ci;
+  C.cycle = cid || (currentCycle() || state.cycles[0] || {}).cycle_id;
+  const sess = cycleSessions(C.cycle);
+  const pick = (sessionNumber && sess.find(s => s.session_number === sessionNumber)) || checkinSession(C.cycle);
+  C.session = pick ? pick.session_id : null; C.search = '';
+  showView('checkin');
+  const i = $('#ciSearch'); if (i) i.focus();   // straight away, so phones open the keyboard
+  setTimeout(() => { const j = $('#ciSearch'); if (j && document.activeElement !== j) j.focus(); }, 80);
+}
+const ciNorm = t => String(t || '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
+function ciMatch(s, q) {
+  if (!q) return true;
+  const name = ciNorm(s.full_name), cert = ciNorm(s.certificate_name);
+  return q.split(/\s+/).filter(Boolean).every(w => name.split(' ').some(p => p.startsWith(w)) || cert.split(' ').some(p => p.startsWith(w)) || s.student_id.toLowerCase().startsWith(w));
+}
+function renderCheckin() {
+  const v = $('#view-checkin'), C = state.ci;
+  if (!C.cycle || !cycle(C.cycle)) { const c = currentCycle() || state.cycles[0]; C.cycle = c && c.cycle_id; }
+  const c = cycle(C.cycle), sess = c ? cycleSessions(c.cycle_id) : [];
+  if (!sess.some(x => x.session_id === C.session)) { const p = c && checkinSession(c.cycle_id); C.session = p ? p.session_id : null; }
+  const se = sess.find(x => x.session_id === C.session);
+  const back = `<button class="btn ghost sm" id="ciBack" style="align-self:flex-start;padding-left:0">‹ Attendance</button>`;
+  if (!c || !se) { v.innerHTML = `${back}<div class="card empty">${c ? 'This cycle has no sessions.' : 'No preparation cycle yet. Start one under Cycles.'}</div>`; $('#ciBack').onclick = () => showView('attendance'); return; }
+  const keep = document.activeElement && document.activeElement.id === 'ciSearch';
+  const isToday = se.session_date === today();
+  v.innerHTML = `${back}
+    <div class="ci-head"><h2>Check in</h2><span class="muted small">${esc(c.name)}</span></div>
+    <div class="field"><label for="ciSession">Session</label><select id="ciSession">${sess.map(x => `<option value="${x.session_id}"${x.session_id === se.session_id ? ' selected' : ''}>${isSignoff(x) ? 'Sign-off' : 'Session ' + x.session_number}${x.session_date ? ' · ' + fmt(x.session_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''}${x.session_date === today() ? ' (today)' : ''}</option>`).join('')}</select></div>
+    ${!isToday ? `<p class="hint" style="color:var(--warn)">This session isn't today${se.session_date ? ` (${fmt(se.session_date)})` : ''}. Check you have the right one.</p>` : ''}
+    ${isSignoff(se) ? '<p class="hint">Sign-off session: students must be checked in here to grade.</p>' : ''}
+    <div class="row" style="align-items:flex-end"><div class="grow"><div class="ci-big" id="ciCount"></div><div class="muted small" id="ciCountL"></div></div></div>
+    <input type="search" id="ciSearch" class="ci-search" placeholder="Type a name to check in" aria-label="Type a name to check in" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go" value="${esc(C.search)}">
+    <ul class="list" id="ciList"></ul>
+    <h3 id="ciHereHead" style="margin-top:8px"></h3>
+    <ul class="list" id="ciHere"></ul>`;
+  $('#ciBack').onclick = () => { state.att.cycle = C.cycle; const x = sess.find(y => y.session_id === C.session); if (x) state.att.session = x.session_number; showView('attendance'); };
+  $('#ciSession').onchange = e => { C.session = e.target.value; renderCheckin(); $('#ciSearch').focus(); };
+  const inp = $('#ciSearch');
+  inp.oninput = () => { C.search = inp.value; drawCheckinLists(); };
+  inp.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const first = $('#ciList [data-ci]');
+    if (first && $$('#ciList [data-ci]').length === 1) first.click();   // one match: Enter checks them in
+  };
+  if (keep) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  drawCheckinLists();
+}
+function checkinRows() {
+  const C = state.ci, ids = enrolledIds(C.cycle);
+  return [...ids].map(id => {
+    const s = student(id), a = state.attendance.find(x => x.session_id === C.session && x.student_id === id);
+    return s ? { s, a, here: !!a && a.status === 'present' } : null;
+  }).filter(Boolean).sort((x, y) => x.s.full_name.localeCompare(y.s.full_name));
+}
+function drawCheckinLists() {
+  const C = state.ci, rows = checkinRows(), q = ciNorm(C.search).trim();
+  const here = rows.filter(r => r.here), waiting = rows.filter(r => !r.here);
+  $('#ciCount').textContent = `${here.length} of ${rows.length}`;
+  $('#ciCountL').textContent = 'checked in';
+  const matches = waiting.filter(r => ciMatch(r.s, q));
+  // Not in this cycle (admins can add them and check them in)
+  const others = q && has('admin') ? state.students.filter(s => s.is_active && !s.is_test && !enrolledIds(C.cycle).has(s.student_id) && ciMatch(s, q)).slice(0, 5) : [];
+  const alreadyHere = q ? here.filter(r => ciMatch(r.s, q)) : [];
+  const meta = s => esc([s.belt_rank, danMeta(s)].filter(Boolean).join(' · '));
+  $('#ciList').innerHTML = [
+    ...matches.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}${r.a && r.a.status !== 'not_recorded' ? ' · marked ' + label(r.a.status).toLowerCase() : ''}</div></div></div><button class="go" data-ci="${esc(r.s.student_id)}">Check in</button></li>`),
+    ...alreadyHere.map(r => `<li class="ci-row ci-here"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">Already checked in</div></div></div></li>`),
+    ...others.map(s => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">Not in this cycle${s.belt_rank ? ' · ' + esc(s.belt_rank) : ''}</div></div></div><button class="go" data-ciadd="${esc(s.student_id)}" style="background:var(--surface);color:var(--accent);border:1px solid var(--accent)">Add + check in</button></li>`)
+  ].join('') || `<li><div class="empty">${q ? 'No one by that name in this cycle.' : waiting.length ? '' : 'Everyone is checked in.'}</div></li>`;
+  if (!q && waiting.length) $('#ciList').innerHTML = `<li><div class="empty" style="padding:14px">${waiting.length} still to check in. Start typing a name, or tap one below.</div></li>` +
+    waiting.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div></div></div><button class="go" data-ci="${esc(r.s.student_id)}">Check in</button></li>`).join('');
+  $('#ciHereHead').textContent = here.length ? `Here (${here.length})` : '';
+  const canPay = state.sessionFees.length > 0;
+  $('#ciHere').innerHTML = here.slice().sort((x, y) => String(y.a.recorded_at || '').localeCompare(String(x.a.recorded_at || '')) || x.s.full_name.localeCompare(y.s.full_name)).map(r => {
+    const f = canPay && feeInfo(C.cycle, r.s.student_id), up = f && f.payment_plan === 'upfront', paid = f && paidAt(C.cycle, r.s.student_id, C.session);
+    return `<li class="ci-row ci-here"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div></div></div>
+      ${f && f.payment_plan ? `<button class="pay" data-cipay="${esc(r.s.student_id)}" aria-pressed="${!!paid}" title="${up ? 'Paid upfront' : 'Paid for this session'}" aria-label="${up ? 'Paid upfront' : 'Paid for this session'}">$</button>` : ''}
+      <button class="x" data-ciundo="${esc(r.s.student_id)}" title="Undo check-in" aria-label="Undo check-in for ${esc(r.s.full_name)}">↶</button></li>`; }).join('');
+  if (!here.length) $('#ciHere').innerHTML = '';
+  $$('#ciList [data-ci]').forEach(b => b.onclick = () => checkIn(b.dataset.ci, 'present'));
+  $$('#ciList [data-ciadd]').forEach(b => b.onclick = () => addAndCheckIn(b.dataset.ciadd));
+  $$('#ciHere [data-ciundo]').forEach(b => b.onclick = () => checkIn(b.dataset.ciundo, 'not_recorded'));
+  $$('#ciHere [data-cipay]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.cipay, paid = b.getAttribute('aria-pressed') !== 'true', se = state.sessions.find(x => x.session_id === state.ci.session);
+    state.att.cycle = state.ci.cycle; state.att.session = se.session_number;   // pay for this session
+    await markPaid(id, paid);
+    drawCheckinLists();
+  });
+}
+async function checkIn(id, status) {
+  const C = state.ci, s = student(id);
+  let a = state.attendance.find(x => x.session_id === C.session && x.student_id === id);
+  const prev = a ? a.status : 'not_recorded';
+  if (a) { a.status = status; a.recorded_at = new Date().toISOString(); }
+  C.search = ''; const inp = $('#ciSearch'); if (inp) { inp.value = ''; inp.focus(); }
+  drawCheckinLists();
+  const { error } = await sb.rpc('prep_mark_attendance', { p_session: C.session, p_student_ids: [id], p_status: status, p_notes: null });
+  if (error) { if (a) a.status = prev; drawCheckinLists(); return toast('Not saved: ' + errMsg(error), 6000); }
+  toast(status === 'present' ? `${s.full_name} checked in` : `${s.full_name} un-checked`);
+  scheduleReload();
+}
+async function addAndCheckIn(id) {
+  const C = state.ci, s = student(id), c = cycle(C.cycle);
+  if (!await ask(`${s.full_name} isn't in ${c.name}. Add them to the cycle and check them in?`, 'Add and check in')) return;
+  try {
+    await run(sb.from('prep_enrolments').insert({ cycle_id: C.cycle, student_id: id }));
+    await run(sb.rpc('prep_mark_attendance', { p_session: C.session, p_student_ids: [id], p_status: 'present', p_notes: null }));
+    C.search = ''; toast(`${s.full_name} added and checked in`);
+    await loadAll(); render(); const inp = $('#ciSearch'); if (inp) inp.focus();
+  } catch (e) { toast(errMsg(e), 6000); }
 }
 
 /* =========================================================================
