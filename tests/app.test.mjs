@@ -111,9 +111,9 @@ try {
   await page.waitForSelector('#sheet #stEdit');
   await page.click('#sheet [data-close]');
   await page.click('#addStudentBtn');
-  await page.fill('#fName', 'ALEX  smith'); await page.click('#fSave');
+  await page.fill('#fName', 'ALEX  smith'); await page.press('#fName', 'Enter');   // Enter saves, it doesn't close the window
   const dupText = await page.textContent('#askText', { timeout: 3000 }).catch(() => '');
-  ok(dupText.includes('Alex Smith (BB0001'), 'adding a matching name warns about a possible duplicate');
+  ok(dupText.includes('Alex Smith (BB0001'), 'pressing Enter in a form submits it (adding a matching name warns about a possible duplicate)');
   await page.click('#askNo'); await page.click('#sheet [data-close]');
   ok((await q(`select count(*)::int n from prep_students`))[0].n === 1, 'cancelled duplicate was not saved');
 

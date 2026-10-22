@@ -568,7 +568,8 @@ const sheet = $('#sheet');
 function openSheet(html, onClose) {
   sheet.innerHTML = html;
   sheet.onclose = () => { sheet.innerHTML = ''; onClose && onClose(); };
-  sheet.querySelectorAll('[data-close]').forEach(b => b.onclick = e => { e.preventDefault(); sheet.close(); });
+  // Close and Cancel are never the form's Enter button, so Enter submits the form instead of closing it
+  sheet.querySelectorAll('[data-close]').forEach(b => { if (b.tagName === 'BUTTON') b.type = 'button'; b.onclick = e => { e.preventDefault(); sheet.close(); }; });
   if (!sheet.open) { sheet.showModal(); raiseToast(); }
 }
 const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(title)}</h3>${sub ? `<p class="hint">${sub}</p>` : ''}</div><button class="btn ghost x" data-close aria-label="Close">Close</button></div>`;
