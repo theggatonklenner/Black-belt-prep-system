@@ -492,7 +492,25 @@ try {
       ok(await st(outsider.student_id) === 'present', 'an admin can add them to the cycle and check them in');
       await q(`delete from prep_enrolments e using prep_cycles c where c.cycle_id = e.cycle_id and c.name = 'Term 1 2027' and e.student_id = $1`, [outsider.student_id]); // leave the cycle as later tests expect
     }
-    await shot(page, 'check-in');
+    // Owing: shown for anyone with unpaid fees (admins and the Payments role only)
+    const debtor = (await q(`select ps.student_id, st.full_name, sum(ps.balance)::numeric b from prep_payment_summary ps join prep_students st using (student_id)
+      join prep_enrolments e on e.student_id = ps.student_id join prep_cycles c on c.cycle_id = e.cycle_id and c.name = 'Term 1 2027'
+      where ps.balance > 0 and ps.status not in ('waived','refunded','not_invoiced') group by 1, 2 order by 2 limit 1`))[0];
+    const paidUp = (await q(`select e.student_id from prep_enrolments e join prep_cycles c on c.cycle_id = e.cycle_id and c.name = 'Term 1 2027'
+      where not exists (select 1 from prep_payment_summary ps where ps.student_id = e.student_id and ps.balance > 0 and ps.status not in ('waived','refunded','not_invoiced')) limit 1`))[0];
+    await tab(page, 'attendance'); await page.click('#attCheckin'); await page.waitForSelector('#ciSearch');
+    await page.selectOption('#ciSession', s3);
+    ok(!!debtor, 'test data has someone owing fees');
+    if (debtor) {
+      const sel = `#view-checkin li:has([data-ci="${debtor.student_id}"]), #view-checkin li:has([data-ciundo="${debtor.student_id}"])`;
+      await page.waitForSelector(sel);
+      ok((await page.textContent(sel)).includes(`Owes $${Number(debtor.b)}`), `someone with unpaid fees shows "Owes $${Number(debtor.b)}" at check-in`);
+    }
+    if (paidUp) {
+      const sel = `#view-checkin li:has([data-ci="${paidUp.student_id}"]), #view-checkin li:has([data-ciundo="${paidUp.student_id}"])`;
+      if (await page.$(sel)) ok(!(await page.textContent(sel)).includes('Owes'), 'no owing note for someone fully paid');
+    }
+    await shot(page, 'check-in-owing');
     await ctx.close();
   }
   {
@@ -501,6 +519,8 @@ try {
     await page.click('#attCheckin'); await page.waitForSelector('#ciSearch');
     await page.fill('#ciSearch', 'zzz');
     ok(!(await page.$('#ciList [data-ciadd]')), 'attendance recorders can check people in but not add them to a cycle');
+    await page.fill('#ciSearch', '');
+    ok(!(await page.$('#view-checkin .owes')), 'attendance recorders never see what anyone owes');
     await ctx.close();
   }
 

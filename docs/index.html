@@ -158,6 +158,7 @@
   .ci-row .pay { flex: none; width: 44px; height: 40px; border-radius: 9px; border: 1px dashed var(--line); background: var(--surface); font-weight: 700; color: var(--muted); cursor: pointer; }
   .ci-row .pay[aria-pressed="true"] { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
   .ci-here .name::before { content: "✓ "; color: var(--ok); }
+  .owes { display: inline-block; margin-top: 3px; font-size: 13px; font-weight: 700; color: var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 2px 8px; white-space: normal; }
   .counts b { color: var(--fg); }
   .sess-cells { display: flex; gap: 3px; }
   .cell { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--bg); color: var(--muted); }
@@ -1651,6 +1652,21 @@ function ciButtons(id) {
   const amt = f.payment_plan === 'upfront' ? c.upfront_fee : c.per_session_fee;
   return `<div class="ci-btns"><button class="go paid" data-ci="${esc(id)}" data-pay="1">Paid<small>${money(amt)}${f.payment_plan === 'upfront' ? ' upfront' : ''}</small></button><button class="go unpaid" data-ci="${esc(id)}" data-pay="0">Unpaid</button></div>`;
 }
+// What a student still owes, across all cycles (admins and the Payments role only; others never see balances)
+function owing(sid) {
+  if (!has('payments')) return null;
+  const C = state.ci, parts = [];
+  let total = 0;
+  for (const p of state.payments.filter(x => x.student_id === sid && Number(x.balance) > 0 && !['waived', 'refunded', 'not_invoiced'].includes(x.status))) {
+    const b = Number(p.balance); total += b;
+    const here = p.cycle_id === C.cycle, kind = p.kind === 'grading' ? 'grading' : 'sessions';
+    parts.push({ label: `${here ? '' : (cycle(p.cycle_id) || {}).name + ' '}${kind}${p.status === 'overdue' ? ' (overdue)' : ''}`, amount: b });
+  }
+  if (!total) return null;
+  // One fee: "Owes $60 · sessions"; several: "Owes $120 · sessions $60, grading $60"
+  return { total, text: parts.length === 1 ? parts[0].label : parts.map(x => `${x.label} ${money(x.amount)}`).join(', ') };
+}
+const owesTag = sid => { const o = owing(sid); return o ? `<div class="owes" title="${esc(o.text)}">Owes ${money(o.total)} · ${esc(o.text)}</div>` : ''; };
 function drawCheckinLists() {
   const C = state.ci, rows = checkinRows(), q = ciNorm(C.search).trim();
   const here = rows.filter(r => r.here), waiting = rows.filter(r => !r.here);
@@ -1662,17 +1678,17 @@ function drawCheckinLists() {
   const alreadyHere = q ? here.filter(r => ciMatch(r.s, q)) : [];
   const meta = s => esc([s.belt_rank, danMeta(s)].filter(Boolean).join(' · '));
   $('#ciList').innerHTML = [
-    ...matches.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}${r.a && r.a.status !== 'not_recorded' ? ' · marked ' + label(r.a.status).toLowerCase() : ''}</div></div></div>${ciButtons(r.s.student_id)}</li>`),
+    ...matches.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}${r.a && r.a.status !== 'not_recorded' ? ' · marked ' + label(r.a.status).toLowerCase() : ''}</div>${owesTag(r.s.student_id)}</div></div>${ciButtons(r.s.student_id)}</li>`),
     ...alreadyHere.map(r => `<li class="ci-row ci-here"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">Already checked in</div></div></div></li>`),
     ...others.map(s => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">Not in this cycle${s.belt_rank ? ' · ' + esc(s.belt_rank) : ''}</div></div></div><button class="go" data-ciadd="${esc(s.student_id)}" style="background:var(--surface);color:var(--accent);border:1px solid var(--accent)">Add + check in</button></li>`)
   ].join('') || `<li><div class="empty">${q ? 'No one by that name in this cycle.' : waiting.length ? '' : 'Everyone is checked in.'}</div></li>`;
   if (!q && waiting.length) $('#ciList').innerHTML = `<li><div class="empty" style="padding:14px">${waiting.length} still to check in. Start typing a name, or tap one below.</div></li>` +
-    waiting.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div></div></div>${ciButtons(r.s.student_id)}</li>`).join('');
+    waiting.map(r => `<li class="ci-row"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div>${owesTag(r.s.student_id)}</div></div>${ciButtons(r.s.student_id)}</li>`).join('');
   $('#ciHereHead').textContent = here.length ? `Here (${here.length})` : '';
   const canPay = state.sessionFees.length > 0;
   $('#ciHere').innerHTML = here.slice().sort((x, y) => String(y.a.recorded_at || '').localeCompare(String(x.a.recorded_at || '')) || x.s.full_name.localeCompare(y.s.full_name)).map(r => {
     const f = canPay && feeInfo(C.cycle, r.s.student_id), up = f && f.payment_plan === 'upfront', paid = f && paidAt(C.cycle, r.s.student_id, C.session);
-    return `<li class="ci-row ci-here"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div></div></div>
+    return `<li class="ci-row ci-here"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(r.s.full_name)}</div><div class="meta">${meta(r.s)}</div>${owesTag(r.s.student_id)}</div></div>
       ${f && f.payment_plan ? `<button class="pay" data-cipay="${esc(r.s.student_id)}" aria-pressed="${!!paid}" title="${up ? 'Paid upfront' : 'Paid for this session'}" aria-label="${up ? 'Paid upfront' : 'Paid for this session'}">$</button>` : ''}
       <button class="x" data-ciundo="${esc(r.s.student_id)}" title="Undo check-in" aria-label="Undo check-in for ${esc(r.s.full_name)}">↶</button></li>`; }).join('');
   if (!here.length) $('#ciHere').innerHTML = '';
