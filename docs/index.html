@@ -2389,7 +2389,7 @@ function glColumns(cid) {
     { k: 'student_id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'cert', t: 'Certificate name' },
     { k: 'belt', t: 'Current belt' }, { k: 'target', t: 'Grading to' }, { k: 'dan', t: 'Dan number' },
     ...sess.map(se => ({ k: 'att_' + se.session_number, t: isSignoff(se) ? 'Sign-off' : 'Session ' + se.session_number, group: 'sessions' })),
-    { k: 'attended', t: 'Sessions attended' }, { k: 'pct', t: 'Attendance %' }, { k: 'att_met', t: 'Attendance requirement met' },
+    { k: 'attended', t: 'Sessions attended' }, { k: 'pct', t: 'Attendance %' }, { k: 'att_met', t: 'Attendance requirement met' }, ...clsCols(),
     { k: 'readiness', t: 'Readiness' }, { k: 'rd_reason', t: 'Readiness reason' },
     { k: 'eligibility', t: 'Eligibility' }, { k: 'decision_reason', t: 'Decision reason' }, { k: 'put', t: 'Put forward' },
     { k: 'grading_date', t: 'Grading date' }, { k: 'status', t: 'Grading status' }, { k: 'result', t: 'Result' },
@@ -2399,7 +2399,7 @@ function glColumns(cid) {
   ].filter(c => !c.money || has('payments'));
 }
 function glValue(k, f, cid) {
-  const c = cycle(cid);
+  const c = cycle(cid), cv = clsVal(k, cid, f.s.student_id); if (cv !== undefined) return cv;
   if (k.startsWith('att_')) { const se = cycleSessions(cid).find(x => 'att_' + x.session_number === k); const a = se && state.attendance.find(x => x.session_id === se.session_id && x.student_id === f.s.student_id); return a ? ({ present: 'P', absent: 'A', excused: 'E', not_recorded: '' })[a.status] : ''; }
   return ({
     student_id: f.s.student_id, name: f.s.full_name, cert: f.s.certificate_name || f.s.full_name, belt: f.s.belt_rank || '', target: f.target || '',
@@ -2412,7 +2412,7 @@ function glValue(k, f, cid) {
   })[k] ?? '';
 }
 const GL_PRESETS = {
-  instructor: { name: 'Instructor list', audience: 'instructor', columns: ['name', 'belt', 'target', 'dan', 'sessions', 'att_met', 'readiness', 'eligibility', 'put'], filters: { who: 'put' } },
+  instructor: { name: 'Instructor list', audience: 'instructor', columns: ['name', 'belt', 'target', 'dan', 'sessions', 'att_met', 'cls', 'clsok', 'readiness', 'eligibility', 'put'], filters: { who: 'put' } },
   admin: { name: 'Admin list', audience: 'admin', columns: ['student_id', 'name', 'cert', 'belt', 'target', 'dan', 'attended', 'att_met', 'readiness', 'eligibility', 'put', 'sess_fee', 'sess_owing', 'grade_fee', 'grade_owing'], filters: { who: 'put' } }
 };
 const GL_WHO = { put: 'Put forward for grading', eligible: 'Eligible (put forward or not)', results: 'With a result', all: 'Everyone in the cycle' };
@@ -2737,6 +2737,10 @@ const cardText = sid => { if (!getsCard(sid)) return ''; const k = cardState(sid
 const attCell = (cid, se, sid) => { const a = state.attendance.find(x => x.session_id === se.session_id && x.student_id === sid); return a ? ({ present: 'P', absent: 'A', excused: 'E', not_recorded: '' })[a.status] : ''; };
 const inCycle = (cid, F) => [...enrolledIds(cid)].map(student).filter(Boolean).filter(s => !F.belt || s.belt_rank === F.belt).sort((a, b) => a.full_name.localeCompare(b.full_name));
 
+// Classes attended columns for exports (when supabase/prep-update-09.sql has been run)
+const clsCols = () => classesReady() ? [{ k: 'cls', t: 'Classes done' }, { k: 'clsneed', t: 'Classes needed' }, { k: 'clsok', t: 'Enough classes' }] : [];
+const clsVal = (k, cid, sid) => { if (!['cls', 'clsneed', 'clsok'].includes(k)) return undefined; const need = classesNeeded(cid, sid), n = classesOf(cid, sid);
+  return k === 'cls' ? n : k === 'clsneed' ? need ?? '' : need ? (n >= need ? 'Yes' : 'No') : ''; };
 const REPORTS = {
   register: {
     title: 'Student register', desc: 'Every student with belt, Dan number, card status and notes',
@@ -2761,16 +2765,17 @@ const REPORTS = {
       type: 'report_attendance', heading: 'Attendance by session', fileStem: 'attendance', title: () => 'Attendance',
       columns: () => { const c = cycle(cid0) || currentCycle() || state.cycles[0]; return [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' },
         ...cycleSessions(c.cycle_id).map(se => ({ k: 's' + se.session_number, t: isSignoff(se) ? 'Sign-off' : 'Session ' + se.session_number, group: 'sessions' })),
-        { k: 'att', t: 'Attended' }, { k: 'abs', t: 'Absent' }, { k: 'exc', t: 'Excused' }, { k: 'pct', t: 'Attendance %' }, { k: 'met', t: 'Requirement met' }, { k: 'paid', t: 'Paid sessions' }]; },
+        { k: 'att', t: 'Attended' }, { k: 'abs', t: 'Absent' }, { k: 'exc', t: 'Excused' }, { k: 'pct', t: 'Attendance %' }, { k: 'met', t: 'Requirement met' }, ...clsCols(), { k: 'paid', t: 'Paid sessions' }]; },
       value: (k, r) => { const { s, cid } = r, sum = summaryFor(cid, s.student_id) || {};
+        const cv = clsVal(k, cid, s.student_id); if (cv !== undefined) return cv;
         if (/^s\d+$/.test(k)) { const se = cycleSessions(cid).find(x => 's' + x.session_number === k); return se ? attCell(cid, se, s.student_id) : ''; }
         return ({ id: s.student_id, name: s.full_name, belt: s.belt_rank || '', att: sum.attended ?? 0, abs: sum.absences ?? 0, exc: sum.excused ?? 0,
           pct: sum.attendance_pct != null ? sum.attendance_pct + '%' : '', met: sum.attendance_eligible ? 'Yes' : 'No',
           paid: (() => { const f = feeInfo(cid, s.student_id); return !f ? '' : f.prepaid ? 'Paid upfront' : `${(f.paid_sessions || []).length}`; })() })[k] ?? ''; },
-      filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, beltFilter, { key: 'who', label: 'Show', options: [['all', 'Everyone'], ['notmet', 'Requirement not met'], ['absent', 'With absences']] }],
+      filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, beltFilter, { key: 'who', label: 'Show', options: [['all', 'Everyone'], ['notmet', 'Requirement not met'], ['absent', 'With absences'], ...(classesReady() ? [['clsok', 'Enough classes'], ['clsshort', 'Not enough classes']] : [])] }],
       rows: F => { const cid = F.cycle || cid0; return inCycle(cid, F).map(s => ({ s, cid })).filter(r => { const sum = summaryFor(cid, r.s.student_id) || {};
-        return F.who === 'notmet' ? !sum.attendance_eligible : F.who === 'absent' ? sum.absences > 0 : true; }); },
-      presets: { all: { name: 'Attendance', audience: 'instructor', columns: ['name', 'belt', 'sessions', 'att', 'pct', 'met'], filters: cid0 ? { cycle: cid0 } : {} } }, defaultPreset: 'all'
+        return F.who === 'notmet' ? !sum.attendance_eligible : F.who === 'absent' ? sum.absences > 0 : F.who === 'clsok' ? classEnough(cid, r.s.student_id) === true : F.who === 'clsshort' ? classEnough(cid, r.s.student_id) === false : true; }); },
+      presets: { all: { name: 'Attendance', audience: 'instructor', columns: ['name', 'belt', 'sessions', 'att', 'pct', 'met', 'cls', 'clsneed'], filters: cid0 ? { cycle: cid0 } : {} } }, defaultPreset: 'all'
     })
   },
   history: {
@@ -2778,14 +2783,14 @@ const REPORTS = {
     open: () => openListBuilder({
       type: 'report_history', heading: 'Attendance history', fileStem: 'attendance-history', title: () => 'Attendance history',
       columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'cycle', t: 'Cycle' }, { k: 'att', t: 'Attended' }, { k: 'pct', t: 'Attendance %' },
-        { k: 'signoff', t: 'Sign-off' }, { k: 'met', t: 'Requirement met' }, { k: 'rd', t: 'Readiness' }, { k: 'result', t: 'Grading result' }],
-      value: (k, r) => { const sum = summaryFor(r.c.cycle_id, r.s.student_id) || {}, g = gradingFor(r.c.cycle_id, r.s.student_id);
+        { k: 'signoff', t: 'Sign-off' }, { k: 'met', t: 'Requirement met' }, ...clsCols(), { k: 'rd', t: 'Readiness' }, { k: 'result', t: 'Grading result' }],
+      value: (k, r) => { const cv = clsVal(k, r.c.cycle_id, r.s.student_id); if (cv !== undefined) return cv; const sum = summaryFor(r.c.cycle_id, r.s.student_id) || {}, g = gradingFor(r.c.cycle_id, r.s.student_id);
         return ({ id: r.s.student_id, name: r.s.full_name, cycle: r.c.name, att: `${sum.attended ?? 0}/${cycleSessions(r.c.cycle_id).length}`, pct: sum.attendance_pct != null ? sum.attendance_pct + '%' : '',
           signoff: label(sum.signoff_status || 'not_recorded'), met: sum.attendance_eligible ? 'Yes' : 'No', rd: label((readinessFor(r.c.cycle_id, r.s.student_id) || {}).status || 'not_assessed'),
           result: g && g.result ? label(g.result) : '' })[k] ?? ''; },
       filters: [{ key: 'student', label: 'Student', options: [['', 'Everyone'], ...[...state.students].sort((a, b) => a.full_name.localeCompare(b.full_name)).map(s => [s.student_id, s.full_name])] }, beltFilter],
       rows: F => state.cycles.flatMap(c => inCycle(c.cycle_id, F).filter(s => !F.student || s.student_id === F.student).map(s => ({ s, c }))).sort((a, b) => a.s.full_name.localeCompare(b.s.full_name)),
-      presets: { all: { name: 'History', audience: 'instructor', columns: ['name', 'cycle', 'att', 'signoff', 'met', 'rd', 'result'], filters: {} } }, defaultPreset: 'all'
+      presets: { all: { name: 'History', audience: 'instructor', columns: ['name', 'cycle', 'att', 'signoff', 'met', 'cls', 'rd', 'result'], filters: {} } }, defaultPreset: 'all'
     })
   },
   readiness: {
@@ -2793,8 +2798,8 @@ const REPORTS = {
     open: () => openListBuilder({
       type: 'report_readiness', heading: 'Readiness', fileStem: 'readiness', title: () => 'Readiness',
       columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Name' }, { k: 'belt', t: 'Belt' }, { k: 'status', t: 'Readiness' }, { k: 'reason', t: 'Reason' },
-        { k: 'notes', t: 'Instructor notes' }, { k: 'next', t: 'Next action' }, { k: 'reviewed', t: 'Last reviewed' }, { k: 'by', t: 'Reviewed by' }, { k: 'att', t: 'Attended' }],
-      value: (k, r) => { const x = readinessFor(r.cid, r.s.student_id) || {}, sum = summaryFor(r.cid, r.s.student_id) || {};
+        { k: 'notes', t: 'Instructor notes' }, { k: 'next', t: 'Next action' }, { k: 'reviewed', t: 'Last reviewed' }, { k: 'by', t: 'Reviewed by' }, { k: 'att', t: 'Attended' }, ...clsCols()],
+      value: (k, r) => { const cv = clsVal(k, r.cid, r.s.student_id); if (cv !== undefined) return cv; const x = readinessFor(r.cid, r.s.student_id) || {}, sum = summaryFor(r.cid, r.s.student_id) || {};
         return ({ id: r.s.student_id, name: r.s.full_name, belt: r.s.belt_rank || '', status: label(x.status || 'not_assessed'), reason: x.reason ? RD_REASONS[x.reason] : '',
           notes: x.notes || '', next: x.next_action || '', reviewed: x.reviewed_at ? fmt(x.reviewed_at) : '', by: x.reviewed_by || '', att: `${sum.attended ?? 0}/${cycleSessions(r.cid).length}` })[k] ?? ''; },
       filters: [{ key: 'cycle', label: 'Cycle', options: cycleOptions() }, { key: 'status', label: 'Readiness', options: [['', 'Any'], ...RD_STATUSES.map(st => [st, label(st)])] }, beltFilter],

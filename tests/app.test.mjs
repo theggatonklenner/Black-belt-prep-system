@@ -712,6 +712,7 @@ try {
     await page.selectOption('#lbTpl', 'preset:instructor'); await page.selectOption('#lbF_who', 'all');
     const head = await page.textContent('#lbPreview tr');
     ok(head.includes('Name') && head.includes('Grading to') && head.includes('Sign-off') && !head.includes('owing'), 'instructor list has grading-to, attendance and no fees');
+    ok(head.includes('Classes done') && head.includes('Enough classes'), 'the grading list includes classes done');
     const body = await page.textContent('#lbPreview');
     ok(body.includes('Alex Smith') && body.includes('Probationary Black Belt'), 'list shows the next belt for each student');
     await page.selectOption('#lbTpl', 'preset:admin'); await page.selectOption('#lbF_who', 'all');
@@ -862,6 +863,12 @@ try {
     ok((await page.textContent('#lbPreview tr')).includes('Balance'), 'payments report shows amounts');
     await page.selectOption('#lbTpl', 'preset:all');
     ok((await page.textContent('#lbPreview')).includes('Riley Chen'), 'payments report "All fees" lists fees');
+    await page.click('#sheet [data-close]');
+    await page.click('[data-report="attendance"]'); await page.waitForSelector('#lbPreview');
+    const attHead = await page.textContent('#lbPreview tr');
+    ok(attHead.includes('Classes done') && attHead.includes('Classes needed'), 'the attendance export includes classes done and needed');
+    const whoOpts = await page.$$eval('#lbF_who option', os => os.map(o => o.value));
+    ok(whoOpts.includes('clsok') && whoOpts.includes('clsshort'), 'and can show just those with enough, or not enough, classes');
     await page.click('#sheet [data-close]');
     await page.click('[data-report="cards"]'); await page.waitForSelector('#lbPreview');
     const cardsRep = await page.textContent('#lbPreview');
