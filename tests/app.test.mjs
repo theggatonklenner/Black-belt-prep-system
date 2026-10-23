@@ -317,7 +317,7 @@ try {
   const cr = await q(`select classes_required from prep_cycles where cycle_id = $1`, [c1.cycle_id]);
   ok(ce[0].classes_attended === 10 && cr[0].classes_required === 12, 'classes are recorded for each student (typed, + and −), and the cycle can require a number');
   const dash2 = await page.textContent('#view-dashboard');
-  ok(dash2.includes('Below 12 classes') && /0 of 12 classes|10 of 12 classes/.test(dash2), 'students below the classes required are counted and listed under Needs attention');
+  ok(dash2.includes('Below the classes needed') && /0 of 12 classes|10 of 12 classes/.test(dash2), 'students below the classes required are counted and listed under Needs attention');
   await page.click('#view-dashboard .item:has-text("of 12 classes")'); await page.waitForSelector('#clsForm');
   ok((await page.$$('#clsForm [data-cls]')).length === 1, 'tapping one opens just that student');
   await page.click('#clsForm [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
@@ -340,6 +340,22 @@ try {
   await page.fill('#impText', `${enr[1].full_name}\t3`); await page.waitForSelector('#impPreview table');
   await page.click('#impPreview [data-clsmode="add"]'); await page.click('#impGo'); await confirm(page); await page.waitForTimeout(600);
   ok((await q(`select classes_attended from prep_enrolments where cycle_id = $1 and student_id = $2`, [c1.cycle_id, enr[1].student_id]))[0].classes_attended === 10, 'a pasted list without headings works, and Add to the totals adds');
+  // Filters: enough and not enough classes (the cycle needs 12 here)
+  await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+  await page.click('#view-dashboard [data-clsgo="short"]'); await page.waitForSelector('#clsForm');
+  const vis = async () => page.$$eval('#clsList li[data-name]', ls => ls.filter(l => !l.hidden).map(l => l.dataset.name));
+  let shown = await vis();
+  ok(shown.includes(enr[1].full_name.toLowerCase()) && !shown.includes(enr[0].full_name.toLowerCase()), '"Below the classes needed" opens the list showing just those without enough');
+  await page.click('#clsForm [data-clsshow="enough"]'); shown = await vis();
+  ok(shown.includes(enr[0].full_name.toLowerCase()) && !shown.includes(enr[1].full_name.toLowerCase()), 'and Enough classes shows the others');
+  await page.click('#clsForm [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+  await tab(page, 'students');
+  await page.selectOption('#studentClasses', 'short');
+  let sl = await page.textContent('#studentList');
+  ok(sl.includes(enr[1].full_name) && !sl.includes(enr[0].full_name) && sl.includes('10/12 classes'), 'the Students list filters by not enough classes, and shows each count');
+  await page.selectOption('#studentClasses', 'enough'); sl = await page.textContent('#studentList');
+  ok(sl.includes(enr[0].full_name) && !sl.includes(enr[1].full_name), 'and by enough classes');
+  await page.selectOption('#studentClasses', ''); await tab(page, 'dashboard');
   await tab(page, 'students');
   ok((await page.textContent('#studentList')).includes('Dan no. 501'), 'student list shows Dan numbers');
   await tab(page, 'dashboard');
@@ -388,6 +404,17 @@ try {
   await page.fill('#setReq', '3'); await page.click('#setForm button[type=submit]'); await settle(page);
   ok((await q(`select sessions_required from prep_settings`))[0].sessions_required === 3, 'settings saved');
   ok((await q(`select next_number from prep_dan_counters where target_rank = '2nd Dan'`))[0]?.next_number === 301, 'next number for 2nd Dan saved');
+  // Classes needed for each belt
+  const pick = await page.evaluate(cid => { for (const id of enrolledIds(cid)) { const s = student(id), nb = s && nextBelt(s.belt_rank); if (nb) return { id, name: s.full_name, nb, have: classesOf(cid, id) }; } return null; }, c1.cycle_id);
+  ok(!!pick && (await page.$$('#setForm [data-creq]')).length > 20, 'settings list classes needed for each belt');
+  if (pick) {
+    if (!await page.isVisible(`#setForm [data-creq="${pick.nb}"]`)) await page.click('#setForm summary:has-text("Classes needed for each belt")');
+    await page.fill(`#setForm [data-creq="${pick.nb}"]`, String(pick.have + 5)); await page.click('#setForm button[type=submit]'); await settle(page);
+    ok((await q(`select classes from prep_class_requirements where target_rank = $1`, [pick.nb]))[0]?.classes === pick.have + 5, `the classes needed for ${pick.nb} are saved`);
+    await tab(page, 'dashboard');
+    ok((await page.textContent('#view-dashboard')).includes(`${pick.have} of ${pick.have + 5} classes`), `${pick.name} (going for ${pick.nb}) is measured against that belt's number, not the cycle's`);
+    await tab(page, 'more'); await page.waitForSelector('#userList ul');
+  }
   await page.click('#addUserBtn'); await page.fill('#uEmail', 'Coach@AMA.test'); await page.check('#uForm input[value="instructor"]'); await page.click('#uForm button[type=submit]'); await settle(page);
   ok((await q(`select role from prep_roles where email = 'coach@ama.test'`)).map(r => r.role).join() === 'instructor', 'admin adds a user with a role');
   await page.waitForSelector('#auditList table');
@@ -581,7 +608,7 @@ try {
     await tab(page, 'dashboard');
     const d = await page.textContent('#view-dashboard');
     ok(d.includes('Not ready for grading') && d.includes('Not ready for grading: technique requires improvement'), 'dashboard counts readiness and lists the not-ready student in Needs attention');
-    await page.click('#view-dashboard .item:has-text("Riley Chen")');
+    await page.click('#view-dashboard .item:has-text("Riley Chen"):has-text("Not ready")');
     await page.waitForSelector('#rdForm');
     ok((await page.textContent('#sheet')).includes('Riley Chen'), 'Needs attention opens the readiness record');
     await page.check('#rdForm [name=rdStatus][value=on_track]'); await page.click('#rdSave'); await settle(page);

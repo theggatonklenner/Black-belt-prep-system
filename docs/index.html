@@ -311,6 +311,7 @@
         <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">Active and inactive</option>
       </select>
       <select id="studentCard" aria-label="ID card" style="grid-column:1 / -1"><option value="">All ID card statuses</option><option value="notprinted">No ID card printed</option><option value="printed">ID card printed</option></select>
+      <select id="studentClasses" aria-label="Classes attended" style="grid-column:1 / -1" hidden><option value="">All class counts</option><option value="enough">Enough classes</option><option value="short">Not enough classes</option></select>
     </div>
     <label class="check need-admin"><input type="checkbox" id="studentShowTest"> Show test records</label>
     <ul class="list" id="studentList"></ul>
@@ -581,7 +582,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, classReqs: [], danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', card: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -602,6 +603,11 @@ function cycleWhen(c, long = false) {
 // Regular classes attended in a cycle (needs supabase/prep-update-09.sql)
 const classesReady = () => state.enrolments.some(e => 'classes_attended' in e);
 const classesOf = (cid, sid) => enrolment(cid, sid).classes_attended || 0;
+const beltClasses = rank => { const r = (state.classReqs || []).find(x => x.target_rank === rank); return r ? r.classes : null; };
+// Classes a student needs: set for the belt they're going for, else the cycle's number (or none)
+// Has a student in the cycle done the classes they need? (true / false; null if not in the cycle or nothing is set)
+const classEnough = (cid, sid) => { if (!cid || !enrolledIds(cid).has(sid)) return null; const need = classesNeeded(cid, sid); return need ? classesOf(cid, sid) >= need : null; };
+const classesNeeded = (cid, sid) => { const s = student(sid), c = cycle(cid); return (s && beltClasses(nextBelt(s.belt_rank))) || (c && c.classes_required) || null; };
 const enrolledIds = id => new Set(state.enrolments.filter(e => e.cycle_id === id).map(e => e.student_id));
 const summaryFor = (cid, sid) => state.summary.find(s => s.cycle_id === cid && s.student_id === sid);
 const overviewFor = (cid, sid) => state.overview.find(s => s.cycle_id === cid && s.student_id === sid);
@@ -632,6 +638,9 @@ async function loadAll() {
   const rates = await sb.from('prep_grading_fee_rates').select('*');
   state.gradingReady = !rates.error;
   state.gradingRates = rates.data || [];
+  // Classes needed for each belt (supabase/prep-update-09.sql)
+  const creq = await sb.from('prep_class_requirements').select('*');
+  state.classReqs = creq.error ? null : (creq.data || []);
   // Who pays per session and which sessions they've paid at (no amounts); needs supabase/prep-update-03.sql
   const fees = canEditAttendance() ? await sb.rpc('prep_session_fees', { p_cycle: null }) : { data: [] };
   state.sessionFees = fees.error ? [] : (fees.data || []);
@@ -712,10 +721,11 @@ function renderDashboard() {
   const sFees = has('payments') ? state.payments.filter(p => (p.kind || 'sessions') === 'sessions' && p.cycle_id === c.cycle_id) : [];
   const sOwing = sFees.filter(p => OWING.includes(p.status)), sOverdue = sFees.filter(p => p.status === 'overdue');
   const owingTotal = [...sFees, ...gFees].filter(p => OWING.includes(p.status)).reduce((t, p) => t + Number(p.balance), 0);
-  const clsReq = classesReady() ? c.classes_required || null : null;
-  const clsBelow = clsReq ? rows.filter(r => classesOf(c.cycle_id, r.s.student_id) < clsReq) : [];
+  const clsNeed = r => classesReady() ? classesNeeded(c.cycle_id, r.s.student_id) : null;
+  const clsSet = rows.filter(r => clsNeed(r));
+  const clsBelow = clsSet.filter(r => classesOf(c.cycle_id, r.s.student_id) < clsNeed(r));
   const attention = [
-    ...clsBelow.map(r => ({ r, issue: `${classesOf(c.cycle_id, r.s.student_id)} of ${clsReq} classes`, tone: 'warn', open: 'classes' })),
+    ...clsBelow.map(r => ({ r, issue: `${classesOf(c.cycle_id, r.s.student_id)} of ${clsNeed(r)} classes`, tone: 'warn', open: 'classes' })),
     ...rows.filter(r => ['not_ready', 'needs_preparation'].includes(rdOf(r))).map(r => { const x = readinessFor(c.cycle_id, r.s.student_id);
       return { r, issue: `${label(x.status)}${x.reason ? ': ' + RD_REASONS[x.reason].toLowerCase() : ''}`, tone: x.status === 'not_ready' ? 'bad' : 'warn', open: 'readiness' }; }),
     ...sOverdue.map(p => ({ r: rows.find(r => r.s.student_id === p.student_id), issue: `Session fees overdue (${money(p.balance)})`, tone: 'bad', pid: p.payment_id })).filter(a => a.r),
@@ -749,8 +759,8 @@ function renderDashboard() {
       return `<div class="row"><h3 class="grow">Classes attended</h3>${canEditAttendance() ? '<button class="btn sm" id="dashClassesImp">Import</button><button class="btn sm" id="dashClasses">Record classes</button>' : ''}</div>
       <div class="stats">
         <button class="stat" data-clsgo><span class="n">${Math.round(tot / n.length * 10) / 10}</span><span class="l">Average per student</span></button>
-        ${clsReq ? `<button class="stat" data-clsgo><span class="n">${rows.length - clsBelow.length}</span><span class="l">Done all ${clsReq} classes required</span></button>
-        <button class="stat ${clsBelow.length ? 'warn' : ''}" data-clsgo><span class="n">${clsBelow.length}</span><span class="l">Below ${clsReq} classes</span></button>`
+        ${clsSet.length ? `<button class="stat" data-clsgo="enough"><span class="n">${clsSet.length - clsBelow.length}</span><span class="l">Done the classes needed</span></button>
+        <button class="stat ${clsBelow.length ? 'warn' : ''}" data-clsgo="short"><span class="n">${clsBelow.length}</span><span class="l">Below the classes needed</span></button>`
         : `<button class="stat" data-clsgo><span class="n">${n.filter(x => x === 0).length}</span><span class="l">No classes recorded</span></button>`}
       </div>`; })() : ''}
     <h3>Readiness</h3>
@@ -786,7 +796,7 @@ function renderDashboard() {
   $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
   const dcl = $('#dashClasses'); if (dcl) dcl.onclick = () => openClasses(c.cycle_id);
   const dci2 = $('#dashClassesImp'); if (dci2) dci2.onclick = () => openImportClasses(c.cycle_id);
-  $$('#view-dashboard [data-clsgo]').forEach(b => b.onclick = () => openClasses(c.cycle_id));
+  $$('#view-dashboard [data-clsgo]').forEach(b => b.onclick = () => openClasses(c.cycle_id, null, b.dataset.clsgo || ''));
   $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => b.dataset.open === 'classes' ? openClasses(c.cycle_id, b.dataset.student) : b.dataset.open === 'readiness' ? openReadiness(c.cycle_id, b.dataset.student)
     : b.dataset.pid ? openPayment(b.dataset.pid) : openStudent(b.dataset.student));
   $$('#view-dashboard [data-rdgo]').forEach(b => b.onclick = () => { state.rd.cycle = c.cycle_id; state.rd.status = b.dataset.rdgo; showView('readiness'); });
@@ -798,19 +808,21 @@ function renderDashboard() {
 /* =========================================================================
    Students
    ========================================================================= */
-['#studentSearch', '#studentBelt', '#studentStatus', '#studentCard', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
+['#studentSearch', '#studentBelt', '#studentStatus', '#studentCard', '#studentClasses', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
 $('#addStudentBtn').onclick = () => openStudentForm();
 $('#exportStudentsBtn').onclick = () => REPORTS.register.open();
 $('#importStudentsBtn').onclick = () => openImportStudents();
 
 function visibleStudents() {
   const q = $('#studentSearch').value.trim().toLowerCase(), belt = $('#studentBelt').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked, card = $('#studentCard').value;
-  return state.students.filter(s =>
+  const cls = $('#studentClasses').hidden ? '' : $('#studentClasses').value, cc = currentCycle();
+  return state.students.filter(s => (!cls || classEnough(cc && cc.cycle_id, s.student_id) === (cls === 'enough')) &&
     (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!belt || s.belt_rank === belt) && cardMatch(s.student_id, card) &&
     (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q)));
 }
 function renderStudents() {
   const sel = $('#studentBelt'); if (!sel.options.length) sel.innerHTML = beltOptions('', 'All belts');
+  $('#studentClasses').hidden = !(classesReady() && currentCycle());   // the current cycle's classes
   const list = visibleStudents(), c = currentCycle();
   $('#studentCount').textContent = `${list.length}`;
   const dups = state.duplicates.filter(d => student(d.student_a)?.is_active && student(d.student_b)?.is_active);
@@ -822,7 +834,8 @@ function renderStudents() {
     return `<li><button class="item" data-student="${esc(s.student_id)}">
       ${stuSel.on ? `<input type="checkbox" tabindex="-1" ${stuSel.ids.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}" style="pointer-events:none">` : ''}
       <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}</div></div>
-      ${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}
+      ${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}${c && enrolled.has(s.student_id) && classesReady() ? (() => { const n = classesOf(c.cycle_id, s.student_id), need = classesNeeded(c.cycle_id, s.student_id);
+        return tag(need ? (n >= need ? 'present' : 'warn') : '', `${n}${need ? '/' + need : ''} classes`); })() : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
   $$('#studentList [data-student]').forEach(b => b.onclick = () => {
@@ -900,26 +913,32 @@ async function bulkStudents(action, list) {
 }
 
 // Record how many regular classes each student has attended this cycle (one student, or everyone at once)
-function openClasses(cid, only) {
+function openClasses(cid, only, show = '') {
   const c = cycle(cid); if (!c) return;
   const edit = canEditAttendance() && c.status !== 'archived';
   const ids = [...enrolledIds(cid)].filter(id => student(id) && (!only || id === only)).sort((a, b) => student(a).full_name.localeCompare(student(b).full_name));
   const req = c.classes_required;
-  openSheet(`<form id="clsForm">${sheetHead(only ? student(only).full_name : 'Classes attended', `${esc(c.name)}${req ? ` · ${req} classes required` : ''}`)}
-    ${only ? '' : '<div class="field"><input type="search" id="clsFind" placeholder="Find a student" autocomplete="off" aria-label="Find a student"></div>'}
+  openSheet(`<form id="clsForm">${sheetHead(only ? student(only).full_name : 'Classes attended', esc(c.name))}
+    ${only ? '' : `<div class="field"><input type="search" id="clsFind" placeholder="Find a student" autocomplete="off" aria-label="Find a student"></div>
+      <div class="seg" role="group" aria-label="Show"><button type="button" data-clsshow="" aria-pressed="${!show}">All</button><button type="button" data-clsshow="enough" aria-pressed="${show === 'enough'}">Enough classes</button><button type="button" data-clsshow="short" aria-pressed="${show === 'short'}">Not enough</button></div>`}
     <ul class="list" id="clsList">${ids.map(id => { const s = student(id), n = classesOf(cid, id), e = enrolment(cid, id);
-      return `<li data-name="${esc(s.full_name.toLowerCase())}"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}${e.classes_updated_at ? ` · updated ${fmtShort(e.classes_updated_at.slice(0, 10))}` : ''}</div></div>
+      const need = classesNeeded(cid, id);
+    return `<li data-name="${esc(s.full_name.toLowerCase())}" data-enough="${classEnough(cid, id) === true ? 'enough' : classEnough(cid, id) === false ? 'short' : ''}"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, need ? `needs ${need}` : ''].filter(Boolean).join(' · '))}${e.classes_updated_at ? ` · updated ${fmtShort(e.classes_updated_at.slice(0, 10))}` : ''}</div></div>
         ${edit ? `<div class="row" style="gap:6px;flex-wrap:nowrap"><button type="button" class="btn sm" data-cls-dn="${esc(id)}" aria-label="One less for ${esc(s.full_name)}">−</button>
           <input type="number" data-cls="${esc(id)}" value="${n}" min="0" max="999" step="1" inputmode="numeric" aria-label="Classes attended by ${esc(s.full_name)}" style="width:72px;text-align:center">
           <button type="button" class="btn sm" data-cls-up="${esc(id)}" aria-label="One more for ${esc(s.full_name)}">+</button></div>`
-        : `<span class="tag ${req && n < req ? 'warn' : ''}">${n}${req ? ' of ' + req : ''}</span>`}</div></li>`; }).join('') || '<li class="muted">No students in this cycle.</li>'}</ul>
-    ${!only && has('admin') && c.status !== 'archived' ? `<div class="field"><label for="clsReq">Classes required this cycle (optional)</label><input type="number" id="clsReq" min="1" max="999" step="1" value="${req || ''}" placeholder="No minimum"><p class="hint">Students below this show under Needs attention on the dashboard.</p></div>` : ''}
+        : `<span class="tag ${need && n < need ? 'warn' : ''}">${n}${need ? ' of ' + need : ''}</span>`}</div></li>`; }).join('') || '<li class="muted">No students in this cycle.</li>'}</ul>
+    ${!only && has('admin') && c.status !== 'archived' ? `<div class="field"><label for="clsReq">Classes required this cycle (optional)</label><input type="number" id="clsReq" min="1" max="999" step="1" value="${req || ''}" placeholder="No minimum"><p class="hint">For belts without their own number${state.classReqs ? ' (set in More &gt; Settings &gt; Classes needed for each belt)' : ''}. Students below what they need show under Needs attention on the dashboard.</p></div>` : ''}
     <div class="dlg-actions">${edit && !only ? '<button type="button" class="btn" id="clsImport" style="margin-right:auto">Import</button>' : ''}<button type="button" class="btn" data-close>${edit ? 'Cancel' : 'Close'}</button>${edit ? '<button type="submit" class="btn primary" id="clsSave">Save</button>' : ''}</div></form>`);
   const ci = $('#clsImport'); if (ci) ci.onclick = () => openImportClasses(cid);
   const box = id => sheet.querySelector(`[data-cls="${CSS.escape(id)}"]`);
   sheet.querySelectorAll('[data-cls-up]').forEach(b => b.onclick = () => { const i = box(b.dataset.clsUp); i.value = Math.min(999, (+i.value || 0) + 1); });
   sheet.querySelectorAll('[data-cls-dn]').forEach(b => b.onclick = () => { const i = box(b.dataset.clsDn); i.value = Math.max(0, (+i.value || 0) - 1); });
-  const find = $('#clsFind'); if (find) find.oninput = () => { const t = find.value.trim().toLowerCase(); sheet.querySelectorAll('#clsList li[data-name]').forEach(li => li.hidden = !!t && !li.dataset.name.includes(t)); };
+  const filt = () => { const t = find ? find.value.trim().toLowerCase() : '';
+    sheet.querySelectorAll('#clsList li[data-name]').forEach(li => li.hidden = (!!t && !li.dataset.name.includes(t)) || (!!show && li.dataset.enough !== show)); };
+  const find = $('#clsFind'); if (find) find.oninput = filt;
+  sheet.querySelectorAll('[data-clsshow]').forEach(b => b.onclick = () => { show = b.dataset.clsshow; sheet.querySelectorAll('[data-clsshow]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); filt(); });
+  filt();
   $('#clsForm').onsubmit = async e => {
     e.preventDefault(); if (!edit) return sheet.close();
     const changed = [];
@@ -1015,7 +1034,7 @@ function openStudent(id) {
       <div class="row"><div class="sess-cells">${att.map((a, i) => `<span class="cell ${a}" title="${esc(sessName(sess[i]))}: ${label(a)}"${i === att.length - 1 ? ' style="outline:2px solid var(--gold);outline-offset:1px"' : ''}>${a === 'not_recorded' ? i + 1 : a[0].toUpperCase()}</span>`).join('')}</div>
       <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''} · sign-off: ${label(sum.signoff_status || 'not_recorded').toLowerCase()}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
       <dl class="kv">
-        ${classesReady() ? `<dt>Classes</dt><dd><b>${classesOf(cy.cycle_id, id)}</b>${cy.classes_required ? ` of ${cy.classes_required} required` : ''} attended${canEditAttendance() && cy.status !== 'archived' ? ` <button class="btn sm ghost" data-clsopen="${cy.cycle_id}" style="min-height:0;padding:0 6px">Update</button>` : ''}</dd>` : ''}
+        ${classesReady() ? `<dt>Classes</dt><dd><b>${classesOf(cy.cycle_id, id)}</b>${classesNeeded(cy.cycle_id, id) ? ` of ${classesNeeded(cy.cycle_id, id)} needed` : ''} attended${canEditAttendance() && cy.status !== 'archived' ? ` <button class="btn sm ghost" data-clsopen="${cy.cycle_id}" style="min-height:0;padding:0 6px">Update</button>` : ''}</dd>` : ''}
         <dt>Readiness</dt><dd>${tag((readinessFor(cy.cycle_id, id) || {}).status || ov.readiness)}${(() => { const x = readinessFor(cy.cycle_id, id); return x && x.reason ? ` <span class="small muted">${esc(RD_REASONS[x.reason])}</span>` : ''; })()}
           <button class="btn sm ghost" data-rdopen="${cy.cycle_id}" style="min-height:0;padding:0 6px">${canReadiness() ? 'Update' : 'View'}</button></dd>
         ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${ov.payment_status === 'not_invoiced' && Number(ov.amount_due) === 0 && (sessionPay(cy.cycle_id, id) || {}).payment_plan === 'per_session' ? tag('', 'Nothing owed yet') : tag(ov.payment_status)} <span class="small muted">${money(ov.amount_paid)} of ${money(ov.amount_due)}</span></dd>` : ''}
@@ -2904,6 +2923,10 @@ async function renderMore() {
         <p class="hint" style="margin:8px 0">The fee for grading to each belt. Charged to students marked as grading in a cycle, due 3 weeks before the grading date. Leave blank if not used.</p>
         <div class="grid2">${BELTS.slice(1).map((b, i) => `<div class="field"><label for="setGF${i}">${esc(b)}</label><input type="number" id="setGF${i}" data-gfee="${esc(b)}" min="0" step="0.01" placeholder="Not set" value="${gradingRate(b) != null ? gradingRate(b).toFixed(2) : ''}"></div>`).join('')}</div>
       </details></div>` : ''}
+      ${state.classReqs ? `<div class="section"><details${state.classReqs.length ? '' : ' open'}><summary><b>Classes needed for each belt</b> <span class="muted small">${state.classReqs.length} of ${BELTS.length - 1} set</span></summary>
+        <p class="hint" style="margin:8px 0">How many classes a student needs before grading to each belt. Students below it show under Needs attention on the dashboard. A belt left blank uses the cycle's number, if one is set.</p>
+        <div class="grid2">${BELTS.slice(1).map((b, i) => `<div class="field"><label for="setCR${i}">${esc(b)}</label><input type="number" id="setCR${i}" data-creq="${esc(b)}" min="1" max="999" step="1" placeholder="Not set" value="${beltClasses(b) ?? ''}"></div>`).join('')}</div>
+      </details></div>` : ''}
       <div class="section"><h3>Next Dan numbers</h3>
       ${state.countersReady ? `<div class="grid2">${DAN_RANKS.map((r, i) => `<div class="field"><label for="setDan${i}">${esc(r.replace(' Black Belt', ''))}</label><input type="number" id="setDan${i}" data-rank="${esc(r)}" min="1" step="1" placeholder="Not set" value="${nextDan(r) ?? ''}"></div>`).join('')}</div>
       <p class="hint">Each rank has its own numbers. Students going for that rank get the next number when they join a cycle, then it goes up by one per person. Numbers are never reused, and someone repeating the same grading keeps theirs. Leave blank to stop numbering for that rank.</p>`
@@ -2941,6 +2964,14 @@ async function renderMore() {
         else if (cur == null) await run(sb.from('prep_grading_fee_rates').insert({ target_rank: rank, fee: want }));
         else await run(sb.from('prep_grading_fee_rates').update({ fee: want }).eq('target_rank', rank));
       }
+      for (const inp of $$('#setForm [data-creq]')) {
+        const rank = inp.dataset.creq, cur = beltClasses(rank), want = inp.value === '' ? null : Number(inp.value);
+        if (want === cur) continue;
+        if (want != null && !(Number.isInteger(want) && want >= 1 && want <= 999)) throw new Error(`${rank}: classes needed must be a whole number from 1 to 999.`);
+        if (want == null) await run(sb.from('prep_class_requirements').delete().eq('target_rank', rank));
+        else if (cur == null) await run(sb.from('prep_class_requirements').insert({ target_rank: rank, classes: want }));
+        else await run(sb.from('prep_class_requirements').update({ classes: want, updated_at: new Date().toISOString() }).eq('target_rank', rank));
+      }
       toast('Settings saved');
       await loadAll();
     } catch (err) { toast(errMsg(err), 6000); }
@@ -2956,7 +2987,7 @@ async function renderMore() {
     `<li><button class="item" data-user="${esc(em)}"><div class="main"><div class="name" style="font-weight:400;color:var(--fg)">${esc(em)}</div><div class="meta">${rs.map(r => ROLE_NAMES[r]).join(', ')}</div></div></button></li>`).join('')}</ul>` : 'No users.';
   $$('[data-user]').forEach(b => b.onclick = () => openUser(b.dataset.user, byEmail[b.dataset.user]));
   const TABLES = { prep_students: 'Student', prep_cycles: 'Cycle', prep_sessions: 'Session', prep_enrolments: 'Enrolment', prep_attendance: 'Attendance',
-    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_grading_fee_rates: 'Grading fee', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
+    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_grading_fee_rates: 'Grading fee', prep_class_requirements: 'Classes needed', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
   const desc = l => {
     const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
     let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;

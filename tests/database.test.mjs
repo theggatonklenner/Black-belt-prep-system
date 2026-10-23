@@ -526,6 +526,10 @@ console.log('\nClasses attended');
   await as(ADMIN, () => db.query(`update prep_cycles set classes_required = 20 where cycle_id = $1`, [e.cycle_id]));
   ok((await one(`select classes_required from prep_cycles where cycle_id = $1`, [e.cycle_id])).classes_required === 20, 'a cycle can require a number of classes');
   await fails(() => as(ADMIN, () => db.query(`update prep_cycles set classes_required = 0 where cycle_id = $1`, [e.cycle_id])), /classes_required/, 'the requirement is at least 1');
+  await as(ADMIN, () => db.exec(`insert into prep_class_requirements (target_rank, classes) values ('2nd Dan', 30)`));
+  ok((await one(`select classes from prep_class_requirements where target_rank = '2nd Dan'`)).classes === 30, 'admins set the classes needed for each belt');
+  await fails(() => as('inst@ama.test', () => db.exec(`insert into prep_class_requirements (target_rank, classes) values ('3rd Dan', 30)`)), /row-level security|permission/, 'others cannot');
+  ok((await as('view@ama.test', () => rows(`select * from prep_class_requirements`))).length === 1, 'everyone can see them');
 }
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace

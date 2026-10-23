@@ -32,3 +32,20 @@ begin
 end $$;
 revoke all on function public.prep_set_classes(uuid, text, int) from public, anon;
 grant execute on function public.prep_set_classes(uuid, text, int) to authenticated;
+
+-- Classes needed for each belt (the belt being graded to). A belt with no number set uses the
+-- cycle's "classes required", if any.
+create table if not exists public.prep_class_requirements (
+  target_rank text primary key,
+  classes     int not null check (classes between 1 and 999),
+  updated_at  timestamptz not null default now()
+);
+alter table public.prep_class_requirements enable row level security;
+drop policy if exists "read" on public.prep_class_requirements;
+drop policy if exists "write" on public.prep_class_requirements;
+create policy "read"  on public.prep_class_requirements for select to authenticated using (public.prep_can_view());
+create policy "write" on public.prep_class_requirements for all    to authenticated using (public.prep_has_role('admin')) with check (public.prep_has_role('admin'));
+grant select, insert, update, delete on public.prep_class_requirements to authenticated;
+drop trigger if exists prep_class_requirements_audit on public.prep_class_requirements;
+create trigger prep_class_requirements_audit after insert or update or delete on public.prep_class_requirements
+  for each row execute function public.prep_audit('target_rank');
