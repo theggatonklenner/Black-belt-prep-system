@@ -855,6 +855,7 @@ try {
     ok((await page.textContent('#lbPreview')).includes('Alex Smith') && (await page.textContent('#lbPreview tr')).includes('ID card'), 'student register shows students with their ID card status');
     const taylorRow = await page.textContent('#lbPreview tr:has-text("Taylor Brown")');
     ok(!taylorRow.includes('card'), 'register shows no card status for students not going for a Dan');
+    ok((await page.textContent('#lbPreview tr')).includes('Classes done') && !!(await page.$('#lbF_cls')), 'the student register export includes classes done, with an enough / not enough filter');
     let dl = page.waitForEvent('download'); await page.click('#lbXlsx'); let f = await dl;
     let wb = await readXlsx(f), rowsX = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
     ok(/student-register-.*\.xlsx$/.test(f.suggestedFilename()) && rowsX[0][0] === 'Student register' && rowsX.some(r => r.includes('Alex Smith')), 'Excel download contains the report with a title');

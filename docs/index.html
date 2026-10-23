@@ -2748,15 +2748,17 @@ const REPORTS = {
       type: 'report_register', heading: 'Student register', fileStem: 'student-register', title: () => 'Student register',
       columns: () => [{ k: 'id', t: 'Student ID' }, { k: 'name', t: 'Full name' }, { k: 'cert', t: 'Certificate name' }, { k: 'belt', t: 'Belt' }, { k: 'next', t: 'Next belt' },
         { k: 'dan', t: 'Dan number' }, { k: 'active', t: 'Active' }, { k: 'test', t: 'Test record' }, { k: 'added', t: 'Date added' }, { k: 'card', t: 'ID card' },
-        { k: 'cycles', t: 'Cycles' }, { k: 'notes', t: 'Notes' }],
-      value: (k, s) => ({ id: s.student_id, name: s.full_name, cert: s.certificate_name || '', belt: s.belt_rank || '', next: nextBelt(s.belt_rank) || '', dan: (danFor(s) || {}).dan_number ?? '',
+        { k: 'cycles', t: 'Cycles' }, ...(currentCycle() ? clsCols() : []), { k: 'notes', t: 'Notes' }],
+      value: (k, s) => { const cc = currentCycle(); if (cc && ['cls', 'clsneed', 'clsok'].includes(k)) return enrolledIds(cc.cycle_id).has(s.student_id) ? clsVal(k, cc.cycle_id, s.student_id) : ''; return ({ id: s.student_id, name: s.full_name, cert: s.certificate_name || '', belt: s.belt_rank || '', next: nextBelt(s.belt_rank) || '', dan: (danFor(s) || {}).dan_number ?? '',
         active: s.is_active ? 'Yes' : 'No', test: s.is_test ? 'Yes' : '', added: fmt(s.date_added), card: cardText(s.student_id),
-        cycles: state.cycles.filter(c => enrolledIds(c.cycle_id).has(s.student_id)).map(c => c.name).join(', '), notes: s.notes || '' })[k] ?? '',
+        cycles: state.cycles.filter(c => enrolledIds(c.cycle_id).has(s.student_id)).map(c => c.name).join(', '), notes: s.notes || '' })[k] ?? ''; },
       filters: [{ key: 'status', label: 'Students', options: [['active', 'Active'], ['inactive', 'Inactive'], ['all', 'Active and inactive']] }, beltFilter,
+        ...(classesReady() && currentCycle() ? [{ key: 'cls', label: 'Classes (current cycle)', options: [['', 'Anyone'], ['enough', 'Enough classes'], ['short', 'Not enough classes']] }] : []),
         { key: 'test', label: 'Test records', options: [['hide', 'Leave out'], ['show', 'Include']] }],
-      rows: F => state.students.filter(s => (F.status === 'all' || (F.status === 'active') === s.is_active) && (F.test === 'show' || !s.is_test) && (!F.belt || s.belt_rank === F.belt))
+      rows: F => state.students.filter(s => (F.status === 'all' || (F.status === 'active') === s.is_active) && (F.test === 'show' || !s.is_test) && (!F.belt || s.belt_rank === F.belt)
+          && (!F.cls || classEnough((currentCycle() || {}).cycle_id, s.student_id) === (F.cls === 'enough')))
         .sort((a, b) => a.full_name.localeCompare(b.full_name)),
-      presets: { all: { name: 'Register', audience: 'instructor', columns: ['id', 'name', 'belt', 'dan', 'card', 'notes'], filters: {} } }, defaultPreset: 'all'
+      presets: { all: { name: 'Register', audience: 'instructor', columns: ['id', 'name', 'belt', 'dan', 'card', 'cls', 'clsneed', 'notes'], filters: {} } }, defaultPreset: 'all'
     })
   },
   attendance: {
