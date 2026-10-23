@@ -311,6 +311,7 @@
         <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">Active and inactive</option>
       </select>
       <select id="studentCard" aria-label="ID card" style="grid-column:1 / -1"><option value="">All ID card statuses</option><option value="notprinted">No ID card printed</option><option value="printed">ID card printed</option></select>
+      <select id="studentSort" aria-label="Sort by" style="grid-column:1 / -1"><option value="name">Sort: name A to Z</option><option value="namez">Sort: name Z to A</option><option value="belt">Sort: belt (highest first)</option><option value="beltlow">Sort: belt (lowest first)</option><option value="id">Sort: Student ID</option><option value="added">Sort: newest added</option><option value="clsmost" data-cls>Sort: most classes</option><option value="clsleast" data-cls>Sort: fewest classes</option><option value="clsleft" data-cls>Sort: most classes still needed</option></select>
       <select id="studentClasses" aria-label="Classes attended" style="grid-column:1 / -1" hidden><option value="">All class counts</option><option value="enough">Enough classes</option><option value="short">Not enough classes</option></select>
     </div>
     <label class="check need-admin"><input type="checkbox" id="studentShowTest"> Show test records</label>
@@ -808,7 +809,7 @@ function renderDashboard() {
 /* =========================================================================
    Students
    ========================================================================= */
-['#studentSearch', '#studentBelt', '#studentStatus', '#studentCard', '#studentClasses', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
+['#studentSearch', '#studentBelt', '#studentStatus', '#studentCard', '#studentClasses', '#studentSort', '#studentShowTest'].forEach(s => $(s).addEventListener('input', () => renderStudents()));
 $('#addStudentBtn').onclick = () => openStudentForm();
 $('#exportStudentsBtn').onclick = () => REPORTS.register.open();
 $('#importStudentsBtn').onclick = () => openImportStudents();
@@ -816,13 +817,30 @@ $('#importStudentsBtn').onclick = () => openImportStudents();
 function visibleStudents() {
   const q = $('#studentSearch').value.trim().toLowerCase(), belt = $('#studentBelt').value, st = $('#studentStatus').value, test = $('#studentShowTest').checked, card = $('#studentCard').value;
   const cls = $('#studentClasses').hidden ? '' : $('#studentClasses').value, cc = currentCycle();
-  return state.students.filter(s => (!cls || classEnough(cc && cc.cycle_id, s.student_id) === (cls === 'enough')) &&
+  return sortStudents(state.students.filter(s => (!cls || classEnough(cc && cc.cycle_id, s.student_id) === (cls === 'enough')) &&
     (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!belt || s.belt_rank === belt) && cardMatch(s.student_id, card) &&
-    (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q)));
+    (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q))), $('#studentSort').value, cc && cc.cycle_id);
+}
+// Sorting lists of students (Students tab and Record classes). Ties go by name.
+function sortStudents(list, how, cid) {
+  const byName = (a, b) => a.full_name.localeCompare(b.full_name);
+  const rank = s => { const i = BELTS.indexOf(s.belt_rank); return i < 0 ? -1 : i; };
+  const n = s => cid && enrolledIds(cid).has(s.student_id) ? classesOf(cid, s.student_id) : -1;   // not in the cycle: last
+  const left = s => { if (!cid || !enrolledIds(cid).has(s.student_id)) return -1; const need = classesNeeded(cid, s.student_id); return need ? Math.max(0, need - classesOf(cid, s.student_id)) : 0; };
+  const cmp = {
+    name: byName, namez: (a, b) => byName(b, a),
+    belt: (a, b) => rank(b) - rank(a), beltlow: (a, b) => (rank(a) < 0) - (rank(b) < 0) || rank(a) - rank(b),
+    id: (a, b) => a.student_id.localeCompare(b.student_id, undefined, { numeric: true }),
+    added: (a, b) => String(b.date_added || '').localeCompare(String(a.date_added || '')),
+    clsmost: (a, b) => n(b) - n(a), clsleast: (a, b) => (n(a) < 0) - (n(b) < 0) || n(a) - n(b), clsleft: (a, b) => left(b) - left(a)
+  }[how] || byName;
+  return list.slice().sort((a, b) => cmp(a, b) || byName(a, b));
 }
 function renderStudents() {
   const sel = $('#studentBelt'); if (!sel.options.length) sel.innerHTML = beltOptions('', 'All belts');
   $('#studentClasses').hidden = !(classesReady() && currentCycle());   // the current cycle's classes
+  $$('#studentSort [data-cls]').forEach(o => { o.hidden = o.disabled = $('#studentClasses').hidden; });
+  if ($('#studentSort').selectedOptions[0] && $('#studentSort').selectedOptions[0].disabled) $('#studentSort').value = 'name';
   const list = visibleStudents(), c = currentCycle();
   $('#studentCount').textContent = `${list.length}`;
   const dups = state.duplicates.filter(d => student(d.student_a)?.is_active && student(d.student_b)?.is_active);
@@ -920,10 +938,11 @@ function openClasses(cid, only, show = '') {
   const req = c.classes_required;
   openSheet(`<form id="clsForm">${sheetHead(only ? student(only).full_name : 'Classes attended', esc(c.name))}
     ${only ? '' : `<div class="field"><input type="search" id="clsFind" placeholder="Find a student" autocomplete="off" aria-label="Find a student"></div>
-      <div class="seg" role="group" aria-label="Show"><button type="button" data-clsshow="" aria-pressed="${!show}">All</button><button type="button" data-clsshow="enough" aria-pressed="${show === 'enough'}">Enough classes</button><button type="button" data-clsshow="short" aria-pressed="${show === 'short'}">Not enough</button></div>`}
+      <div class="seg" role="group" aria-label="Show"><button type="button" data-clsshow="" aria-pressed="${!show}">All</button><button type="button" data-clsshow="enough" aria-pressed="${show === 'enough'}">Enough classes</button><button type="button" data-clsshow="short" aria-pressed="${show === 'short'}">Not enough</button></div>
+      <div class="field"><select id="clsSort" aria-label="Sort by"><option value="name">Sort: name A to Z</option><option value="clsmost">Sort: most classes</option><option value="clsleast">Sort: fewest classes</option><option value="clsleft">Sort: most classes still needed</option><option value="belt">Sort: belt (highest first)</option></select></div>`}
     <ul class="list" id="clsList">${ids.map(id => { const s = student(id), n = classesOf(cid, id), e = enrolment(cid, id);
       const need = classesNeeded(cid, id);
-    return `<li data-name="${esc(s.full_name.toLowerCase())}" data-enough="${classEnough(cid, id) === true ? 'enough' : classEnough(cid, id) === false ? 'short' : ''}"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, need ? `needs ${need}` : ''].filter(Boolean).join(' · '))}${e.classes_updated_at ? ` · updated ${fmtShort(e.classes_updated_at.slice(0, 10))}` : ''}</div></div>
+    return `<li data-id="${esc(id)}" data-name="${esc(s.full_name.toLowerCase())}" data-enough="${classEnough(cid, id) === true ? 'enough' : classEnough(cid, id) === false ? 'short' : ''}"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, need ? `needs ${need}` : ''].filter(Boolean).join(' · '))}${e.classes_updated_at ? ` · updated ${fmtShort(e.classes_updated_at.slice(0, 10))}` : ''}</div></div>
         ${edit ? `<div class="row" style="gap:6px;flex-wrap:nowrap"><button type="button" class="btn sm" data-cls-dn="${esc(id)}" aria-label="One less for ${esc(s.full_name)}">−</button>
           <input type="number" data-cls="${esc(id)}" value="${n}" min="0" max="999" step="1" inputmode="numeric" aria-label="Classes attended by ${esc(s.full_name)}" style="width:72px;text-align:center">
           <button type="button" class="btn sm" data-cls-up="${esc(id)}" aria-label="One more for ${esc(s.full_name)}">+</button></div>`
@@ -937,6 +956,15 @@ function openClasses(cid, only, show = '') {
   const filt = () => { const t = find ? find.value.trim().toLowerCase() : '';
     sheet.querySelectorAll('#clsList li[data-name]').forEach(li => li.hidden = (!!t && !li.dataset.name.includes(t)) || (!!show && li.dataset.enough !== show)); };
   const find = $('#clsFind'); if (find) find.oninput = filt;
+  // Sorting reorders the rows (typed numbers stay in their boxes)
+  const so = $('#clsSort'); if (so) so.onchange = () => {
+    const ul = $('#clsList'), lis = [...ul.querySelectorAll('li[data-id]')], live = {};
+    lis.forEach(li => { const i = li.querySelector('[data-cls]'); live[li.dataset.id] = i ? Math.max(0, +i.value || 0) : classesOf(cid, li.dataset.id); });
+    const saved = state.enrolments; state.enrolments = saved.map(e => e.cycle_id === cid && e.student_id in live ? { ...e, classes_attended: live[e.student_id] } : e);
+    const order = sortStudents(lis.map(li => student(li.dataset.id)), so.value, cid).map(x => x.student_id);
+    state.enrolments = saved;
+    order.forEach(id => ul.appendChild(lis.find(li => li.dataset.id === id)));
+  };
   sheet.querySelectorAll('[data-clsshow]').forEach(b => b.onclick = () => { show = b.dataset.clsshow; sheet.querySelectorAll('[data-clsshow]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); filt(); });
   filt();
   $('#clsForm').onsubmit = async e => {

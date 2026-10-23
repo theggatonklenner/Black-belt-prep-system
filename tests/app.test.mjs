@@ -355,7 +355,23 @@ try {
   ok(sl.includes(enr[1].full_name) && !sl.includes(enr[0].full_name) && sl.includes('10/12 classes'), 'the Students list filters by not enough classes, and shows each count');
   await page.selectOption('#studentClasses', 'enough'); sl = await page.textContent('#studentList');
   ok(sl.includes(enr[0].full_name) && !sl.includes(enr[1].full_name), 'and by enough classes');
-  await page.selectOption('#studentClasses', ''); await tab(page, 'dashboard');
+  await page.selectOption('#studentClasses', '');
+  // Sorting
+  const names = async () => page.$$eval('#studentList .name', ns => ns.map(n => n.textContent));
+  await page.selectOption('#studentSort', 'namez'); let nm = await names();
+  ok(nm.join() === nm.slice().sort((a, b) => b.localeCompare(a)).join(), 'students can be sorted Z to A');
+  await page.selectOption('#studentSort', 'clsmost'); nm = await names();
+  ok(nm.indexOf(enr[0].full_name) < nm.indexOf(enr[1].full_name), 'and by most classes (15 before 10)');
+  await page.selectOption('#studentSort', 'clsleast'); nm = await names();
+  ok(nm.indexOf(enr[1].full_name) < nm.indexOf(enr[0].full_name), 'and by fewest classes');
+  await page.selectOption('#studentSort', 'name');
+  await tab(page, 'dashboard');
+  await page.click('#dashClasses'); await page.waitForSelector('#clsSort');
+  await page.fill(`#clsForm [data-cls="${enr[1].student_id}"]`, '40');
+  await page.selectOption('#clsSort', 'clsmost');
+  const first = await page.$eval('#clsList li[data-id]', li => li.dataset.id);
+  ok(first === enr[1].student_id, 'the Record classes list sorts too, using the numbers typed in');
+  await page.click('#clsForm [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
   await tab(page, 'students');
   ok((await page.textContent('#studentList')).includes('Dan no. 501'), 'student list shows Dan numbers');
   await tab(page, 'dashboard');
