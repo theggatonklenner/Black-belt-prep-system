@@ -320,7 +320,26 @@ try {
   ok(dash2.includes('Below 12 classes') && /0 of 12 classes|10 of 12 classes/.test(dash2), 'students below the classes required are counted and listed under Needs attention');
   await page.click('#view-dashboard .item:has-text("of 12 classes")'); await page.waitForSelector('#clsForm');
   ok((await page.$$('#clsForm [data-cls]')).length === 1, 'tapping one opens just that student');
-  await page.click('#clsForm [data-close]');
+  await page.click('#clsForm [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+  // Import: names (any order of first and last) with a number
+  const enr = await q(`select s.student_id, s.full_name from prep_enrolments e join prep_students s using (student_id) where e.cycle_id = $1 order by s.full_name limit 2`, [c1.cycle_id]);
+  const [fA, ...lA] = enr[0].full_name.split(' ');
+  await page.click('#dashClassesImp'); await page.waitForSelector('#impText');
+  await page.fill('#impText', `Name,Classes\n"${lA.join(' ')}, ${fA}",15\n${enr[1].full_name},7\nZed Unknown,3`);
+  await page.waitForSelector('#impPreview table');
+  const pv = await page.textContent('#impPreview');
+  ok(pv.includes('2 to update') && pv.includes('Not in the register'), 'importing classes matches names (Last, First too) and skips unknown names');
+  await page.click('#impPreview [data-clsmode="add"]');
+  const pvAdd = await page.textContent('#impPreview');
+  await page.click('#impPreview [data-clsmode="set"]');
+  await page.click('#impGo'); await confirm(page); await page.waitForSelector('#impText', { state: 'detached', timeout: 5000 }).catch(() => {}); await page.waitForTimeout(400);
+  const im = await q(`select student_id, classes_attended from prep_enrolments where cycle_id = $1 and student_id = any($2)`, [c1.cycle_id, enr.map(e => e.student_id)]);
+  ok(im.find(r => r.student_id === enr[0].student_id).classes_attended === 15 && im.find(r => r.student_id === enr[1].student_id).classes_attended === 7, 'the imported numbers replace the totals');
+  ok(/→/.test(pvAdd), 'or can be added to the totals');
+  await page.click('#dashClassesImp'); await page.waitForSelector('#impText');
+  await page.fill('#impText', `${enr[1].full_name}\t3`); await page.waitForSelector('#impPreview table');
+  await page.click('#impPreview [data-clsmode="add"]'); await page.click('#impGo'); await confirm(page); await page.waitForTimeout(600);
+  ok((await q(`select classes_attended from prep_enrolments where cycle_id = $1 and student_id = $2`, [c1.cycle_id, enr[1].student_id]))[0].classes_attended === 10, 'a pasted list without headings works, and Add to the totals adds');
   await tab(page, 'students');
   ok((await page.textContent('#studentList')).includes('Dan no. 501'), 'student list shows Dan numbers');
   await tab(page, 'dashboard');
@@ -372,7 +391,9 @@ try {
   await page.click('#addUserBtn'); await page.fill('#uEmail', 'Coach@AMA.test'); await page.check('#uForm input[value="instructor"]'); await page.click('#uForm button[type=submit]'); await settle(page);
   ok((await q(`select role from prep_roles where email = 'coach@ama.test'`)).map(r => r.role).join() === 'instructor', 'admin adds a user with a role');
   await page.waitForSelector('#auditList table');
-  ok((await page.textContent('#auditList')).includes('Attendance:'), 'recent changes list shows attendance changes');
+  const audit = await page.textContent('#auditList');
+  ok(audit.includes('Attendance:') || audit.includes('Classes attended:'), 'recent changes list shows attendance changes');
+  ok(audit.includes('Classes attended: 7 → 10'), 'and changes to classes attended');
   await page.evaluate(() => document.querySelector('#setForm .section').scrollIntoView()); await shot(page, 'more');
   await ctx.close();
 

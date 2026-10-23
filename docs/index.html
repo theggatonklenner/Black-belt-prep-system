@@ -746,7 +746,7 @@ function renderDashboard() {
     </div>
     ${classesReady() && rows.length ? (() => {
       const n = rows.map(r => classesOf(c.cycle_id, r.s.student_id)), tot = n.reduce((a, b) => a + b, 0);
-      return `<div class="row"><h3 class="grow">Classes attended</h3>${canEditAttendance() ? '<button class="btn sm" id="dashClasses">Record classes</button>' : ''}</div>
+      return `<div class="row"><h3 class="grow">Classes attended</h3>${canEditAttendance() ? '<button class="btn sm" id="dashClassesImp">Import</button><button class="btn sm" id="dashClasses">Record classes</button>' : ''}</div>
       <div class="stats">
         <button class="stat" data-clsgo><span class="n">${Math.round(tot / n.length * 10) / 10}</span><span class="l">Average per student</span></button>
         ${clsReq ? `<button class="stat" data-clsgo><span class="n">${rows.length - clsBelow.length}</span><span class="l">Done all ${clsReq} classes required</span></button>
@@ -785,6 +785,7 @@ function renderDashboard() {
     <p class="hint">ID cards are added in a later build stage.</p>`;
   $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
   const dcl = $('#dashClasses'); if (dcl) dcl.onclick = () => openClasses(c.cycle_id);
+  const dci2 = $('#dashClassesImp'); if (dci2) dci2.onclick = () => openImportClasses(c.cycle_id);
   $$('#view-dashboard [data-clsgo]').forEach(b => b.onclick = () => openClasses(c.cycle_id));
   $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => b.dataset.open === 'classes' ? openClasses(c.cycle_id, b.dataset.student) : b.dataset.open === 'readiness' ? openReadiness(c.cycle_id, b.dataset.student)
     : b.dataset.pid ? openPayment(b.dataset.pid) : openStudent(b.dataset.student));
@@ -913,7 +914,8 @@ function openClasses(cid, only) {
           <button type="button" class="btn sm" data-cls-up="${esc(id)}" aria-label="One more for ${esc(s.full_name)}">+</button></div>`
         : `<span class="tag ${req && n < req ? 'warn' : ''}">${n}${req ? ' of ' + req : ''}</span>`}</div></li>`; }).join('') || '<li class="muted">No students in this cycle.</li>'}</ul>
     ${!only && has('admin') && c.status !== 'archived' ? `<div class="field"><label for="clsReq">Classes required this cycle (optional)</label><input type="number" id="clsReq" min="1" max="999" step="1" value="${req || ''}" placeholder="No minimum"><p class="hint">Students below this show under Needs attention on the dashboard.</p></div>` : ''}
-    <div class="dlg-actions"><button type="button" class="btn" data-close>${edit ? 'Cancel' : 'Close'}</button>${edit ? '<button type="submit" class="btn primary" id="clsSave">Save</button>' : ''}</div></form>`);
+    <div class="dlg-actions">${edit && !only ? '<button type="button" class="btn" id="clsImport" style="margin-right:auto">Import</button>' : ''}<button type="button" class="btn" data-close>${edit ? 'Cancel' : 'Close'}</button>${edit ? '<button type="submit" class="btn primary" id="clsSave">Save</button>' : ''}</div></form>`);
+  const ci = $('#clsImport'); if (ci) ci.onclick = () => openImportClasses(cid);
   const box = id => sheet.querySelector(`[data-cls="${CSS.escape(id)}"]`);
   sheet.querySelectorAll('[data-cls-up]').forEach(b => b.onclick = () => { const i = box(b.dataset.clsUp); i.value = Math.min(999, (+i.value || 0) + 1); });
   sheet.querySelectorAll('[data-cls-dn]').forEach(b => b.onclick = () => { const i = box(b.dataset.clsDn); i.value = Math.max(0, (+i.value || 0) - 1); });
@@ -935,6 +937,70 @@ function openClasses(cid, only) {
       toast(changed.length ? `Saved classes for ${changed.length} student${changed.length > 1 ? 's' : ''}` : 'Saved');
       sheet.close(); await loadAll(); render(); if (only) openStudent(only);
     } catch (err) { $('#clsSave').disabled = false; toast('Could not save: ' + errMsg(err), 6000); }
+  };
+}
+
+// Import classes attended: a list of names (or Student IDs) with a number, pasted or from a CSV or Excel file
+const CLS_HEADERS = () => ({ ...ATT_HEADERS, classes: 'n', classesattended: 'n', noclasses: 'n', numberofclasses: 'n', attended: 'n', attendance: 'n', count: 'n',
+  total: 'n', totalclasses: 'n', visits: 'n', totalvisits: 'n', checkins: 'n', sessions: 'n', classcount: 'n' });
+function openImportClasses(cid) {
+  const c = cycle(cid), ids = enrolledIds(cid);
+  let plan = [], mode = 'set';
+  const byName = name => {
+    const m = state.students.filter(x => norm(x.full_name) === norm(name));
+    if (m.length) return m;
+    const key = t => String(t).toLowerCase().split(/[^a-z]+/).filter(Boolean).sort().join(' ');   // "Smith, Alex" = "Alex Smith"
+    return state.students.filter(x => key(x.full_name) === key(name));
+  };
+  importSheet(`Import classes attended`, `${esc(c.name)}. Paste or upload each student's name (or Student ID) and number of classes, e.g. <b>Alex Smith, 14</b>. A heading row such as Name, Classes is fine. Students not in the list are not changed.`, text => {
+    let rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], CLS_HEADERS()) : null;
+    plan = [];
+    if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
+    const headed = !!cols && cols.includes('n') && (cols.includes('id') || cols.includes('name') || cols.includes('first') || cols.includes('last'));
+    if (headed) rows = rows.slice(1);
+    const seen = new Set();
+    for (const r of rows) {
+      let o = {};
+      if (headed) cols.forEach((k, i) => { if (k && !(k in o)) o[k] = (r[i] || '').trim(); });
+      else {   // no heading: the last number on the row is the classes, the rest is the name (or a Student ID)
+        const ni = r.map(x => /^\d+(\.0+)?$/.test(x.trim())).lastIndexOf(true);
+        o.n = ni >= 0 ? r[ni] : '';
+        const rest = r.filter((x, i) => i !== ni && x.trim());
+        const idc = rest.find(x => state.students.some(st => st.student_id.toLowerCase() === x.trim().toLowerCase()));
+        if (idc) o.id = idc.trim(); else o.name = rest.join(' ');
+      }
+      const name = (o.name || [o.first, o.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
+      let s = o.id ? state.students.find(x => x.student_id.toLowerCase() === o.id.toLowerCase()) : null, why = '';
+      if (!s && name) { const m = byName(name); if (m.length === 1) s = m[0]; else if (m.length > 1) why = 'More than one student with this name; use the Student ID'; }
+      const n = /^\d+(\.0+)?$/.test(String(o.n || '').trim()) ? parseInt(o.n, 10) : null;
+      if (!why && !s) why = o.id ? `Student ID ${o.id} not found` : name ? 'Not in the register' : 'No name';
+      else if (!why && !ids.has(s.student_id)) why = 'Not in this cycle';
+      else if (!why && (n === null || n > 999)) why = `"${o.n || ''}" is not a number of classes`;
+      else if (!why && seen.has(s.student_id)) why = 'Repeated in this list';
+      if (!why) seen.add(s.student_id);
+      plan.push({ who: s ? s.full_name : (name || o.id || '—'), id: s && s.student_id, n, why });
+    }
+    const draw = () => {
+      plan.forEach(p => { if (p.why) return; const was = classesOf(cid, p.id); p.was = was; p.to = Math.min(999, mode === 'add' ? was + p.n : p.n); });
+      const go = plan.filter(p => !p.why && p.to !== p.was);
+      $('#impPreview').innerHTML = `<div class="seg" role="group" aria-label="How to use the numbers" style="margin:8px 0">
+          <button type="button" data-clsmode="set" aria-pressed="${mode === 'set'}">Replace the totals</button><button type="button" data-clsmode="add" aria-pressed="${mode === 'add'}">Add to the totals</button></div>
+        <p class="hint"><b>${go.length}</b> to update${plan.filter(p => !p.why && p.to === p.was).length ? `, ${plan.filter(p => !p.why && p.to === p.was).length} already right` : ''}${plan.filter(p => p.why).length ? `; ${plan.filter(p => p.why).length} skipped` : ''}.</p>
+        <div class="preview"><table class="grid"><tr><th>Student</th><th>Classes</th><th>Result</th></tr>
+        ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.who)}</td><td>${p.n ?? '—'}</td><td>${p.why ? esc(p.why) : p.to === p.was ? 'No change' : `${p.was} → <b>${p.to}</b>`}</td></tr>`).join('')}</table></div>`;
+      $$('#impPreview [data-clsmode]').forEach(b => b.onclick = () => { mode = b.dataset.clsmode; draw(); });
+      $('#impGo').disabled = !go.length; $('#impGo').textContent = go.length ? `Update ${go.length}` : 'Import';
+    };
+    draw();
+  });
+  $('#impGo').onclick = async () => {
+    const go = plan.filter(p => !p.why && p.to !== p.was);
+    if (!go.length || !await ask(`Update classes attended for ${go.length} student${go.length > 1 ? 's' : ''} in ${c.name}?`, 'Update')) return;
+    $('#impGo').disabled = true; let done = 0;
+    try {
+      for (const p of go) { await run(sb.rpc('prep_set_classes', { p_cycle: cid, p_student: p.id, p_count: p.to })); done++; }
+      sheet.close(); toast(`Updated classes for ${done} student${done > 1 ? 's' : ''}`); await loadAll(); render();
+    } catch (e) { $('#impGo').disabled = false; toast(`Stopped after ${done}: ${errMsg(e)}`, 7000); await loadAll(); render(); }
   };
 }
 
@@ -1126,14 +1192,23 @@ const STUDENT_HEADERS = {
 function importSheet(title, hint, onText) {
   openSheet(`<div class="body">
     ${sheetHead(title, hint)}
-    <div class="row"><button class="btn" id="impFileBtn">Choose CSV file</button><span class="hint">or paste rows below</span></div>
-    <input type="file" id="impFile" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden>
+    <div class="row"><button class="btn" id="impFileBtn">Choose file</button><span class="hint">CSV or Excel, or paste rows below</span></div>
+    <input type="file" id="impFile" accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv,text/plain" hidden>
     <textarea id="impText" rows="5" placeholder="Paste rows from a spreadsheet, including the heading row"></textarea>
     <div id="impPreview"></div>
     <div class="dlg-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="impGo" disabled>Import</button></div>
   </div>`);
   $('#impFileBtn').onclick = () => $('#impFile').click();
-  $('#impFile').onchange = async e => { const f = e.target.files[0]; if (f) { $('#impText').value = await f.text(); onText($('#impText').value); } };
+  $('#impFile').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      if (/\.xlsx?$/i.test(f.name)) {   // Excel: the first sheet, as CSV
+        const X = await loadXlsx(), wb = X.read(await f.arrayBuffer(), { type: 'array' });
+        $('#impText').value = X.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]], { blankrows: false });
+      } else $('#impText').value = await f.text();
+      onText($('#impText').value);
+    } catch (er) { toast('Could not read that file: ' + errMsg(er), 6000); }
+  };
   $('#impText').oninput = () => onText($('#impText').value);
 }
 function openImportStudents() {
@@ -2886,6 +2961,7 @@ async function renderMore() {
     const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
     let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;
     if (l.table_name === 'prep_attendance' && l.action === 'update') what = `Attendance: ${label(l.old_row.status)} → ${label(l.new_row.status)}`;
+    if (l.table_name === 'prep_enrolments' && l.action === 'update' && l.old_row && l.new_row && l.old_row.classes_attended !== l.new_row.classes_attended) what = `Classes attended: ${l.old_row.classes_attended ?? 0} → ${l.new_row.classes_attended}`;
     return `${esc(what)}${who ? ' · ' + esc(who) : ''}`;
   };
   $('#auditList').innerHTML = (log || []).length ? `<table class="grid">${log.map(l => `<tr><td>${desc(l)}<div class="small muted">${esc(l.changed_by || 'system')} · ${fmtTime(l.changed_at)}</div></td></tr>`).join('')}</table>` : 'No changes yet.';
