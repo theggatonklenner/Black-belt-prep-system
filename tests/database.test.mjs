@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -508,6 +508,24 @@ if (gr) {
   await as(ADMIN, () => db.query(`select * from prep_delete_students(array[$1], true)`, [gr.student_id]));
   ok(await cnt('prep_grading', `where student_id = '${gr.student_id}'`) === 0 && await cnt('prep_certificates', `where student_id = '${gr.student_id}'`) === 0
     && await cnt('prep_students', `where student_id = '${gr.student_id}'`) === 0, 'a student with grading records and certificates is deleted anyway');
+}
+
+console.log('\nClasses attended');
+{
+  const e = await one(`select cycle_id, student_id from prep_enrolments e join prep_cycles c using (cycle_id) order by c.created_at desc limit 1`);
+  ok((await one(`select classes_attended from prep_enrolments where cycle_id = $1 and student_id = $2`, [e.cycle_id, e.student_id])).classes_attended === 0, 'everyone starts on 0 classes');
+  await as('att@ama.test', () => db.query(`select prep_set_classes($1, $2, 12)`, [e.cycle_id, e.student_id]));
+  const r = await one(`select classes_attended, classes_updated_by from prep_enrolments where cycle_id = $1 and student_id = $2`, [e.cycle_id, e.student_id]);
+  ok(r.classes_attended === 12 && r.classes_updated_by === 'att@ama.test', 'attendance takers record classes attended (and who did it is kept)');
+  await as('inst@ama.test', () => db.query(`select prep_set_classes($1, $2, 13)`, [e.cycle_id, e.student_id]));
+  ok((await one(`select classes_attended from prep_enrolments where cycle_id = $1 and student_id = $2`, [e.cycle_id, e.student_id])).classes_attended === 13, 'so do instructors');
+  await fails(() => as('view@ama.test', () => db.query(`select prep_set_classes($1, $2, 20)`, [e.cycle_id, e.student_id])), /cannot record classes/, 'viewers cannot');
+  await fails(() => as('pay@ama.test', () => db.query(`select prep_set_classes($1, $2, 20)`, [e.cycle_id, e.student_id])), /cannot record classes/, 'nor the payments role');
+  await fails(() => as(ADMIN, () => db.query(`select prep_set_classes($1, $2, -1)`, [e.cycle_id, e.student_id])), /between 0 and 999/, 'no negative counts');
+  await fails(() => as(ADMIN, () => db.query(`select prep_set_classes($1, 'NOPE1', 3)`, [e.cycle_id])), /not in this cycle/, 'only students in the cycle');
+  await as(ADMIN, () => db.query(`update prep_cycles set classes_required = 20 where cycle_id = $1`, [e.cycle_id]));
+  ok((await one(`select classes_required from prep_cycles where cycle_id = $1`, [e.cycle_id])).classes_required === 20, 'a cycle can require a number of classes');
+  await fails(() => as(ADMIN, () => db.query(`update prep_cycles set classes_required = 0 where cycle_id = $1`, [e.cycle_id])), /classes_required/, 'the requirement is at least 1');
 }
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace

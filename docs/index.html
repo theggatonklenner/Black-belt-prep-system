@@ -599,6 +599,9 @@ function cycleWhen(c, long = false) {
   const span = f && f.session_date ? (l.session_date && l.session_date !== f.session_date ? `Sessions ${fmtShort(f.session_date)} to ${d(l.session_date)}` : `Session ${d(f.session_date)}`) : 'Session dates not set';
   return span + (c.grading_date ? ` · Grading ${d(c.grading_date)}` : '');
 }
+// Regular classes attended in a cycle (needs supabase/prep-update-09.sql)
+const classesReady = () => state.enrolments.some(e => 'classes_attended' in e);
+const classesOf = (cid, sid) => enrolment(cid, sid).classes_attended || 0;
 const enrolledIds = id => new Set(state.enrolments.filter(e => e.cycle_id === id).map(e => e.student_id));
 const summaryFor = (cid, sid) => state.summary.find(s => s.cycle_id === cid && s.student_id === sid);
 const overviewFor = (cid, sid) => state.overview.find(s => s.cycle_id === cid && s.student_id === sid);
@@ -709,7 +712,10 @@ function renderDashboard() {
   const sFees = has('payments') ? state.payments.filter(p => (p.kind || 'sessions') === 'sessions' && p.cycle_id === c.cycle_id) : [];
   const sOwing = sFees.filter(p => OWING.includes(p.status)), sOverdue = sFees.filter(p => p.status === 'overdue');
   const owingTotal = [...sFees, ...gFees].filter(p => OWING.includes(p.status)).reduce((t, p) => t + Number(p.balance), 0);
+  const clsReq = classesReady() ? c.classes_required || null : null;
+  const clsBelow = clsReq ? rows.filter(r => classesOf(c.cycle_id, r.s.student_id) < clsReq) : [];
   const attention = [
+    ...clsBelow.map(r => ({ r, issue: `${classesOf(c.cycle_id, r.s.student_id)} of ${clsReq} classes`, tone: 'warn', open: 'classes' })),
     ...rows.filter(r => ['not_ready', 'needs_preparation'].includes(rdOf(r))).map(r => { const x = readinessFor(c.cycle_id, r.s.student_id);
       return { r, issue: `${label(x.status)}${x.reason ? ': ' + RD_REASONS[x.reason].toLowerCase() : ''}`, tone: x.status === 'not_ready' ? 'bad' : 'warn', open: 'readiness' }; }),
     ...sOverdue.map(p => ({ r: rows.find(r => r.s.student_id === p.student_id), issue: `Session fees overdue (${money(p.balance)})`, tone: 'bad', pid: p.payment_id })).filter(a => a.r),
@@ -738,6 +744,15 @@ function renderDashboard() {
       ${state.gradingReady ? `<button class="stat" data-go="grading"><span class="n">${grading.length}</span><span class="l">Put forward for grading</span></button>` : ''}
       ${has('payments') && gFees.length ? `<button class="stat ${gOverdue.length ? 'bad' : gOwing.length ? 'warn' : ''}" data-go="cycles"><span class="n">${gOwing.length}</span><span class="l">Grading fees owing${c.grading_date ? ` (due ${fmtShort(addDays(c.grading_date, -21))})` : ''}</span></button>` : ''}
     </div>
+    ${classesReady() && rows.length ? (() => {
+      const n = rows.map(r => classesOf(c.cycle_id, r.s.student_id)), tot = n.reduce((a, b) => a + b, 0);
+      return `<div class="row"><h3 class="grow">Classes attended</h3>${canEditAttendance() ? '<button class="btn sm" id="dashClasses">Record classes</button>' : ''}</div>
+      <div class="stats">
+        <button class="stat" data-clsgo><span class="n">${Math.round(tot / n.length * 10) / 10}</span><span class="l">Average per student</span></button>
+        ${clsReq ? `<button class="stat" data-clsgo><span class="n">${rows.length - clsBelow.length}</span><span class="l">Done all ${clsReq} classes required</span></button>
+        <button class="stat ${clsBelow.length ? 'warn' : ''}" data-clsgo><span class="n">${clsBelow.length}</span><span class="l">Below ${clsReq} classes</span></button>`
+        : `<button class="stat" data-clsgo><span class="n">${n.filter(x => x === 0).length}</span><span class="l">No classes recorded</span></button>`}
+      </div>`; })() : ''}
     <h3>Readiness</h3>
     <div class="stats">
       <button class="stat" data-rdgo="ready"><span class="n">${rdCount('ready')}</span><span class="l">Ready for grading</span></button>
@@ -769,7 +784,9 @@ function renderDashboard() {
       : '<div class="card empty">Nothing needs attention for attendance.</div>'}
     <p class="hint">ID cards are added in a later build stage.</p>`;
   $$('[data-go]').forEach(b => b.onclick = () => showView(b.dataset.go));
-  $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => b.dataset.open === 'readiness' ? openReadiness(c.cycle_id, b.dataset.student)
+  const dcl = $('#dashClasses'); if (dcl) dcl.onclick = () => openClasses(c.cycle_id);
+  $$('#view-dashboard [data-clsgo]').forEach(b => b.onclick = () => openClasses(c.cycle_id));
+  $$('#view-dashboard [data-student]').forEach(b => b.onclick = () => b.dataset.open === 'classes' ? openClasses(c.cycle_id, b.dataset.student) : b.dataset.open === 'readiness' ? openReadiness(c.cycle_id, b.dataset.student)
     : b.dataset.pid ? openPayment(b.dataset.pid) : openStudent(b.dataset.student));
   $$('#view-dashboard [data-rdgo]').forEach(b => b.onclick = () => { state.rd.cycle = c.cycle_id; state.rd.status = b.dataset.rdgo; showView('readiness'); });
   $$('#view-dashboard [data-paygo]').forEach(b => b.onclick = () => { state.pay.cycle = c.cycle_id; state.pay.filter = b.dataset.paygo; state.pay.kind = ''; showView('payments'); });
@@ -881,6 +898,46 @@ async function bulkStudents(action, list) {
   } catch (e) { toast(errMsg(e), 7000); }
 }
 
+// Record how many regular classes each student has attended this cycle (one student, or everyone at once)
+function openClasses(cid, only) {
+  const c = cycle(cid); if (!c) return;
+  const edit = canEditAttendance() && c.status !== 'archived';
+  const ids = [...enrolledIds(cid)].filter(id => student(id) && (!only || id === only)).sort((a, b) => student(a).full_name.localeCompare(student(b).full_name));
+  const req = c.classes_required;
+  openSheet(`<form id="clsForm">${sheetHead(only ? student(only).full_name : 'Classes attended', `${esc(c.name)}${req ? ` · ${req} classes required` : ''}`)}
+    ${only ? '' : '<div class="field"><input type="search" id="clsFind" placeholder="Find a student" autocomplete="off" aria-label="Find a student"></div>'}
+    <ul class="list" id="clsList">${ids.map(id => { const s = student(id), n = classesOf(cid, id), e = enrolment(cid, id);
+      return `<li data-name="${esc(s.full_name.toLowerCase())}"><div class="item" style="cursor:default"><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}${e.classes_updated_at ? ` · updated ${fmtShort(e.classes_updated_at.slice(0, 10))}` : ''}</div></div>
+        ${edit ? `<div class="row" style="gap:6px;flex-wrap:nowrap"><button type="button" class="btn sm" data-cls-dn="${esc(id)}" aria-label="One less for ${esc(s.full_name)}">−</button>
+          <input type="number" data-cls="${esc(id)}" value="${n}" min="0" max="999" step="1" inputmode="numeric" aria-label="Classes attended by ${esc(s.full_name)}" style="width:72px;text-align:center">
+          <button type="button" class="btn sm" data-cls-up="${esc(id)}" aria-label="One more for ${esc(s.full_name)}">+</button></div>`
+        : `<span class="tag ${req && n < req ? 'warn' : ''}">${n}${req ? ' of ' + req : ''}</span>`}</div></li>`; }).join('') || '<li class="muted">No students in this cycle.</li>'}</ul>
+    ${!only && has('admin') && c.status !== 'archived' ? `<div class="field"><label for="clsReq">Classes required this cycle (optional)</label><input type="number" id="clsReq" min="1" max="999" step="1" value="${req || ''}" placeholder="No minimum"><p class="hint">Students below this show under Needs attention on the dashboard.</p></div>` : ''}
+    <div class="dlg-actions"><button type="button" class="btn" data-close>${edit ? 'Cancel' : 'Close'}</button>${edit ? '<button type="submit" class="btn primary" id="clsSave">Save</button>' : ''}</div></form>`);
+  const box = id => sheet.querySelector(`[data-cls="${CSS.escape(id)}"]`);
+  sheet.querySelectorAll('[data-cls-up]').forEach(b => b.onclick = () => { const i = box(b.dataset.clsUp); i.value = Math.min(999, (+i.value || 0) + 1); });
+  sheet.querySelectorAll('[data-cls-dn]').forEach(b => b.onclick = () => { const i = box(b.dataset.clsDn); i.value = Math.max(0, (+i.value || 0) - 1); });
+  const find = $('#clsFind'); if (find) find.oninput = () => { const t = find.value.trim().toLowerCase(); sheet.querySelectorAll('#clsList li[data-name]').forEach(li => li.hidden = !!t && !li.dataset.name.includes(t)); };
+  $('#clsForm').onsubmit = async e => {
+    e.preventDefault(); if (!edit) return sheet.close();
+    const changed = [];
+    for (const i of sheet.querySelectorAll('[data-cls]')) {
+      const v = i.value.trim() === '' ? 0 : Number(i.value);
+      if (!Number.isInteger(v) || v < 0 || v > 999) return toast(`${student(i.dataset.cls).full_name}: enter a whole number from 0 to 999.`, 5000);
+      if (v !== classesOf(cid, i.dataset.cls)) changed.push([i.dataset.cls, v]);
+    }
+    const rq = $('#clsReq'), newReq = rq ? (rq.value.trim() === '' ? null : Number(rq.value)) : undefined;
+    if (rq && newReq !== null && !(Number.isInteger(newReq) && newReq >= 1 && newReq <= 999)) return toast('Classes required must be a whole number from 1 to 999, or empty.', 5000);
+    $('#clsSave').disabled = true;
+    try {
+      for (const [sid, v] of changed) await run(sb.rpc('prep_set_classes', { p_cycle: cid, p_student: sid, p_count: v }));
+      if (rq && newReq !== (req || null)) await run(sb.from('prep_cycles').update({ classes_required: newReq }).eq('cycle_id', cid));
+      toast(changed.length ? `Saved classes for ${changed.length} student${changed.length > 1 ? 's' : ''}` : 'Saved');
+      sheet.close(); await loadAll(); render(); if (only) openStudent(only);
+    } catch (err) { $('#clsSave').disabled = false; toast('Could not save: ' + errMsg(err), 6000); }
+  };
+}
+
 function openStudent(id) {
   const s = student(id); if (!s) return;
   const myCycles = state.cycles.filter(c => enrolledIds(c.cycle_id).has(id));
@@ -892,6 +949,7 @@ function openStudent(id) {
       <div class="row"><div class="sess-cells">${att.map((a, i) => `<span class="cell ${a}" title="${esc(sessName(sess[i]))}: ${label(a)}"${i === att.length - 1 ? ' style="outline:2px solid var(--gold);outline-offset:1px"' : ''}>${a === 'not_recorded' ? i + 1 : a[0].toUpperCase()}</span>`).join('')}</div>
       <span class="small muted">${sum.attended ?? 0} of ${sess.length} attended${sum.attendance_pct != null ? ` · ${sum.attendance_pct}%` : ''} · sign-off: ${label(sum.signoff_status || 'not_recorded').toLowerCase()}${sum.attendance_eligible ? ' · meets requirement' : ''}</span></div>
       <dl class="kv">
+        ${classesReady() ? `<dt>Classes</dt><dd><b>${classesOf(cy.cycle_id, id)}</b>${cy.classes_required ? ` of ${cy.classes_required} required` : ''} attended${canEditAttendance() && cy.status !== 'archived' ? ` <button class="btn sm ghost" data-clsopen="${cy.cycle_id}" style="min-height:0;padding:0 6px">Update</button>` : ''}</dd>` : ''}
         <dt>Readiness</dt><dd>${tag((readinessFor(cy.cycle_id, id) || {}).status || ov.readiness)}${(() => { const x = readinessFor(cy.cycle_id, id); return x && x.reason ? ` <span class="small muted">${esc(RD_REASONS[x.reason])}</span>` : ''; })()}
           <button class="btn sm ghost" data-rdopen="${cy.cycle_id}" style="min-height:0;padding:0 6px">${canReadiness() ? 'Update' : 'View'}</button></dd>
         ${ov.payment_status !== undefined && ov.payment_status !== null ? `<dt>Payment</dt><dd>${ov.payment_status === 'not_invoiced' && Number(ov.amount_due) === 0 && (sessionPay(cy.cycle_id, id) || {}).payment_plan === 'per_session' ? tag('', 'Nothing owed yet') : tag(ov.payment_status)} <span class="small muted">${money(ov.amount_paid)} of ${money(ov.amount_due)}</span></dd>` : ''}
@@ -931,6 +989,7 @@ function openStudent(id) {
   const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
   sheet.querySelectorAll('[data-cardlink]').forEach(b => b.onclick = () => openCardLink(s));
   sheet.querySelectorAll('[data-rdopen]').forEach(b => b.onclick = () => openReadiness(b.dataset.rdopen, id));
+  sheet.querySelectorAll('[data-clsopen]').forEach(b => b.onclick = () => openClasses(b.dataset.clsopen, id));
   sheet.querySelectorAll('[data-gpay]').forEach(b => b.onclick = () => openGradingPayment(state.payments.find(p => p.payment_id === b.dataset.gpay), s));
   sheet.querySelectorAll('[data-plan]').forEach(sel => sel.onchange = async () => {
     try { await run(sb.from('prep_payments').update({ payment_plan: sel.value }).eq('payment_id', sel.dataset.plan), `Fee option: ${PLAN[sel.value]}`); await loadAll(); render(); openStudent(id); }
