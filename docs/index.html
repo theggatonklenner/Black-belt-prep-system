@@ -1191,7 +1191,7 @@ async function essayPdfBytes(cid, sid, tools) {
   doc.text(pdfText(`Going for ${e.target_rank}${c ? '  -  ' + c.name : ''}`), M + 30, 36);
   doc.setDrawColor(...GOLD); doc.setLineWidth(1.2); doc.line(M, 44, W - M, 44);
   doc.setFontSize(9.5);
-  const facts = [`Student ID ${s.student_id}`, e.submitted_at ? `Handed in ${fmt(e.submitted_at.slice(0, 10))}` : 'Not handed in', e.word_count ? `${e.word_count} words` : '', e.version > 1 ? `Version ${e.version}` : '', essayLate(c, e) ? 'Late' : ''].filter(Boolean);
+  const facts = [e.submitted_at ? `Handed in ${fmt(e.submitted_at.slice(0, 10))}` : 'Not handed in', e.word_count ? `${e.word_count} words` : '', e.version > 1 ? `Version ${e.version}` : '', essayLate(c, e) ? 'Late' : ''].filter(Boolean);
   doc.text(pdfText(facts.join('     ')), M, 51);
   y = 60;
   // The question
