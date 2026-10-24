@@ -508,6 +508,29 @@ try {
     await page.click('#view-essays [data-esf="submitted"]'); await page.click(`#esList [data-essay="${writer.student_id}"]`);
     await page.waitForSelector('#esMark');
     ok((await page.textContent('#sheet')).includes('Earlier versions (1)'), 'staff see the earlier version');
+    // A nice PDF: AMA logo, their full name, the question, the essay, then their uploaded PDF
+    {
+      const { PDFDocument } = await import('pdf-lib');
+      const up = await PDFDocument.create(); up.addPage([595, 842]).drawText('Their uploaded page', { x: 60, y: 760, size: 24 });
+      const upBytes = Buffer.from(await up.save());
+      const pctx = page.context();
+      await pctx.route('https://cdnjs.cloudflare.com/ajax/libs/jspdf/**', r => r.fulfill({ contentType: 'text/javascript', body: read(join(here, 'node_modules/jspdf/dist/jspdf.umd.min.js')) }));
+      await pctx.route('https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/**', r => r.fulfill({ contentType: 'text/javascript', body: read(join(here, 'node_modules/pdf-lib/dist/pdf-lib.min.js')) }));
+      await pctx.route(`${BASE}/storage/v1/object/sign/**`, r => r.request().method() === 'POST'
+        ? r.fulfill({ contentType: 'application/json', body: JSON.stringify({ signedURL: '/object/sign/prep-essays/file?token=t' }) })
+        : r.fulfill({ contentType: 'application/pdf', body: upBytes }));
+      ok(await page.isVisible('#esPdf'), 'the essay has a PDF button');
+      const b64 = await page.evaluate(async ([cid, sid]) => { const t = await pdfTools(); const d = await essayPdfBytes(cid, sid, t); const b = await d.save(); let s = ''; b.forEach(x => s += String.fromCharCode(x)); return btoa(s); }, [escy, writer.student_id]);
+      const pdf = await PDFDocument.load(Buffer.from(b64, 'base64'));
+      const { writeFileSync } = await import('node:fs'); writeFileSync(join(SHOTS, 'essay.pdf'), Buffer.from(b64, 'base64'));
+      ok(pdf.getPageCount() === 2, 'the PDF has the essay page, then their uploaded PDF (' + pdf.getPageCount() + ' pages)');
+      const raw = Buffer.from(b64, 'base64').toString('latin1');
+      ok(raw.includes('/Image') || raw.includes('/XObject'), 'with the AMA logo');
+      const popup = pctx.waitForEvent('page', { timeout: 8000 }).catch(() => null);
+      await page.click('#esPdf'); const pp = await popup;
+      ok(!!pp && (await toastText(page)).includes('PDF'), 'the PDF button opens it');
+      if (pp) await pp.close();
+    }
     await page.fill('#esMarkVal', 'Pass'); await page.fill('#esFeedback', 'Great improvement'); await page.click('#esDone'); await settle(page);
     await sp.goto('about:blank'); await sp.goto(BASE + '/essay/index.html#t=' + tok); await sp.waitForSelector('#status .banner');
     ok((await sp.textContent('#status')).includes('marked: Pass') && await sp.isDisabled('#body') && await sp.isDisabled('#go'), 'once marked, the student sees the mark and can no longer change it');

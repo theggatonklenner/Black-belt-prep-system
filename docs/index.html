@@ -1102,7 +1102,7 @@ function renderEssays() {
   if (!E.cycle) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Essays</h2></div><div class="card empty">No preparation cycles yet.</div>`; wireBack(); return; }
   const c = cycle(E.cycle), rows = essayRows(E.cycle), n = k => rows.filter(r => ES_FILTERS[k][1](r.st)).length;
   const missingQ = [...new Set(rows.map(r => nextBelt(r.s.belt_rank)))].filter(rk => !essayQ(rk));
-  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Essays</h2>${rows.length ? '<button class="btn primary sm" id="esAll">Copy all links</button>' : ''}</div>
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Essays</h2><div class="row">${rows.some(r => r.e && r.e.version) ? '<button class="btn sm" id="esAllPdf">PDF of these</button>' : ''}${rows.length ? '<button class="btn primary sm" id="esAll">Copy all links</button>' : ''}</div></div>
     <div class="field"><label for="esCycle">Preparation cycle</label><select id="esCycle">${state.cycles.map(x => `<option value="${x.cycle_id}"${x.cycle_id === E.cycle ? ' selected' : ''}>${esc(x.name)}${x.status === 'active' ? ' (active)' : ` (${label(x.status).toLowerCase()})`}</option>`).join('')}</select></div>
     <p class="hint">Students going for a Dan each get a personal link to hand in their essay (no login). ${c.essay_due ? `Due <b>${fmt(c.essay_due, { weekday: 'short', day: 'numeric', month: 'short' })}</b>.` : 'No due date set (set it on the cycle).'}</p>
     ${missingQ.length ? `<div class="banner"><span>No essay question yet for ${esc(missingQ.join(', '))}${has('admin') ? '. Add it in More &gt; Settings.' : '.'}</span></div>` : ''}
@@ -1122,6 +1122,11 @@ function renderEssays() {
   $('#esCycle').onchange = e => { E.cycle = e.target.value; renderEssays(); };
   $$('#view-essays [data-esf]').forEach(b => b.onclick = () => { E.filter = b.dataset.esf; renderEssays(); });
   $('#esSearch').oninput = e => { E.search = e.target.value; list(); };
+  const ap = $('#esAllPdf'); if (ap) ap.onclick = () => {
+    const q = E.search.trim().toLowerCase(), sel = rows.filter(r => r.e && r.e.version && ES_FILTERS[E.filter][1](r.st) && (!q || r.s.full_name.toLowerCase().includes(q) || r.s.student_id.toLowerCase().includes(q)));
+    if (!sel.length) return toast('No handed-in essays in this list.');
+    essayPdf(E.cycle, sel.map(r => r.s.student_id), `essays-${fileStemOf(c.name)}`);
+  };
   const all = $('#esAll'); if (all) all.onclick = async () => {
     all.disabled = true;
     try {
@@ -1137,6 +1142,130 @@ function renderEssays() {
     all.disabled = false;
   };
 }
+
+/* ---------- Essay PDFs: AMA logo in the corner, their full name, the question, then the essay ---------- */
+const loadScriptOnce = (() => { const seen = {}; return src => seen[src] || (seen[src] = new Promise((ok, bad) => {
+  const sc = document.createElement('script'); sc.src = src; sc.onload = ok; sc.onerror = () => { delete seen[src]; bad(new Error('Could not load the PDF maker. Check your connection.')); }; document.head.appendChild(sc); })); })();
+async function pdfTools() {
+  await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js');
+  return { jsPDF: window.jspdf.jsPDF, PDFLib: window.PDFLib };
+}
+const blobToDataUrl = b => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(b); });
+let logoData = null;
+async function amaLogo() { if (!logoData) logoData = await blobToDataUrl(await (await fetch('ama-logo.png')).blob()); return logoData; }
+// Built-in PDF fonts only have Western characters: tidy quotes and dashes, and drop anything else (like emoji)
+const pdfText = t => String(t || '').replace(/[\u2018\u2019\u201b]/g, "'").replace(/[\u201c\u201d\u201f]/g, '"').replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...').replace(/\u00a0/g, ' ')
+  .replace(/[^\n\t\x20-\x7e\u00a1-\u00ff]/g, '').replace(/\r/g, '');
+// A photo of a handwritten essay, as JPEG (any image the browser can open)
+async function imageJpeg(blob) {
+  const bmp = await createImageBitmap(blob), sc = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc);
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(bmp, 0, 0, cv.width, cv.height);
+  return { data: cv.toDataURL('image/jpeg', 0.85), w: cv.width, h: cv.height };
+}
+async function essayFile(path) {
+  const { data, error } = await sb.storage.from('prep-essays').createSignedUrl(path, 600);
+  if (error || !data) throw new Error('Could not open the file' + (error ? ': ' + error.message : ''));
+  const r = await fetch(data.signedUrl || data.signedURL); if (!r.ok) throw new Error('Could not download the file');
+  return r.blob();
+}
+// One essay -> PDF bytes (an uploaded PDF is added after the essay pages; a photo goes on its own page)
+async function essayPdfBytes(cid, sid, tools) {
+  const { jsPDF, PDFLib } = tools, c = cycle(cid), s = student(sid), e = essayFor(cid, sid), q = essayQ(e.target_rank);
+  const { data: full } = await sb.from('prep_essays').select('body').eq('essay_id', e.essay_id).maybeSingle();
+  const body = pdfText((full || {}).body || ''), name = pdfText(s.full_name);
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' }), W = 210, H = 297, M = 20, TW = W - 2 * M;
+  const GREEN = [4, 121, 75], GOLD = [242, 213, 0], INK = [22, 33, 27], GREY = [90, 107, 97];
+  let y;
+  const head = () => {   // continuation pages: a small header
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+    doc.text(`${name} - Black Belt Essay`, M, 13); doc.setDrawColor(...GOLD); doc.setLineWidth(0.6); doc.line(M, 16, W - M, 16); y = 26;
+  };
+  const room = need => { if (y + need > H - 18) { doc.addPage(); head(); } };
+  // First page header: logo top-left, then who it is
+  doc.addImage(await amaLogo(), 'PNG', M, 12, 24, 26);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...GREEN); doc.text('AUSTRALIAN MARTIAL ARTS ACADEMY  -  BLACK BELT ESSAY', M + 30, 19);
+  doc.setFontSize(22); doc.setTextColor(...INK); doc.text(doc.splitTextToSize(name, TW - 30)[0], M + 30, 29);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(11.5); doc.setTextColor(...GREY);
+  doc.text(pdfText(`Going for ${e.target_rank}${c ? '  -  ' + c.name : ''}`), M + 30, 36);
+  doc.setDrawColor(...GOLD); doc.setLineWidth(1.2); doc.line(M, 44, W - M, 44);
+  doc.setFontSize(9.5);
+  const facts = [`Student ID ${s.student_id}`, e.submitted_at ? `Handed in ${fmt(e.submitted_at.slice(0, 10))}` : 'Not handed in', e.word_count ? `${e.word_count} words` : '', e.version > 1 ? `Version ${e.version}` : '', essayLate(c, e) ? 'Late' : ''].filter(Boolean);
+  doc.text(pdfText(facts.join('     ')), M, 51);
+  y = 60;
+  // The question
+  if (q) {
+    const ql = doc.splitTextToSize(pdfText(q.question), TW - 8);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text('QUESTION', M + 6, y);
+    doc.setFontSize(12); doc.setTextColor(...INK); doc.text(ql, M + 6, y + 6, { lineHeightFactor: 1.35 });
+    const qh = 6 + ql.length * 5.6;
+    doc.setFillColor(...GOLD); doc.rect(M, y - 4, 1.6, qh + 2, 'F');
+    y += qh + 8;
+  }
+  // The essay
+  doc.setFont('times', 'normal'); doc.setFontSize(12); doc.setTextColor(...INK);
+  const LH = 6.1;
+  if (body.trim()) {
+    for (const para of body.split(/\n\s*\n|\n/)) {
+      if (!para.trim()) continue;
+      for (const line of doc.splitTextToSize(para.trim(), TW)) { room(LH); doc.text(line, M, y); y += LH; }
+      y += LH * 0.6;
+    }
+  }
+  // Their file
+  let attach = null;
+  if (e.file_path) {
+    const ft = (e.file_type || '').toLowerCase(), fn = pdfText(e.file_name || 'file');
+    try {
+      const blob = await essayFile(e.file_path);
+      if (ft.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(fn)) {
+        const im = await imageJpeg(blob);
+        doc.addPage(); head();
+        const sc = Math.min(TW / im.w, (H - y - 18) / im.h);
+        doc.addImage(im.data, 'JPEG', M + (TW - im.w * sc) / 2, y, im.w * sc, im.h * sc);
+      } else if (ft === 'application/pdf' || /\.pdf$/i.test(fn)) attach = await blob.arrayBuffer();
+      else { room(14); doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...GREY); doc.text(`Also handed in a file: ${fn} (open it from Black Belt Prep).`, M, y + 4); y += 10; }
+    } catch (er) { room(14); doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...GREY); doc.text(`Also handed in a file: ${fn} (it could not be added here).`, M, y + 4); y += 10; }
+  }
+  if (!body.trim() && !e.file_path) { doc.setFont('helvetica', 'italic'); doc.setFontSize(11); doc.setTextColor(...GREY); doc.text('Nothing handed in yet.', M, y); y += 8; }
+  // Marking
+  if ((e.status === 'reviewed' || e.status === 'needs_changes') && (e.mark || e.feedback)) {
+    const fl = doc.splitTextToSize(pdfText(e.feedback || ''), TW - 8);
+    room(22 + fl.length * 5.4);
+    if (y > 30) { y += 4; doc.setDrawColor(...GOLD); doc.setLineWidth(0.6); doc.line(M, y, W - M, y); y += 8; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text(e.status === 'reviewed' ? 'MARKED' : 'SENT BACK FOR CHANGES', M, y);
+    doc.setFontSize(12); doc.setTextColor(...INK); if (e.mark) { doc.text(pdfText(e.mark), M + 50, y); }
+    y += 6; doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+    if (fl.length) { doc.text(fl, M, y, { lineHeightFactor: 1.35 }); y += fl.length * 5.4; }
+    if (e.reviewed_by) { doc.setFontSize(9); doc.setTextColor(...GREY); doc.text(pdfText(`${e.reviewed_by}, ${fmt(e.reviewed_at.slice(0, 10))}`), M, y + 2); }
+  }
+  // Page numbers
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text(`${name}  -  page ${i} of ${n}${attach ? ' (their PDF follows)' : ''}`, W / 2, H - 10, { align: 'center' }); }
+  const out = await PDFLib.PDFDocument.load(doc.output('arraybuffer'));
+  if (attach) {
+    try { const up = await PDFLib.PDFDocument.load(attach, { ignoreEncryption: true }); (await out.copyPages(up, up.getPageIndices())).forEach(pg => out.addPage(pg)); }
+    catch (er) { /* a damaged or locked PDF: the essay pages still come out */ }
+  }
+  return out;
+}
+// Open (or download) the PDF for one student, or for several in one file
+async function essayPdf(cid, sids, fileStem) {
+  const w = window.open('', '_blank');
+  try {
+    toast(sids.length > 1 ? `Making the PDF (${sids.length} essays)...` : 'Making the PDF...', 0);
+    const tools = await pdfTools(), all = await tools.PDFLib.PDFDocument.create();
+    for (const sid of sids) { const one = await essayPdfBytes(cid, sid, tools); (await all.copyPages(one, one.getPageIndices())).forEach(pg => all.addPage(pg)); }
+    all.setTitle(fileStem); all.setAuthor('Australian Martial Arts Academy');
+    const url = URL.createObjectURL(new Blob([await all.save()], { type: 'application/pdf' }));
+    if (w) w.location = url;
+    else { const a = document.createElement('a'); a.href = url; a.download = fileStem + '.pdf'; a.click(); }
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    toast('PDF ready', 2000);
+  } catch (er) { if (w) w.close(); toast('Could not make the PDF: ' + errMsg(er), 6000); }
+}
+const fileStemOf = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 async function openEssay(cid, sid) {
   const c = cycle(cid), s = student(sid); if (!c || !s) return;
@@ -1158,7 +1287,7 @@ async function openEssay(cid, sid) {
     <div class="section"><h3>Handed in</h3>
       ${e.version ? `<p class="hint">${fmtTime(e.submitted_at)} · version ${e.version}${e.word_count ? ` · ${e.word_count} words` : ''}${q && q.min_words && e.word_count && e.word_count < q.min_words ? ` <span class="tag warn">Under ${q.min_words} words</span>` : ''}${essayLate(c, e) ? ' <span class="tag bad">Late</span>' : ''}</p>
         ${body ? `<div style="white-space:pre-wrap;border:1px solid var(--line);border-radius:10px;padding:12px;max-height:50vh;overflow:auto;line-height:1.55">${esc(body)}</div>` : '<p class="hint">No typed text.</p>'}
-        ${e.file_name ? `<div class="row"><button class="btn sm" data-efile="${esc(e.file_path)}">Open file: ${esc(e.file_name)}</button></div>` : ''}`
+        <div class="row"><button class="btn sm primary" id="esPdf">PDF</button>${e.file_name ? `<button class="btn sm" data-efile="${esc(e.file_path)}">Open file: ${esc(e.file_name)}</button>` : ''}</div>`
         : '<p class="hint">Nothing handed in yet.</p>'}
       ${(versions || []).length ? `<details><summary>Earlier versions (${versions.length})</summary>${versions.map(x => `<div class="card" style="box-shadow:none;border:1px solid var(--line);margin-top:8px"><b class="small">Version ${x.version} · ${fmtTime(x.submitted_at)}${x.word_count ? ` · ${x.word_count} words` : ''}</b>
         ${x.feedback ? `<p class="small" style="margin:0"><b>Feedback:</b> ${esc(x.feedback)}</p>` : ''}${x.body ? `<div class="small" style="white-space:pre-wrap;max-height:30vh;overflow:auto">${esc(x.body)}</div>` : ''}
@@ -1194,6 +1323,7 @@ async function openEssay(cid, sid) {
     } catch (er) { toast(errMsg(er), 6000); }
   };
   if ($('#esBack')) { $('#esBack').onclick = () => mark('needs_changes'); $('#esDone').onclick = () => mark('reviewed'); }
+  const pb = $('#esPdf'); if (pb) pb.onclick = () => essayPdf(cid, [sid], `essay-${fileStemOf(s.full_name)}`);
 }
 
 function openStudent(id) {
