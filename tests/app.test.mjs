@@ -102,7 +102,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#view-dashboard').textContent.includes('Dashboard'));
   ok(await page.isVisible('#view-dashboard') && (await page.textContent('#view-dashboard')).includes('No preparation cycle is active'), 'admin lands on the dashboard; no active cycle yet');
   await shot(page, 'dashboard-empty');
-  ok(await page.isVisible('#homeBtn') && (await page.getAttribute('#homeBtn', 'href')) === 'https://theggatonklenner.github.io/', 'home button goes back to the AMA Grading Toolkit');
+  ok(await page.isVisible('#homeBtn') && (await page.getAttribute('#homeBtn', 'href')) === 'https://theggatonklenner.github.io/', 'home button goes back to the AMA Toolkit');
   await tab(page, 'students');
   await page.click('#addStudentBtn');
   await page.fill('#fName', 'Alex Smith'); await page.selectOption('#fRank', 'Cho Dan Bo');
