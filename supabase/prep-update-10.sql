@@ -1,6 +1,6 @@
 -- Black Belt Prep: update 10 (essays)
 -- Run once in Supabase > SQL Editor, after prep-update-09.sql. Safe to run again.
--- Students going for Probationary Black Belt or a Dan write an essay. Each gets a personal link (no login)
+-- Students going for a Dan (1st Dan and up) write an essay; Probationary Black Belt has none. Each gets a personal link (no login)
 -- to paste their essay and/or upload a file (PDF, Word, or a photo). Admins and instructors read them,
 -- mark them reviewed, or send them back with feedback for the student to change and hand in again.
 
@@ -94,7 +94,7 @@ end $$;
 drop trigger if exists prep_essay_mark_guard on public.prep_essays;
 create trigger prep_essay_mark_guard before update on public.prep_essays for each row execute function public.prep_essay_mark_guard();
 
--- Personal links: makes the essay record (and its secret) for students going for Probationary Black Belt or a Dan.
+-- Personal links: makes the essay record (and its secret) for students going for a Dan.
 -- p_new: a new secret, so the old link stops working.
 create or replace function public.prep_essay_links(p_cycle uuid, p_student text default null, p_new boolean default false)
 returns table (student_id text, target_rank text, token text, status text)
@@ -107,7 +107,7 @@ begin
     select e.student_id, public.prep_next_belt(s.belt_rank) as target
       from public.prep_enrolments e join public.prep_students s using (student_id)
      where e.cycle_id = p_cycle and (p_student is null or e.student_id = p_student)
-       and public.prep_next_belt(s.belt_rank) in ('Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan', '6th Dan', '7th Dan', '8th Dan', '9th Dan')
+       and public.prep_next_belt(s.belt_rank) in ('1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan', '6th Dan', '7th Dan', '8th Dan', '9th Dan')
   loop
     t := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
     insert into public.prep_essays (cycle_id, student_id, target_rank, token) values (p_cycle, r.student_id, r.target, t)

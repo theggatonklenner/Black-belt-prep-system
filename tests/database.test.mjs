@@ -536,14 +536,14 @@ console.log('\nEssays');
 {
   // A cycle with someone going for a Dan (Cho Dan Bo -> Probationary) and someone not (1st Poom)
   const cy = (await one(`select cycle_id from prep_cycles order by created_at desc limit 1`)).cycle_id;
-  await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('E1', 'Essay Writer', 'Cho Dan Bo'), ('E2', 'Poom Kid', '1st Poom') on conflict do nothing`));
-  await as(ADMIN, () => db.query(`insert into prep_enrolments (cycle_id, student_id) values ($1, 'E1'), ($1, 'E2') on conflict do nothing`, [cy]));
-  await as(ADMIN, () => db.exec(`insert into prep_essay_questions (target_rank, question, min_words) values ('Probationary Black Belt', 'What does black belt mean to you?', 100)`));
+  await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('E1', 'Essay Writer', 'Probationary Black Belt'), ('E2', 'Poom Kid', '1st Poom'), ('E3', 'Cho Dan', 'Cho Dan Bo') on conflict do nothing`));
+  await as(ADMIN, () => db.query(`insert into prep_enrolments (cycle_id, student_id) values ($1, 'E1'), ($1, 'E2'), ($1, 'E3') on conflict do nothing`, [cy]));
+  await as(ADMIN, () => db.exec(`insert into prep_essay_questions (target_rank, question, min_words) values ('1st Dan Black Belt', 'What does black belt mean to you?', 100)`));
   await as(ADMIN, () => db.query(`update prep_cycles set essay_due = current_date + 14 where cycle_id = $1`, [cy]));
   await fails(() => as('view@ama.test', () => db.query(`select * from prep_essay_links($1)`, [cy])), /cannot see essays/, 'viewers cannot get essay links');
   const links = await as('inst@ama.test', () => rows(`select * from prep_essay_links($1)`, [cy]));
   const e1 = links.find(l => l.student_id === 'E1');
-  ok(e1 && e1.target_rank === 'Probationary Black Belt' && e1.token.length >= 32 && !links.some(l => l.student_id === 'E2'), 'instructors get a personal link for each student going for Probationary or a Dan (not for Poom)');
+  ok(e1 && e1.target_rank === '1st Dan Black Belt' && e1.token.length >= 32 && !links.some(l => l.student_id === 'E2' || l.student_id === 'E3'), 'instructors get a personal link for each student going for a Dan (not Probationary Black Belt or Poom)');
   const again = await as('inst@ama.test', () => rows(`select * from prep_essay_links($1, 'E1')`, [cy]));
   ok(again[0].token === e1.token, 'asking again gives the same link');
   ok((await as('view@ama.test', () => rows(`select * from prep_essays`))).length === 0, 'viewers cannot see essays');

@@ -1071,9 +1071,9 @@ function openImportClasses(cid) {
 }
 
 /* =========================================================================
-   Essays: students going for Probationary Black Belt or a Dan hand in an essay through a personal link
+   Essays: students going for a Dan (1st Dan and up) hand in an essay through a personal link
    ========================================================================= */
-const ESSAY_RANKS = ['Probationary Black Belt', '1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan', '6th Dan', '7th Dan', '8th Dan', '9th Dan'];
+const ESSAY_RANKS = ['1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan', '6th Dan', '7th Dan', '8th Dan', '9th Dan'];
 const ESSAY_ST = { not_submitted: ['Not handed in', ''], submitted: ['To mark', 'info'], needs_changes: ['Sent back', 'warn'], reviewed: ['Marked', 'ok'] };
 const essayTag = st => `<span class="tag ${ESSAY_ST[st][1]}">${ESSAY_ST[st][0]}</span>`;
 const essayFor = (cid, sid) => state.essays.find(e => e.cycle_id === cid && e.student_id === sid) || null;
@@ -1104,7 +1104,7 @@ function renderEssays() {
   const missingQ = [...new Set(rows.map(r => nextBelt(r.s.belt_rank)))].filter(rk => !essayQ(rk));
   v.innerHTML = `${backToMore()}<div class="view-head"><h2>Essays</h2>${rows.length ? '<button class="btn primary sm" id="esAll">Copy all links</button>' : ''}</div>
     <div class="field"><label for="esCycle">Preparation cycle</label><select id="esCycle">${state.cycles.map(x => `<option value="${x.cycle_id}"${x.cycle_id === E.cycle ? ' selected' : ''}>${esc(x.name)}${x.status === 'active' ? ' (active)' : ` (${label(x.status).toLowerCase()})`}</option>`).join('')}</select></div>
-    <p class="hint">Students going for Probationary Black Belt or a Dan each get a personal link to hand in their essay (no login). ${c.essay_due ? `Due <b>${fmt(c.essay_due, { weekday: 'short', day: 'numeric', month: 'short' })}</b>.` : 'No due date set (set it on the cycle).'}</p>
+    <p class="hint">Students going for a Dan each get a personal link to hand in their essay (no login). ${c.essay_due ? `Due <b>${fmt(c.essay_due, { weekday: 'short', day: 'numeric', month: 'short' })}</b>.` : 'No due date set (set it on the cycle).'}</p>
     ${missingQ.length ? `<div class="banner"><span>No essay question yet for ${esc(missingQ.join(', '))}${has('admin') ? '. Add it in More &gt; Settings.' : '.'}</span></div>` : ''}
     <div class="seg" role="group" aria-label="Show">${Object.entries(ES_FILTERS).map(([k, [t]]) => `<button data-esf="${k}" aria-pressed="${E.filter === k}">${t}<small>${n(k)}</small></button>`).join('')}</div>
     <input type="search" id="esSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(E.search)}">
@@ -1115,7 +1115,7 @@ function renderEssays() {
     $('#esList').innerHTML = sel.length ? sel.map(r => `<li><button class="item" data-essay="${esc(r.s.student_id)}"><div class="main"><div class="name">${esc(r.s.full_name)}</div>
       <div class="meta">${esc([r.s.student_id, 'going for ' + nextBelt(r.s.belt_rank), r.e && r.e.submitted_at ? `handed in ${fmtShort(r.e.submitted_at.slice(0, 10))}` : '', r.e && r.e.word_count ? `${r.e.word_count} words` : '', r.e && r.e.file_name ? 'file' : ''].filter(Boolean).join(' · '))}</div></div>
       ${essayLate(c, r.e) ? '<span class="tag bad">Late</span>' : ''}${essayTag(r.st)}</button></li>`).join('')
-      : `<li><div class="empty">${rows.length ? 'No one matches.' : 'No one in this cycle is going for Probationary Black Belt or a Dan.'}</div></li>`;
+      : `<li><div class="empty">${rows.length ? 'No one matches.' : 'No one in this cycle is going for a Dan.'}</div></li>`;
     $$('#esList [data-essay]').forEach(b => b.onclick = () => openEssay(E.cycle, b.dataset.essay));
   };
   list();
@@ -1142,7 +1142,7 @@ async function openEssay(cid, sid) {
   const c = cycle(cid), s = student(sid); if (!c || !s) return;
   let e = essayFor(cid, sid);
   if (!e || !e.token) { try { await essayLinks(cid, sid); e = essayFor(cid, sid); } catch (er) { return toast(errMsg(er), 6000); } }
-  if (!e) return toast('That student is not going for Probationary Black Belt or a Dan.', 5000);
+  if (!e) return toast('That student is not going for a Dan.', 5000);
   const q = essayQ(e.target_rank), url = essayUrl(e.token), canMark = e.status !== 'not_submitted' && c.status !== 'archived';
   const [{ data: full }, { data: versions }] = await Promise.all([
     sb.from('prep_essays').select('body').eq('essay_id', e.essay_id).maybeSingle(),
@@ -1549,7 +1549,7 @@ function openCycle(id) {
     <div class="field"><label for="cyName">Name</label><input type="text" id="cyName" value="${esc(c.name)}" ${admin ? '' : 'disabled'}></div>
     <div class="grid2">${sess.map(s => `<div class="field"><label for="cySess${s.session_number}">${esc(sessName(s))}</label><input type="date" id="cySess${s.session_number}" data-sid="${s.session_id}" value="${esc(s.session_date || '')}" ${admin ? '' : 'disabled'}></div>`).join('')}</div>
     ${state.danReady ? `<div class="field"><label for="cyGrade">Grading date</label><input type="date" id="cyGrade" value="${esc(c.grading_date || '')}" ${admin ? '' : 'disabled'}></div>` : ''}
-    ${state.essaysReady ? `<div class="field"><label for="cyEssayDue">Essays due</label><input type="date" id="cyEssayDue" value="${esc(c.essay_due || '')}" ${admin ? '' : 'disabled'}><p class="hint">For students going for Probationary Black Belt or a Dan.</p></div>` : ''}
+    ${state.essaysReady ? `<div class="field"><label for="cyEssayDue">Essays due</label><input type="date" id="cyEssayDue" value="${esc(c.essay_due || '')}" ${admin ? '' : 'disabled'}><p class="hint">For students going for a Dan.</p></div>` : ''}
     <div class="grid2">
       <div class="field"><label for="cyFee">${feeReady() ? 'Upfront fee ($)' : 'Session fee ($)'}</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(feeReady() ? c.upfront_fee : c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
       ${feeReady() ? `<div class="field"><label for="cyPer">Per-session fee ($)</label><input type="number" id="cyPer" min="0" step="0.01" value="${Number(c.per_session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>` : ''}
@@ -3088,7 +3088,7 @@ async function renderMore() {
       <li><button class="item" data-goto="cycles"><div class="main"><div class="name">Preparation cycles</div><div class="meta">Start a cycle, session and grading dates, fees, who is grading</div></div><span class="muted">›</span></button></li>
       <li><button class="item" data-goto="grading"><div class="main"><div class="name">Grading</div><div class="meta">Eligibility, who is grading, results, grading lists</div></div><span class="muted">›</span></button></li>
       <li><button class="item" data-goto="reports"><div class="main"><div class="name">Reports and exports</div><div class="meta">Download Excel, CSV or PDF: register, attendance, readiness, payments, follow-up, ID cards</div></div><span class="muted">›</span></button></li>
-      ${state.essaysReady && has('instructor') ? '<li><button class="item" data-goto="essays"><div class="main"><div class="name">Essays</div><div class="meta">Personal links, read and mark essays, send them back with feedback</div></div><span class="muted">›</span></button></li>' : ''}
+      ${state.essaysReady && has('instructor') ? '<li><button class="item" data-goto="essays"><div class="main"><div class="name">Essays</div><div class="meta">Dan essays: personal links, read and mark essays, send them back with feedback</div></div><span class="muted">›</span></button></li>' : ''}
       <li><button class="item" data-goto="certificates"><div class="main"><div class="name">Certificates</div><div class="meta">Names, numbers, approval, printing and issuing</div></div><span class="muted">›</span></button></li>
       ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
     </ul>
@@ -3113,7 +3113,7 @@ async function renderMore() {
         <div class="grid2">${BELTS.slice(1).map((b, i) => `<div class="field"><label for="setCR${i}">${esc(b)}</label><input type="number" id="setCR${i}" data-creq="${esc(b)}" min="1" max="999" step="1" placeholder="Not set" value="${beltClasses(b) ?? ''}"></div>`).join('')}</div>
       </details></div>` : ''}
       ${state.essaysReady ? `<div class="section"><details${state.essayQs.length ? '' : ' open'}><summary><b>Essay questions</b> <span class="muted small">${state.essayQs.length} of ${ESSAY_RANKS.length} set</span></summary>
-        <p class="hint" style="margin:8px 0">The essay question for each belt (only Probationary Black Belt and the Dans), and an optional minimum number of words. Students see it on their personal link.</p>
+        <p class="hint" style="margin:8px 0">The essay question for each belt (the Dans only; Probationary Black Belt has no essay), and an optional minimum number of words. Students see it on their personal link.</p>
         ${ESSAY_RANKS.map((b, i) => `<div class="field"><label for="setEQ${i}">${esc(b)}</label><textarea id="setEQ${i}" data-eq="${esc(b)}" rows="2" maxlength="2000" placeholder="Not set">${esc((essayQ(b) || {}).question || '')}</textarea>
           <input type="number" data-eqmin="${esc(b)}" min="1" max="20000" step="1" placeholder="Minimum words (optional)" value="${(essayQ(b) || {}).min_words ?? ''}" aria-label="Minimum words for ${esc(b)}" style="margin-top:6px"></div>`).join('')}
       </details></div>` : ''}

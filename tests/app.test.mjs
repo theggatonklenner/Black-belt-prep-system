@@ -250,7 +250,9 @@ try {
   await shot(page, 'attendance-paid');
   await page.click('.att .pay[data-pay="BB0001"]'); const undoTxt = await confirm(page); await settle(page);
   ok(undoTxt.includes('Undo') && Number((await q(`select amount_paid from prep_payment_summary p join prep_cycles c using (cycle_id) where c.cycle_id = $1 and p.student_id = 'BB0001'`, [c1.cycle_id]))[0].amount_paid) === 0, 'tapping $ again undoes the payment after confirming');
+  await page.waitForFunction(() => document.querySelector('.att .pay[data-pay="BB0001"]')?.getAttribute('aria-pressed') === 'false', null, { timeout: 5000 }).catch(() => {});
   await page.click('.att .pay[data-pay="BB0001"]'); await settle(page);
+  await page.waitForFunction(() => document.querySelector('.att .pay[data-pay="BB0001"]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 5000 }).catch(() => {});
 
   await page.click('#attBody [data-session="2"]');
   await page.selectOption('#attBelt', 'Cho Dan Bo');
@@ -442,7 +444,7 @@ try {
   // ------------------------------------------------------------------
   console.log('\nEssays');
   {
-    const PBB = 'Probationary Black Belt';
+    const PBB = '1st Dan Black Belt';   // essays are for the Dans (Probationary Black Belt has none)
     if (!await page.isVisible(`#setForm [data-eq="${PBB}"]`)) await page.click('#setForm summary:has-text("Essay questions")');
     await page.fill(`#setForm [data-eq="${PBB}"]`, 'What does being a black belt mean to you?');
     await page.fill(`#setForm [data-eqmin="${PBB}"]`, '5');
@@ -454,8 +456,13 @@ try {
     await page.evaluate(() => loadAll());
     await page.click('[data-goto="essays"]'); await page.waitForSelector('#esList');
     const esText = await page.textContent('#view-essays');
-    const writer = (await q(`select s.student_id, s.full_name from prep_enrolments e join prep_students s using (student_id) where e.cycle_id = $1 and s.belt_rank = 'Cho Dan Bo' order by s.full_name limit 1`, [escy]))[0];
-    ok(esText.includes(writer.full_name) && esText.includes('Not handed in') && !esText.includes('Taylor Brown'), 'Essays lists the students going for Probationary or a Dan, all not handed in yet');
+    await q(`insert into prep_students (student_id, full_name, belt_rank) values ('ES-001', 'Essay Writer', 'Probationary Black Belt')`);
+    await q(`insert into prep_enrolments (cycle_id, student_id) values ($1, 'ES-001')`, [escy]);
+    await page.evaluate(() => loadAll().then(() => renderEssays()));
+    const writer = { student_id: 'ES-001', full_name: 'Essay Writer' };
+    const esText2 = await page.textContent('#view-essays');
+    const choDanBo = (await q(`select s.full_name from prep_enrolments e join prep_students s using (student_id) where e.cycle_id = $1 and s.belt_rank = 'Cho Dan Bo' limit 1`, [escy]))[0];
+    ok(esText2.includes(writer.full_name) && esText2.includes('Not handed in') && !esText2.includes('Taylor Brown') && (!choDanBo || !esText2.includes(choDanBo.full_name)), 'Essays lists the students going for a Dan (not Probationary Black Belt), not handed in yet');
     await page.click(`#esList [data-essay="${writer.student_id}"]`); await page.waitForSelector('#esMsg');
     ok(await page.evaluate(() => state.es.cycle) === escy, 'it opens on the active cycle');
     const tok = ((await q(`select token from prep_essays where cycle_id = $1 and student_id = $2`, [escy, writer.student_id]))[0] || {}).token;
@@ -508,8 +515,14 @@ try {
     await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
     await tab(page, 'dashboard');
     const d = await page.textContent('#view-dashboard');
-    ok(d.includes('Essays') && d.includes('Not handed in') && d.includes('To mark') && d.includes('Essay not handed in'), 'the dashboard counts essays and lists those not handed in as the due date nears');
+    ok(d.includes('Essays') && d.includes('Not handed in') && d.includes('To mark') && d.includes('Marked'), 'the dashboard counts essays');
+    await q(`update prep_essays set status = 'not_submitted' where student_id = 'ES-001'`).catch(() => {});
+    await q(`alter table prep_essays disable trigger prep_essay_mark_guard`); await q(`update prep_essays set status = 'not_submitted' where student_id = 'ES-001'`); await q(`alter table prep_essays enable trigger prep_essay_mark_guard`);
+    await page.evaluate(() => loadAll().then(render));
+    ok((await page.textContent('#view-dashboard')).includes('Essay not handed in'), 'and lists those not handed in as the due date nears');
     await tab(page, 'more'); await page.waitForSelector('#userList ul');
+    for (const t of ['prep_dan_numbers', 'prep_enrolments', 'prep_students']) await q(`delete from ${t} where student_id = 'ES-001'`);
+    await page.evaluate(() => loadAll().then(render)); await page.waitForSelector('#userList ul');
   }
   await page.evaluate(() => document.querySelector('#setForm .section').scrollIntoView()); await shot(page, 'more');
   await ctx.close();
