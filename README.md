@@ -9,7 +9,8 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 ## Folders
 
 - `docs/` the app (published with GitHub Pages, see [spec/stage-3-app.md](spec/stage-3-app.md))
-- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) `supabase/prep-update-06.sql` (linking ID cards) `supabase/prep-update-07.sql` (no due date for session fees, belts up to 9th Dan) `supabase/prep-update-08.sql` (delete students anyway) and `supabase/prep-update-09.sql` (classes attended)
+- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) `supabase/prep-update-06.sql` (linking ID cards) `supabase/prep-update-07.sql` (no due date for session fees, belts up to 9th Dan) `supabase/prep-update-08.sql` (delete students anyway), `supabase/prep-update-09.sql` (classes attended) and `supabase/prep-update-10.sql` (essays)
+- `docs/essay/` the essay page students open from their personal link (no login)
 - `spec/` the specification and stage notes
 - `tests/` database and browser tests
 
@@ -63,3 +64,7 @@ Progress:
 ## Data and privacy
 
 This repository holds the app, specification and build files only; member data lives in Supabase behind a login. Never commit real student details, payment records or exported reports. Card numbers and banking credentials are never stored anywhere in the system.
+
+## Essays
+
+Students going for Probationary Black Belt or a Dan hand in an essay. Set each belt's question (and an optional minimum word count) in More > Settings > Essay questions, and the due date on the cycle. More > Essays lists everyone who needs one: tap a student for their personal link (Copy message, Copy link, Share, or New link to stop the old one working), or Copy all links for the whole cycle. The link opens `docs/essay/`, where they type or paste the essay and/or upload a file (PDF, Word or a photo, up to 10 MB). Admins and instructors read it there, open the file, and either Mark as reviewed (with an optional mark) or Send back for changes with feedback, which the student sees on their link before handing it in again. Earlier versions are kept. Files are in a private storage bucket (`prep-essays`) that only admins and instructors can open.

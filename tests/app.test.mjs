@@ -34,6 +34,7 @@ await db.exec(read(join(here, '../supabase/prep-update-06.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-07.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-08.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-09.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-10.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -437,6 +438,79 @@ try {
   const audit = await page.textContent('#auditList');
   ok(audit.includes('Attendance:') || audit.includes('Classes attended:'), 'recent changes list shows attendance changes');
   ok(audit.includes('Classes attended: 7 → 10'), 'and changes to classes attended');
+
+  // ------------------------------------------------------------------
+  console.log('\nEssays');
+  {
+    const PBB = 'Probationary Black Belt';
+    if (!await page.isVisible(`#setForm [data-eq="${PBB}"]`)) await page.click('#setForm summary:has-text("Essay questions")');
+    await page.fill(`#setForm [data-eq="${PBB}"]`, 'What does being a black belt mean to you?');
+    await page.fill(`#setForm [data-eqmin="${PBB}"]`, '5');
+    await page.click('#setForm button[type=submit]'); await settle(page);
+    const eq = (await q(`select question, min_words from prep_essay_questions where target_rank = $1`, [PBB]))[0];
+    ok(eq && eq.question.startsWith('What does being') && eq.min_words === 5, 'admins set the essay question and minimum words for each belt');
+    const escy = await page.evaluate(() => (currentCycle() || {}).cycle_id);
+    await q(`update prep_cycles set essay_due = current_date + 5 where cycle_id = $1`, [escy]);
+    await page.evaluate(() => loadAll());
+    await page.click('[data-goto="essays"]'); await page.waitForSelector('#esList');
+    const esText = await page.textContent('#view-essays');
+    const writer = (await q(`select s.student_id, s.full_name from prep_enrolments e join prep_students s using (student_id) where e.cycle_id = $1 and s.belt_rank = 'Cho Dan Bo' order by s.full_name limit 1`, [escy]))[0];
+    ok(esText.includes(writer.full_name) && esText.includes('Not handed in') && !esText.includes('Taylor Brown'), 'Essays lists the students going for Probationary or a Dan, all not handed in yet');
+    await page.click(`#esList [data-essay="${writer.student_id}"]`); await page.waitForSelector('#esMsg');
+    ok(await page.evaluate(() => state.es.cycle) === escy, 'it opens on the active cycle');
+    const tok = ((await q(`select token from prep_essays where cycle_id = $1 and student_id = $2`, [escy, writer.student_id]))[0] || {}).token;
+    const url = await page.evaluate(t => essayUrl(t), tok);
+    ok(/\/essay\/#t=[0-9a-f]{64}$/.test(url) && (await page.textContent('#sheet')).includes('What does being a black belt mean to you?'), 'opening a student makes their personal link and shows the question');
+    await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+    // The student opens their link (no login)
+    const st = await open(null), sp = st.page;
+    const uploads = [];
+    await st.ctx.route(`${BASE}/storage/v1/object/prep-essays/**`, r => { uploads.push(new URL(r.request().url()).pathname); return r.fulfill({ contentType: 'application/json', body: '{"Key":"x"}' }); });
+    await sp.goto(BASE + '/essay/index.html#t=' + tok); await sp.waitForSelector('#essay:not([hidden])');
+    const ep = await sp.textContent('#essay');
+    ok(ep.includes('Hi ' + writer.full_name.split(' ')[0]) && ep.includes('What does being a black belt mean to you?') && ep.includes('At least 5 words') && ep.includes('5 days to go'), 'the link greets them and shows the question, minimum words and due date');
+    await sp.fill('#body', 'Black belt means respect');
+    ok((await sp.textContent('#count')).includes('4 words (at least 5)'), 'it counts the words as they type');
+    await sp.fill('#body', 'Black belt means respect, courage and helping others');
+    await sp.setInputFiles('#file', { name: 'my essay.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 test') });
+    await sp.click('#go'); await sp.waitForSelector('#status .banner');
+    ok((await sp.textContent('#status')).includes('Handed in') && uploads.some(u => u.includes('/prep-essays/' + tok + '/')), 'they hand in text and a file (uploaded into their own folder)');
+    let row = (await q(`select status, word_count, file_name, version from prep_essays where token = $1`, [tok]))[0];
+    ok(row.status === 'submitted' && row.word_count === 8 && row.file_name === 'my essay.pdf' && row.version === 1, 'it is saved as handed in, with the word count and file');
+    await sp.goto('about:blank'); await sp.goto(BASE + '/essay/index.html#t=nope'); await sp.waitForSelector('#bad:not([hidden])');
+    ok(true, 'a wrong link says it is not right');
+    // Marking: send back with feedback
+    await page.evaluate(() => loadAll().then(render));
+    await page.click('#view-essays [data-esf="submitted"]'); await page.waitForSelector(`#esList [data-essay="${writer.student_id}"]`);
+    await page.click(`#esList [data-essay="${writer.student_id}"]`); await page.waitForSelector('#esMark');
+    ok((await page.textContent('#sheet')).includes('Black belt means respect, courage and helping others') && (await page.textContent('#sheet')).includes('Open file: my essay.pdf'), 'staff read the essay and can open the file');
+    await page.click('#esBack');
+    ok((await toastText(page)).includes('feedback'), 'sending back needs feedback');
+    await page.fill('#esFeedback', 'Tell us about a time you showed courage'); await page.click('#esBack'); await settle(page);
+    row = (await q(`select status, feedback, reviewed_by from prep_essays where token = $1`, [tok]))[0];
+    ok(row.status === 'needs_changes' && row.feedback.startsWith('Tell us') && row.reviewed_by === 'owner@ama.test', 'it is sent back with feedback');
+    await sp.goto('about:blank'); await sp.goto(BASE + '/essay/index.html#t=' + tok); await sp.waitForSelector('#status .banner');
+    ok((await sp.textContent('#status')).includes('sent it back') && (await sp.textContent('#status')).includes('Tell us about a time you showed courage') && (await sp.inputValue('#body')).includes('helping others'), 'the student sees the feedback, with their essay ready to change');
+    await sp.fill('#body', 'Black belt means respect, courage and helping others. Once I helped a new student.');
+    await sp.click('#go'); await sp.waitForFunction(() => document.querySelector('#status').textContent.includes('Handed in'));
+    row = (await q(`select status, version, file_name from prep_essays where token = $1`, [tok]))[0];
+    ok(row.status === 'submitted' && row.version === 2 && row.file_name === 'my essay.pdf', 'they hand it in again (keeping the file)');
+    // Marked
+    await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+    await page.evaluate(() => loadAll().then(render));
+    await page.click('#view-essays [data-esf="submitted"]'); await page.click(`#esList [data-essay="${writer.student_id}"]`);
+    await page.waitForSelector('#esMark');
+    ok((await page.textContent('#sheet')).includes('Earlier versions (1)'), 'staff see the earlier version');
+    await page.fill('#esMarkVal', 'Pass'); await page.fill('#esFeedback', 'Great improvement'); await page.click('#esDone'); await settle(page);
+    await sp.goto('about:blank'); await sp.goto(BASE + '/essay/index.html#t=' + tok); await sp.waitForSelector('#status .banner');
+    ok((await sp.textContent('#status')).includes('marked: Pass') && await sp.isDisabled('#body') && await sp.isDisabled('#go'), 'once marked, the student sees the mark and can no longer change it');
+    await st.ctx.close();
+    await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+    await tab(page, 'dashboard');
+    const d = await page.textContent('#view-dashboard');
+    ok(d.includes('Essays') && d.includes('Not handed in') && d.includes('To mark') && d.includes('Essay not handed in'), 'the dashboard counts essays and lists those not handed in as the due date nears');
+    await tab(page, 'more'); await page.waitForSelector('#userList ul');
+  }
   await page.evaluate(() => document.querySelector('#setForm .section').scrollIntoView()); await shot(page, 'more');
   await ctx.close();
 

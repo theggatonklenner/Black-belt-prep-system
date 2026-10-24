@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql', 'prep-update-10.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -530,6 +530,55 @@ console.log('\nClasses attended');
   ok((await one(`select classes from prep_class_requirements where target_rank = '2nd Dan'`)).classes === 30, 'admins set the classes needed for each belt');
   await fails(() => as('inst@ama.test', () => db.exec(`insert into prep_class_requirements (target_rank, classes) values ('3rd Dan', 30)`)), /row-level security|permission/, 'others cannot');
   ok((await as('view@ama.test', () => rows(`select * from prep_class_requirements`))).length === 1, 'everyone can see them');
+}
+
+console.log('\nEssays');
+{
+  // A cycle with someone going for a Dan (Cho Dan Bo -> Probationary) and someone not (1st Poom)
+  const cy = (await one(`select cycle_id from prep_cycles order by created_at desc limit 1`)).cycle_id;
+  await as(ADMIN, () => db.exec(`insert into prep_students (student_id, full_name, belt_rank) values ('E1', 'Essay Writer', 'Cho Dan Bo'), ('E2', 'Poom Kid', '1st Poom') on conflict do nothing`));
+  await as(ADMIN, () => db.query(`insert into prep_enrolments (cycle_id, student_id) values ($1, 'E1'), ($1, 'E2') on conflict do nothing`, [cy]));
+  await as(ADMIN, () => db.exec(`insert into prep_essay_questions (target_rank, question, min_words) values ('Probationary Black Belt', 'What does black belt mean to you?', 100)`));
+  await as(ADMIN, () => db.query(`update prep_cycles set essay_due = current_date + 14 where cycle_id = $1`, [cy]));
+  await fails(() => as('view@ama.test', () => db.query(`select * from prep_essay_links($1)`, [cy])), /cannot see essays/, 'viewers cannot get essay links');
+  const links = await as('inst@ama.test', () => rows(`select * from prep_essay_links($1)`, [cy]));
+  const e1 = links.find(l => l.student_id === 'E1');
+  ok(e1 && e1.target_rank === 'Probationary Black Belt' && e1.token.length >= 32 && !links.some(l => l.student_id === 'E2'), 'instructors get a personal link for each student going for Probationary or a Dan (not for Poom)');
+  const again = await as('inst@ama.test', () => rows(`select * from prep_essay_links($1, 'E1')`, [cy]));
+  ok(again[0].token === e1.token, 'asking again gives the same link');
+  ok((await as('view@ama.test', () => rows(`select * from prep_essays`))).length === 0, 'viewers cannot see essays');
+  // The student's link (no login)
+  await db.exec(`grant usage on schema storage to anon; grant select, insert on storage.objects to anon, authenticated; alter table storage.objects enable row level security`);   // as in Supabase
+  const asAnon = async fn => { await db.exec(`set role anon`); try { return await fn(); } finally { await db.exec(`reset role`); } };
+  const g = (await asAnon(() => one(`select prep_essay_get($1) g`, [e1.token]))).g;
+  ok(g.first_name === 'Essay' && g.question === 'What does black belt mean to you?' && g.min_words === 100 && g.status === 'not_submitted' && !!g.due, 'the link shows their first name, question, minimum words and due date');
+  ok((await asAnon(() => one(`select prep_essay_get('nope-not-a-real-token-at-all-0000000') g`))).g === null, 'a wrong link shows nothing');
+  await fails(() => asAnon(() => db.query(`select * from prep_essays`)), /permission|denied/, 'the link cannot read other essays');
+  await fails(() => asAnon(() => db.query(`select prep_essay_submit($1, '   ')`, [e1.token])), /Type or paste/, 'an empty hand-in is refused');
+  const r1 = (await asAnon(() => one(`select prep_essay_submit($1, 'Black belt means never giving up and helping others') r`, [e1.token]))).r;
+  ok(r1.word_count === 9 && r1.version === 1, 'the student hands in text (words counted)');
+  await asAnon(() => db.query(`insert into storage.objects (bucket_id, name) values ('prep-essays', $1)`, [e1.token + '/a.pdf']));
+  ok(true, 'the link can upload a file into its own folder');
+  await fails(() => asAnon(() => db.query(`insert into storage.objects (bucket_id, name) values ('prep-essays', 'someoneelse/a.pdf')`)), /row-level security|violates/, 'but not anywhere else');
+  await fails(() => asAnon(() => db.query(`select prep_essay_submit($1, null, 'other/x.pdf', 'x.pdf', 'application/pdf')`, [e1.token])), /not from this link/, 'a file from another folder is refused');
+  const r2 = (await asAnon(() => one(`select prep_essay_submit($1, 'Second go', $2, 'essay.pdf', 'application/pdf') r`, [e1.token, e1.token + '/a.pdf']))).r;
+  ok(r2.version === 2 && (await one(`select count(*)::int n from prep_essay_versions`)).n === 1, 'handing in again keeps the earlier version');
+  // Marking
+  await fails(() => as('inst@ama.test', () => db.exec(`update prep_essays set body = 'changed' where student_id = 'E1'`)), /Only the marking/, 'staff cannot change what the student wrote');
+  await fails(() => as('view@ama.test', () => db.exec(`update prep_essays set status = 'reviewed' where student_id = 'E1'`)).then(async () => { if ((await one(`select status from prep_essays where student_id = 'E1'`)).status !== 'reviewed') throw new Error('permission'); }), /permission/, 'viewers cannot mark');
+  await as('inst@ama.test', () => db.exec(`update prep_essays set status = 'needs_changes', feedback = 'Add more about respect' where student_id = 'E1'`));
+  const sent = await one(`select status, reviewed_by from prep_essays where student_id = 'E1'`);
+  ok(sent.status === 'needs_changes' && sent.reviewed_by === 'inst@ama.test', 'an instructor sends it back with feedback (and who did it is kept)');
+  ok((await asAnon(() => one(`select prep_essay_get($1) g`, [e1.token]))).g.feedback === 'Add more about respect', 'the student sees the feedback on their link');
+  await asAnon(() => db.query(`select prep_essay_submit($1, 'Third go with respect', null, null, null, true)`, [e1.token]));
+  const third = await one(`select status, version, file_name from prep_essays where student_id = 'E1'`);
+  ok(third.status === 'submitted' && third.version === 3 && third.file_name === 'essay.pdf', 'they hand in again (keeping the file), and it is waiting to be marked');
+  await as(ADMIN, () => db.exec(`update prep_essays set status = 'reviewed', mark = 'Pass', feedback = 'Great work' where student_id = 'E1'`));
+  const done = (await asAnon(() => one(`select prep_essay_get($1) g`, [e1.token]))).g;
+  ok(done.locked && done.mark === 'Pass', 'once reviewed, the student sees it is marked and it is locked');
+  await fails(() => asAnon(() => db.query(`select prep_essay_submit($1, 'too late')`, [e1.token])), /marked/, 'and cannot change it');
+  const fresh = await as('inst@ama.test', () => rows(`select * from prep_essay_links($1, 'E1', true)`, [cy]));
+  ok(fresh[0].token !== e1.token && (await asAnon(() => one(`select prep_essay_get($1) g`, [e1.token]))).g === null, 'a new link stops the old one working');
 }
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
