@@ -58,5 +58,10 @@ const flat = { id: 'hash', member__id: 'M9', member__firstName: 'Liz', member__l
 r = toRow(flat);
 ok(r.member_key === 'efc:M9' && r.full_name === 'Liz Mc' && r.guardian_name === null, 'Zapier-flattened fields work, and an adult who is their own contact has no separate parent');
 
+const asm = { id: 'hash', member: { id: 'M7', firstName: 'Bo', lastName: 'Kim', contactFirstName: 'Jo', contactLastName: 'Kim', telephoneMobile: '+61400', age: 8 },
+  programme: { name: 'Taekwondo' }, grade: { name: 'Cho Dan Bo', rank: 31 }, promoted: '2026-09-23', attended: 12, readyToPromote: false };
+r = toRow(asm);
+ok(r.member_key === 'efc:M7' && r.belt === 'Cho Dan Bo' && r.programme === 'Taekwondo' && r.promoted_on === '2026-09-23' && r.attended_since_promoted === 12 && r.ready_to_promote === false && r.last_attended === null, 'Assessment Query: belt, programme, last grading and classes since');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

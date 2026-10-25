@@ -74,7 +74,14 @@ export function toRow(rec, kind = 'member') {
     status: pick('status'), location: pick('location'), efc_reference: pick('reference'),
     attendance_total: /^\d+$/.test(pick('attendance_total') || '') ? +pick('attendance_total') : null,
     last_attended: /^\d{4}-\d{2}-\d{2}/.test(pick('last_attended') || '') ? pick('last_attended').slice(0, 10) : null,
-    raw: clean(rec), updated_at: new Date().toISOString()
+    raw: clean(rec), updated_at: new Date().toISOString(),
+    // Assessment Query (or its Zapier-flattened grade__name...): belt in a programme, last grading, classes since
+    ...(f.gradename ? {
+      belt: f.gradename, programme: f.programmename || null,
+      promoted_on: /^\d{4}-\d{2}-\d{2}/.test(f.promoted || '') ? f.promoted.slice(0, 10) : null,
+      attended_since_promoted: /^\d+$/.test(f.attended || '') ? +f.attended : null,
+      ready_to_promote: f.readytopromote === 'true' ? true : f.readytopromote === 'false' ? false : null
+    } : {})
   };
 }
 

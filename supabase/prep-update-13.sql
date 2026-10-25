@@ -27,6 +27,11 @@ create index if not exists efc_members_name_idx on public.efc_members (lower(ful
 alter table public.efc_members add column if not exists efc_reference text;      -- EFC's member number (e.g. AU-023-19052)
 alter table public.efc_members add column if not exists attendance_total int;    -- total classes attended, as EFC counts them
 alter table public.efc_members add column if not exists last_attended date;
+alter table public.efc_members add column if not exists programme text;           -- from EFC's Assessment Query (e.g. Taekwondo)
+alter table public.efc_members add column if not exists belt text;                -- current belt in that programme
+alter table public.efc_members add column if not exists promoted_on date;         -- last grading
+alter table public.efc_members add column if not exists attended_since_promoted int;   -- classes since last grading
+alter table public.efc_members add column if not exists ready_to_promote boolean;
 
 alter table public.efc_members enable row level security;
 drop policy if exists "read" on public.efc_members;
