@@ -415,6 +415,17 @@ try {
   await page.click('#sheet [data-close]');
 
   // ------------------------------------------------------------------
+  console.log('\nAddresses');
+  await tab(page, 'students'); await tab(page, 'more');
+  ok(page.url().endsWith('#more'), 'More has its own address (#more)');
+  await page.goBack(); await page.waitForFunction(() => !document.querySelector('#view-students').hidden, null, { timeout: 5000 }).catch(() => {});
+  ok(page.url().endsWith('#students') && await page.isVisible('#view-students'), 'the back button goes back to the last screen');
+  await page.goto(BASE + '/#cycles'); await page.waitForSelector('#view-cycles:not([hidden])', { timeout: 8000 }).catch(() => {});
+  ok(await page.isVisible('#view-cycles') && (await page.textContent('#view-cycles')).includes('Preparation cycles'), 'opening an address (#cycles) goes straight to that screen');
+  await page.goto(BASE + '/#student/BB0001'); await page.waitForSelector('#sheet[open]', { timeout: 8000 }).catch(() => {});
+  ok((await page.textContent('#sheet')).includes('Alex Smith') && page.url().includes('#student/BB0001'), 'a student has their own address too (#student/BB0001)');
+  await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+  ok(page.url().endsWith('#students'), 'closing the student goes back to the screen address');
   console.log('\nSettings and users');
   await tab(page, 'more');
   await page.waitForSelector('#userList ul');

@@ -786,8 +786,26 @@ function scheduleReload() {
 }
 
 /* ---------- Navigation ---------- */
-function showView(v) {
+// Each screen has its own address (like the AMA dashboard): .../#more, #grading, #students, #student/BB0001 ...
+// so the browser's back button, bookmarks and shared links work.
+const VIEWS = ['dashboard', 'students', 'attendance', 'checkin', 'readiness', 'cycles', 'payments', 'grading', 'certificates', 'reports', 'essays', 'more'];
+function fromHash() {
+  const p = location.hash.replace(/^#\/?/, '').split('/').map(x => { try { return decodeURIComponent(x); } catch (e) { return x; } });
+  const k = (p[0] || '').toLowerCase();
+  if (k === 'student' && p[1]) return { v: 'students', student: p[1] };
+  return { v: VIEWS.includes(k) ? k : 'dashboard' };
+}
+function route() {
+  if (!state.loaded) return;
+  const r = fromHash();
+  if (r.v !== state.view) showView(r.v, true);
+  if (r.student && student(r.student)) openStudent(r.student);
+}
+window.addEventListener('popstate', route);
+window.addEventListener('hashchange', route);
+function showView(v, fromAddress) {
   state.view = v;
+  if (!fromAddress && location.hash !== '#' + v) { try { history.pushState(null, '', '#' + v); } catch (e) { /* ignore */ } }
   $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'attendance' && v === 'checkin') || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates', 'reports', 'essays'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
@@ -1535,6 +1553,11 @@ async function openTexts(cid, kind = 'invite', only) {
 
 function openStudent(id) {
   const s = student(id); if (!s) return;
+  setTimeout(() => {   // its own address while open (a link straight to this student), back to the screen's when closed
+    try { history.replaceState(null, '', '#student/' + encodeURIComponent(id)); } catch (e) { /* ignore */ }
+    const prev = sheet.onclose;
+    sheet.onclose = () => { if (prev) prev(); if (location.hash.startsWith('#student/')) { try { history.replaceState(null, '', '#' + state.view); } catch (e) { /* ignore */ } } };
+  }, 0);
   const myCycles = state.cycles.filter(c => enrolledIds(c.cycle_id).has(id));
   const c = myCycles.find(x => x.status === 'active') || myCycles[0];
   const cycleBlock = cy => {
@@ -3616,7 +3639,11 @@ async function start() {
   showOnly(null);
   $('#view-dashboard').innerHTML = '<p class="muted">Loading...</p>';
   try { await loadAll(); } catch (e) { toast('Could not load: ' + errMsg(e), 8000); return; }
-  showView(state.view);
+  const r = fromHash();   // open on the screen in the address (a bookmark or shared link)
+  if (r.v !== 'dashboard') $('#view-dashboard').innerHTML = '';   // drawn when it's opened
+  showView(r.v, true);
+  if (!location.hash) { try { history.replaceState(null, '', '#' + r.v); } catch (e) { /* ignore */ } }
+  if (r.student && student(r.student)) openStudent(r.student);
   if (!started) {
     started = true;
     try { sb.channel('prep-changes').on('postgres_changes', { event: '*', schema: 'public' }, p => { if (String(p.table).startsWith('prep_') || p.table === 'people' || p.table === 'print_jobs') scheduleReload(); }).subscribe(); } catch (e) { console.warn(e); }
