@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql', 'prep-update-10.sql', 'prep-update-11.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql', 'prep-update-10.sql', 'prep-update-11.sql', 'prep-update-12.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -581,6 +581,14 @@ console.log('\nEssays');
   ok(fresh[0].token !== e1.token && (await asAnon(() => one(`select prep_essay_get($1) g`, [e1.token]))).g === null, 'a new link stops the old one working');
 }
 
+console.log('\nReadiness reasons');
+{
+  const rr = await one(`select student_id, cycle_id from prep_readiness limit 1`) || await one(`select student_id, cycle_id from prep_enrolments limit 1`);
+  await (async f => f())(() => db.query(`insert into prep_readiness (student_id, cycle_id, status, reason) values ($1, $2, 'not_ready', 'more_time')
+    on conflict (student_id, cycle_id) do update set status = 'not_ready', reason = 'more_time'`, [rr.student_id, rr.cycle_id]));   // (checks the allowed reasons)
+  ok((await one(`select reason from prep_readiness where student_id = $1 and cycle_id = $2`, [rr.student_id, rr.cycle_id])).reason === 'more_time', 'not ready can be for "needs more time at current belt"');
+  ok((await one(`select body from prep_message_templates where kind = 'not_ready'`)).body.includes('would like to see {reason}'), 'the not ready text reads well with the reasons');
+}
 console.log('\nText messages');
 ok((await one(`select count(*)::int n from prep_message_templates`)).n === 4, 'the four texts start with their usual wording');
 await as('inst@ama.test', () => db.exec(`update prep_message_templates set body = 'x' where kind = 'congrats'`)).catch(() => {});

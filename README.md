@@ -9,7 +9,7 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 ## Folders
 
 - `docs/` the app (published with GitHub Pages, see [spec/stage-3-app.md](spec/stage-3-app.md))
-- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) `supabase/prep-update-06.sql` (linking ID cards) `supabase/prep-update-07.sql` (no due date for session fees, belts up to 9th Dan) `supabase/prep-update-08.sql` (delete students anyway), `supabase/prep-update-09.sql` (classes attended) and `supabase/prep-update-10.sql` (essays) and `supabase/prep-update-11.sql` (texts through GoHighLevel)
+- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) `supabase/prep-update-06.sql` (linking ID cards) `supabase/prep-update-07.sql` (no due date for session fees, belts up to 9th Dan) `supabase/prep-update-08.sql` (delete students anyway), `supabase/prep-update-09.sql` (classes attended) and `supabase/prep-update-10.sql` (essays) `supabase/prep-update-11.sql` (texts through GoHighLevel) and `supabase/prep-update-12.sql` (readiness reason: more time at current belt)
 - `docs/essay/` the essay page students open from their personal link (no login)
 - `spec/` the specification and stage notes
 - `tests/` database and browser tests
@@ -79,7 +79,7 @@ Staff text families from Black Belt Prep: **grading invitations** (with the cycl
 - Who can send: invitations and congratulations, the Grading role; not ready yet, Instructor or Grading; essay links, Instructor (admins can send all).
 
 Setup (once):
-1. Run `supabase/prep-update-11.sql` in Supabase > SQL Editor.
+1. Run `supabase/prep-update-11.sql` (and 12) in Supabase > SQL Editor.
 2. In GoHighLevel (the sub-account): Settings > **Private Integrations** > Create new integration, name it "Black Belt Prep", and give it access to **View Contacts, Edit Contacts** and **View/Edit Conversation Messages** (conversations/message.write). Copy the token. The location ID is in Settings > Business Profile (also in the address bar after /location/).
 3. In Supabase: Edge Functions > Secrets: add `GHL_TOKEN` (the token) and `GHL_LOCATION_ID`. Optionally `GHL_TEST` = `1` to try it out: texts are logged but not sent.
 4. Edge Functions > Deploy a new function > Via Editor: name it `ghl`, paste the whole of `supabase/functions/ghl/index.ts`, Deploy, then turn off "Verify JWT" for it.

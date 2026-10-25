@@ -14,7 +14,7 @@ create table if not exists public.prep_message_templates (
 insert into public.prep_message_templates (kind, body) values
   ('invite', 'Hi! {first_name} is invited to grade for {belt} on {grading_date}. Please book and pay here: {link} - AMA Marrickville'),
   ('congrats', 'Congratulations {first_name}! You passed your grading and are now a {belt}. We are so proud of you. - AMA Marrickville'),
-  ('not_ready', 'Hi! {first_name} is working hard towards {belt}. Our instructors would like a little more time on {reason} before grading, and we will help get there. Keep up the great training! - AMA Marrickville'),
+  ('not_ready', 'Hi! {first_name} is working hard towards {belt}. Before grading, our instructors would like to see {reason}, and we will help get there. Keep up the great training! - AMA Marrickville'),
   ('essay', 'Hi {first_name}, here is your personal link for your black belt essay ({belt}): {link} - AMA Marrickville')
 on conflict (kind) do nothing;
 

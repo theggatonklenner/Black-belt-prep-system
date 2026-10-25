@@ -36,6 +36,7 @@ await db.exec(read(join(here, '../supabase/prep-update-08.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-09.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-10.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-11.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-12.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -739,6 +740,7 @@ try {
     await page.check('#rdForm [name=rdStatus][value=not_ready]');
     await page.click('#rdSave');
     ok((await toastText(page)).includes('Choose a reason'), 'flagging not ready requires a reason');
+    ok((await page.$$eval('#rdReason option', os => os.map(o => o.textContent))).includes('Needs more time at current belt'), 'not ready can be because they need more time at their current belt');
     await page.selectOption('#rdReason', 'technique'); await page.fill('#rdNotes', 'Poomsae timing'); await page.fill('#rdNext', 'Extra class');
     await page.click('#rdSave'); await settle(page);
     const rr = (await q(`select r.status, r.reason, r.notes, r.next_action, r.reviewed_by from prep_readiness r join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and r.student_id = 'M-0042'`))[0];

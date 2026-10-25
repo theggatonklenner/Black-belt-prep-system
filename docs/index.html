@@ -1475,7 +1475,7 @@ function msgVars(cid, sid, kind) {
   const target = (g && g.target_rank) || nextBelt(s.belt_rank) || '';
   return { first_name: s.full_name.split(' ')[0], name: s.full_name, belt: target, current_belt: s.belt_rank || '',
     grading_date: c.grading_date ? fmt(c.grading_date, { weekday: 'long', day: 'numeric', month: 'long' }) : '',
-    reason: (r.reason ? RD_REASONS[r.reason] : '').toLowerCase() || (r.next_action || '').toLowerCase() || 'a few things',
+    reason: (r.reason && RD_REASON_TEXT[r.reason]) || 'a little more preparation',
     link: kind === 'essay' ? (e && e.token ? essayUrl(e.token) : '') : (c.invite_link || '') };
 }
 // Who each kind of message is for, in a cycle
@@ -2450,7 +2450,10 @@ async function addAndCheckIn(id) {
    ========================================================================= */
 const RD_STATUSES = ['not_assessed', 'on_track', 'needs_preparation', 'not_ready', 'ready', 'awaiting_review'];
 const RD_REASONS = { technique: 'Technique requires improvement', fitness: 'Fitness or conditioning', attendance: 'Attendance concerns',
-  more_practice: 'Additional practice required', instructor_recommendation: 'Instructor recommendation', other: 'Other' };
+  more_practice: 'Additional practice required', more_time: 'Needs more time at current belt', instructor_recommendation: 'Instructor recommendation', other: 'Other' };
+// How each reason reads in the "not ready yet" text ("... would like to see {reason}")
+const RD_REASON_TEXT = { technique: 'a little more work on technique', fitness: 'a little more work on fitness', attendance: 'a few more classes',
+  more_practice: 'a bit more practice', more_time: 'a bit more time at their current belt', instructor_recommendation: 'a little more preparation', other: 'a little more preparation' };
 const needsReason = st => st === 'needs_preparation' || st === 'not_ready';
 state.rd = { cycle: null, status: '', search: '', belt: '' };
 const rdSel = { on: false, ids: new Set() };
