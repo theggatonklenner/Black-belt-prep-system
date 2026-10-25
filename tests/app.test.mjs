@@ -35,6 +35,7 @@ await db.exec(read(join(here, '../supabase/prep-update-07.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-08.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-09.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-10.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-11.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -107,7 +108,7 @@ try {
   await tab(page, 'students');
   await page.click('#addStudentBtn');
   await page.fill('#fName', 'Alex Smith'); await page.selectOption('#fRank', 'Cho Dan Bo');
-  ok(!(await page.$('#fDob')) && !(await page.$('#fEmail')) && !(await page.$('#fPhone')), 'student form has no birth date, email or phone');
+  ok(!(await page.$('#fDob')) && await page.isVisible('#fPhone') && await page.isVisible('#fEmail'), 'student form has no birth date; family mobile and email are optional (for texts)');
   await shot(page, 'add-student');
   await page.click('#fSave');
   ok((await toastText(page)).includes('as BB0001'), 'student added and given Student ID BB0001');
@@ -139,7 +140,7 @@ try {
   await page.click('#impGo'); await confirm(page); await settle(page);
   const imported = await q(`select student_id, full_name, contact_phone from prep_students order by student_id`);
   ok(imported.length === 4 && imported.some(s => s.student_id === 'M-0042'), 'import kept the supplied Student ID');
-  ok(imported.every(s => !s.contact_phone), 'phone numbers in the file are not stored');
+  ok(imported.some(s => s.contact_phone), 'a Mobile or Phone column in the file is kept as the family mobile (for texts)');
   const belts = Object.fromEntries((await q(`select full_name, belt_rank from prep_students`)).map(r => [r.full_name, r.belt_rank]));
   ok(belts['Jordan Lee'] === 'Cho Dan Bo' && belts['Taylor Brown'] === '3rd Dan Level 2', 'imported belts matched to the list ("cho dan bo", "3rd dan lvl 2")');
   const opts = await page.$$eval('#studentBelt option', os => os.map(o => o.textContent));
@@ -672,6 +673,7 @@ try {
       const before = await paidTx(who[1].student_id);
       await page.click(`#ciList [data-ci="${who[1].student_id}"][data-pay="1"]`); await settle(page);
       ok(await st(who[1].student_id) === 'present' && await paidTx(who[1].student_id) === before + 1, 'Paid checks them in and records the payment');
+      await page.waitForSelector(`#ciHere [data-cipay="${who[1].student_id}"][aria-pressed="true"]`, { timeout: 5000 }).catch(() => {});
       ok(await page.isVisible(`#ciHere [data-cipay="${who[1].student_id}"][aria-pressed="true"]`), 'Here list shows them as paid');
       await page.click(`#ciHere [data-cipay="${who[1].student_id}"]`); await confirm(page); await settle(page);   // undo, so later payment checks are unchanged
     } else ok(btns.some(b => b.startsWith('0:Check in')), 'someone already paid gets a single Check in button');
@@ -797,7 +799,35 @@ try {
     ok((await q(`select g.result from prep_grading g join prep_cycles c using (cycle_id) where c.name = 'Term 1 2027' and g.student_id = 'BB0001'`))[0].result === 'passed', 'result recorded as passed');
     ok((await q(`select belt_rank from prep_students where student_id = 'BB0001'`))[0].belt_rank === 'Cho Dan Bo', 'belt is not changed by a result');
     ok(!(await page.$('#grPromote')), 'there is no belt-update button');
-    await page.click('#sheet [data-close]');
+    await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+    // Texting families through GoHighLevel (the function is pretended here; it has its own tests)
+    {
+      const cyId = (await q(`select cycle_id from prep_cycles where name = 'Term 1 2027'`))[0].cycle_id;
+      await q(`update prep_students set contact_phone = '0412 345 678' where student_id = 'BB0001'`);
+      await q(`update prep_cycles set invite_link = 'https://ama.test/book' where cycle_id = $1`, [cyId]);
+      const sent = [];
+      await page.context().route(`${BASE}/functions/v1/ghl`, async r => {
+        const b = JSON.parse(r.request().postData() || '{}');
+        if (b.action === 'check') return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ready: true }) });
+        for (const it of b.items) { sent.push(it); await q(`insert into prep_messages (student_id, cycle_id, kind, body, status, sent_by) values ($1, $2, $3, $4, 'sent', 'owner@ama.test')`, [it.student_id, it.cycle_id, it.kind, it.body]); }
+        return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ sent: b.items.length, results: b.items.map(it => ({ student_id: it.student_id, ok: true })) }) });
+      });
+      await page.evaluate(() => loadAll().then(render));
+      await page.click('#grText'); await page.waitForSelector('#txBody');
+      const inv = await page.textContent('#sheet');
+      ok(inv.includes('Alex Smith') && inv.includes('0412 345 678') && inv.includes('Please book and pay here: https://ama.test/book'), 'Text families starts on grading invitations, with the booking link filled in');
+      await page.click('#sheet [data-tk="congrats"]'); await page.waitForSelector('#sheet [data-tk="congrats"][aria-pressed="true"]');
+      const cg = await page.textContent('#sheet');
+      ok(cg.includes('Preview for Alex Smith') && cg.includes('Congratulations Alex! You passed your grading and are now a Probationary Black Belt'), 'Congratulations shows who passed, with a preview of their text');
+      ok(await page.isChecked('#sheet [data-tx="BB0001"]'), 'students with a mobile are ticked');
+      await page.fill('#txBody', 'Well done {first_name}, you are now a {belt}!'); await page.waitForTimeout(200);
+      ok((await page.textContent('#sheet')).includes('Well done Alex, you are now a Probationary Black Belt!'), 'the wording can be changed before sending, and the preview follows');
+      await page.click('#txGo'); await confirm(page); await page.waitForTimeout(800);
+      ok(sent.length === 1 && sent[0].kind === 'congrats' && sent[0].student_id === 'BB0001' && sent[0].body === 'Well done Alex, you are now a Probationary Black Belt!', 'Send texts the filled-in message for each student');
+      await page.click('#grText'); await page.waitForSelector('#txBody'); await page.click('#sheet [data-tk="congrats"]'); await page.waitForSelector('#sheet [data-tk="congrats"][aria-pressed="true"]');
+      ok((await page.textContent('#sheet')).includes('Texted') && !(await page.isChecked('#sheet [data-tx="BB0001"]')), 'someone already texted shows when, and is not ticked again');
+      await page.click('#sheet [data-close]'); await page.waitForSelector('#sheet:not([open])', { state: 'attached' }); await page.waitForTimeout(200);
+    }
     await page.click('#view-grading [data-grf="all"]');
     await page.click('#grSelect'); await page.click('#grSelAll');
     ok(!(await page.$('#grSelbar [data-gbulk="promote"]')), 'bulk actions do not include updating belts');

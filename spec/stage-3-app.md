@@ -67,7 +67,7 @@ People sign in with their AMA ID Cards login. Card software admins are already p
 
 **Students**
 - Search by name or Student ID; filter by belt rank and active or inactive; test records hidden unless asked for
-- Students need only a name and belt rank (no birth date, email or phone)
+- Students need only a name and belt rank (no birth date). A family mobile and email are optional, added later for texts through GoHighLevel (update 11)
 - Add and edit; Student IDs are created automatically (BB0001, BB0002 ...) and never change
 - Belt rank is chosen from a list in grading order: Cho Dan Bo, Probationary Black Belt, 1st Dan Black Belt, 1st Dan Level 1, 2nd Dan, 2nd Dan Levels 1 to 2, 3rd Dan, 3rd Dan Levels 1 to 3, 4th Dan, 4th Dan Levels 1 to 4, 5th Dan, 5th Dan Levels 1 to 5, 6th Dan, 7th Dan, 8th Dan, 9th Dan. Imports match belts however they are written: "First Dan", "Third Dan Level 1", "3rd dan lvl 2", "1st Dan"
 - Warning before adding a name that already exists, and a banner listing possible duplicates

@@ -39,7 +39,7 @@ const PREP = read(join(here, '../supabase/prep-setup.sql'));
 await db.exec(PREP);
 await db.exec(PREP); // safe to run twice
 ok(true, 'prep-setup.sql runs twice without errors');
-for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql', 'prep-update-10.sql']) {
+for (const f of ['prep-update-01.sql', 'prep-update-02.sql', 'prep-update-03.sql', 'prep-update-04.sql', 'prep-update-05.sql', 'prep-update-06.sql', 'prep-update-07.sql', 'prep-update-08.sql', 'prep-update-09.sql', 'prep-update-10.sql', 'prep-update-11.sql']) {
   const sql = read(join(here, '../supabase', f));
   await db.exec(sql); await db.exec(sql);
   ok(true, `${f} runs twice without errors`);
@@ -580,6 +580,13 @@ console.log('\nEssays');
   const fresh = await as('inst@ama.test', () => rows(`select * from prep_essay_links($1, 'E1', true)`, [cy]));
   ok(fresh[0].token !== e1.token && (await asAnon(() => one(`select prep_essay_get($1) g`, [e1.token]))).g === null, 'a new link stops the old one working');
 }
+
+console.log('\nText messages');
+ok((await one(`select count(*)::int n from prep_message_templates`)).n === 4, 'the four texts start with their usual wording');
+await as('inst@ama.test', () => db.exec(`update prep_message_templates set body = 'x' where kind = 'congrats'`)).catch(() => {});
+ok((await one(`select body from prep_message_templates where kind = 'congrats'`)).body !== 'x', 'only admins change the wording');
+await fails(() => as(ADMIN, () => db.exec(`insert into prep_messages (kind, body, status) values ('invite', 'x', 'sent')`)), /permission|denied|row-level/, 'the text log is written only by the GoHighLevel function');
+ok((await as('view@ama.test', () => rows(`select * from prep_messages`))).length === 0, 'viewers cannot see texts sent');
 
 const noRls = await rows(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'prep\\_%' and not c.relrowsecurity`);

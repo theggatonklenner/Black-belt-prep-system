@@ -586,7 +586,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, classReqs: [], essays: [], essayQs: [], essaysReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, classReqs: [], essays: [], essayQs: [], essaysReady: false, msgTemplates: [], messages: [], textsReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', card: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -650,6 +650,11 @@ async function loadAll() {
   state.essaysReady = !eq.error; state.essayQs = eq.data || [];
   const es = state.essaysReady && has('instructor') ? await sb.from('prep_essays').select('essay_id, cycle_id, student_id, target_rank, token, status, word_count, file_name, file_path, submitted_at, version, mark, feedback, reviewed_by, reviewed_at') : { data: [] };
   state.essays = es.data || [];
+  // Texts through GoHighLevel (supabase/prep-update-11.sql)
+  const mt = await sb.from('prep_message_templates').select('*');
+  state.textsReady = !mt.error; state.msgTemplates = mt.data || [];
+  const ml = state.textsReady && has('instructor', 'grading') ? await sb.from('prep_messages').select('student_id, cycle_id, kind, status, sent_at, error').order('sent_at', { ascending: false }).limit(3000) : { data: [] };
+  state.messages = ml.data || [];
   // Who pays per session and which sessions they've paid at (no amounts); needs supabase/prep-update-03.sql
   const fees = canEditAttendance() ? await sb.rpc('prep_session_fees', { p_cycle: null }) : { data: [] };
   state.sessionFees = fees.error ? [] : (fees.data || []);
@@ -1282,7 +1287,7 @@ async function openEssay(cid, sid) {
     <div class="section"><h3>Question</h3><p style="white-space:pre-wrap;margin:0">${q ? esc(q.question) : '<span class="muted">No question set for this belt yet.</span>'}</p>
       ${q && q.min_words ? `<p class="hint">At least ${q.min_words} words.</p>` : ''}</div>
     <div class="section"><h3>Their personal link</h3>
-      <div class="row"><button class="btn primary sm" id="esMsg">Copy message</button><button class="btn sm" id="esLink">Copy link</button>${navigator.share ? '<button class="btn sm" id="esShare">Share</button>' : ''}<button class="btn sm ghost" id="esNew">New link</button></div>
+      <div class="row"><button class="btn primary sm" id="esMsg">Copy message</button><button class="btn sm" id="esLink">Copy link</button>${navigator.share ? '<button class="btn sm" id="esShare">Share</button>' : ''}${canText('essay') ? '<button class="btn sm" id="esText">Text it</button>' : ''}<button class="btn sm ghost" id="esNew">New link</button></div>
       <p class="hint">Send it to the student or their parent. It only shows their own essay. "New link" stops the old one working.</p></div>
     <div class="section"><h3>Handed in</h3>
       ${e.version ? `<p class="hint">${fmtTime(e.submitted_at)} · version ${e.version}${e.word_count ? ` · ${e.word_count} words` : ''}${q && q.min_words && e.word_count && e.word_count < q.min_words ? ` <span class="tag warn">Under ${q.min_words} words</span>` : ''}${essayLate(c, e) ? ' <span class="tag bad">Late</span>' : ''}</p>
@@ -1301,6 +1306,7 @@ async function openEssay(cid, sid) {
   const s0 = s;
   $('#esMsg').onclick = () => copyText(essayMsg(s0, url, c), 'Message');
   $('#esLink').onclick = () => copyText(url, 'Link');
+  const et = $('#esText'); if (et) et.onclick = () => openTexts(cid, 'essay', [sid]);
   const sh = $('#esShare'); if (sh) sh.onclick = () => navigator.share({ title: 'Black belt essay', text: essayMsg(s0, url, c) }).catch(() => {});
   $('#esNew').onclick = async () => {
     if (!await ask(`Make a new link for ${s.full_name}? The old link will stop working.`, 'New link')) return;
@@ -1324,6 +1330,98 @@ async function openEssay(cid, sid) {
   };
   if ($('#esBack')) { $('#esBack').onclick = () => mark('needs_changes'); $('#esDone').onclick = () => mark('reviewed'); }
   const pb = $('#esPdf'); if (pb) pb.onclick = () => essayPdf(cid, [sid], `essay-${fileStemOf(s.full_name)}`);
+}
+
+/* =========================================================================
+   Texting families through GoHighLevel: grading invitations, congratulations, not ready yet, essay links.
+   Nothing is sent automatically: pick who, check the wording, press Send.
+   ========================================================================= */
+const MSG_KINDS = { invite: 'Grading invitation', congrats: 'Congratulations', not_ready: 'Not ready yet', essay: 'Essay link' };
+const MSG_WHO = { invite: ['grading'], congrats: ['grading'], not_ready: ['instructor', 'grading'], essay: ['instructor'] };
+const canText = k => state.textsReady && has(...MSG_WHO[k]);
+const msgTpl = k => (state.msgTemplates.find(t => t.kind === k) || {}).body || '';
+const fillMsg = (tpl, v) => tpl.replace(/\{(\w+)\}/g, (m, k) => v[k] != null && v[k] !== '' ? String(v[k]) : m);
+const mobileOk = p => { const d = String(p || '').replace(/[^\d+]/g, ''); return /^(\+?61|0)?4\d{8}$/.test(d) || /^\+\d{8,15}$/.test(d); };
+const lastText = (cid, sid, kind) => state.messages.find(m => m.student_id === sid && m.kind === kind && (!cid || m.cycle_id === cid) && m.status !== 'failed') || null;
+function msgVars(cid, sid, kind) {
+  const s = student(sid), c = cycle(cid) || {}, g = gradingFor(cid, sid), r = readinessFor(cid, sid) || {}, e = essayFor(cid, sid);
+  const target = (g && g.target_rank) || nextBelt(s.belt_rank) || '';
+  return { first_name: s.full_name.split(' ')[0], name: s.full_name, belt: target, current_belt: s.belt_rank || '',
+    grading_date: c.grading_date ? fmt(c.grading_date, { weekday: 'long', day: 'numeric', month: 'long' }) : '',
+    reason: (r.reason ? RD_REASONS[r.reason] : '').toLowerCase() || (r.next_action || '').toLowerCase() || 'a few things',
+    link: kind === 'essay' ? (e && e.token ? essayUrl(e.token) : '') : (c.invite_link || '') };
+}
+// Who each kind of message is for, in a cycle
+function textCandidates(cid, kind) {
+  const ids = [...enrolledIds(cid)].map(student).filter(Boolean).sort((a, b) => a.full_name.localeCompare(b.full_name));
+  return ids.filter(s => {
+    const g = gradingFor(cid, s.student_id), r = readinessFor(cid, s.student_id) || {}, e = enrolment(cid, s.student_id);
+    if (kind === 'invite') return e.is_grading || (g && g.eligibility_decision === 'eligible');
+    if (kind === 'congrats') return g && g.result === 'passed';
+    if (kind === 'not_ready') return ['not_ready', 'needs_preparation'].includes(r.status) || (g && ['unsuccessful', 'deferred'].includes(g.result));
+    if (kind === 'essay') return needsEssay(s);
+    return false;
+  });
+}
+async function sendTexts(items) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) throw new Error('Sign in first.');
+  let res;
+  try { res = await fetch(CFG.SUPABASE_URL + '/functions/v1/ghl', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token, apikey: CFG.SUPABASE_ANON_KEY }, body: JSON.stringify(items ? { action: 'send', items } : { action: 'check' }) }); }
+  catch (e) { throw new Error('Could not reach the "ghl" function. Check it is deployed in Supabase.'); }
+  const d = await res.json().catch(() => ({}));
+  if (res.status === 404 && !d.error) throw new Error('The "ghl" function is not set up in Supabase yet (see the README).');
+  if (!res.ok) throw new Error(d.error || d.message || 'Something went wrong.');
+  return d;
+}
+async function openTexts(cid, kind = 'invite', only) {
+  const c = cycle(cid); if (!c) return;
+  if (!state.textsReady) return toast('Run supabase/prep-update-11.sql in Supabase to send texts.', 6000);
+  const kinds = Object.keys(MSG_KINDS).filter(k => canText(k) && (k !== 'essay' || state.essaysReady));
+  if (!kinds.includes(kind)) kind = kinds[0];
+  if (!kind) return toast('Your login cannot send texts.');
+  if (kind === 'essay') { try { await essayLinks(cid, only ? only[0] : null); } catch (e) { /* shown below as no link */ } }
+  let body = msgTpl(kind);
+  const people = only ? only.map(student).filter(Boolean) : textCandidates(cid, kind);
+  const picked = new Set(people.filter(s => mobileOk(s.contact_phone) && !lastText(cid, s.student_id, kind)).map(s => s.student_id));
+  const draw = () => {
+    const first = people.find(s => picked.has(s.student_id)) || people[0];
+    const preview = first ? fillMsg(body, msgVars(cid, first.student_id, kind)) : '';
+    const noLink = /\{link\}/.test(body) && first && !msgVars(cid, first.student_id, kind).link;
+    openSheet(`<div class="body">${sheetHead('Text families', `${esc(c.name)} · sent through GoHighLevel`)}
+      ${only ? '' : `<div class="seg" role="group" aria-label="Message">${kinds.map(k => `<button type="button" data-tk="${k}" aria-pressed="${k === kind}">${MSG_KINDS[k]}</button>`).join('')}</div>`}
+      ${kind === 'invite' && !c.invite_link ? `<div class="banner"><span>No booking and payment link on this cycle yet${has('admin') ? '. Add it on the cycle (Grading invitation link).' : '.'}</span></div>` : ''}
+      <div class="field"><label for="txBody">Message</label><textarea id="txBody" rows="4" maxlength="1000">${esc(body)}</textarea>
+        <p class="hint">Filled in for each student: {first_name} {name} {belt} {current_belt} {grading_date} {link} {reason}. Changes here are for this send only${has('admin') ? '; change the usual wording in More &gt; Settings' : ''}.</p></div>
+      ${first ? `<div class="card" style="box-shadow:none;border:1px solid var(--line)"><b class="small">Preview for ${esc(first.full_name)}</b><div id="txPrev" style="white-space:pre-wrap">${esc(preview)}</div></div>` : ''}
+      ${noLink ? '<p class="hint" style="color:var(--danger)">{link} has nothing to fill in yet.</p>' : ''}
+      <div class="row"><h3 class="grow">Who (${picked.size} of ${people.length})</h3>${people.length > 1 ? '<button type="button" class="btn sm ghost" id="txAll">All with a mobile</button><button type="button" class="btn sm ghost" id="txNone">None</button>' : ''}</div>
+      <ul class="list">${people.map(s => { const last = lastText(cid, s.student_id, kind), okp = mobileOk(s.contact_phone);
+        return `<li><label class="item" style="cursor:${okp ? 'pointer' : 'default'}"><input type="checkbox" data-tx="${esc(s.student_id)}" ${picked.has(s.student_id) ? 'checked' : ''} ${okp ? '' : 'disabled'}>
+          <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${okp ? esc(s.contact_phone) : '<span style="color:var(--danger)">No mobile number (add it on the student)</span>'}</div></div>
+          ${last ? `<span class="tag ${last.status === 'test' ? '' : 'ok'}">${last.status === 'test' ? 'Test ' : 'Texted '}${fmtShort(last.sent_at.slice(0, 10))}</span>` : ''}</label></li>`; }).join('') || '<li><div class="empty">No one for this message in this cycle.</div></li>'}</ul>
+      <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="txGo" ${picked.size ? '' : 'disabled'}>Send ${picked.size} text${picked.size === 1 ? '' : 's'}</button></div></div>`);
+    const keep = () => { body = $('#txBody').value; };
+    $('#txBody').oninput = () => { keep(); const pv = $('#txPrev'); if (pv && first) pv.textContent = fillMsg(body, msgVars(cid, first.student_id, kind)); };   // the preview follows as you type
+    sheet.querySelectorAll('[data-tk]').forEach(b => b.onclick = () => { sheet.close(); setTimeout(() => openTexts(cid, b.dataset.tk), 50); });
+    sheet.querySelectorAll('[data-tx]').forEach(cb => cb.onchange = () => { keep(); cb.checked ? picked.add(cb.dataset.tx) : picked.delete(cb.dataset.tx); draw(); });
+    const all = $('#txAll'); if (all) all.onclick = () => { keep(); people.forEach(s => { if (mobileOk(s.contact_phone)) picked.add(s.student_id); }); draw(); };
+    const none = $('#txNone'); if (none) none.onclick = () => { keep(); picked.clear(); draw(); };
+    $('#txGo').onclick = async () => {
+      keep();
+      const to = people.filter(s => picked.has(s.student_id));
+      const again = to.filter(s => lastText(cid, s.student_id, kind)).length;
+      if (!await ask(`Send "${MSG_KINDS[kind]}" to ${to.length} famil${to.length === 1 ? 'y' : 'ies'}?${again ? ` ${again} of them already got this text.` : ''}`, 'Send')) return draw();
+      $('#txGo').disabled = true; toast('Sending...', 0);
+      try {
+        const r = await sendTexts(to.map(s => ({ student_id: s.student_id, cycle_id: cid, kind, body: fillMsg(body, msgVars(cid, s.student_id, kind)) })));
+        const bad = r.results.filter(x => !x.ok);
+        toast(`${r.testing ? 'Test mode: logged ' : 'Sent '}${r.sent} text${r.sent === 1 ? '' : 's'}${bad.length ? `. Not sent: ${bad.map(x => `${(student(x.student_id) || {}).full_name || x.student_id} (${x.error})`).join(', ')}` : ''}`, bad.length ? 10000 : 4000);
+        sheet.close(); await loadAll(); render();
+      } catch (e) { toast(errMsg(e), 8000); draw(); }
+    };
+  };
+  draw();
 }
 
 function openStudent(id) {
@@ -1361,6 +1459,7 @@ function openStudent(id) {
     <div class="section"><h3>Details</h3>
       <dl class="kv">
         <dt>Certificate name</dt><dd>${esc(s.certificate_name || s.full_name)}</dd>
+        ${s.contact_phone || s.contact_email ? `<dt>Family contact</dt><dd>${esc([s.contact_phone, s.contact_email].filter(Boolean).join(' · '))}</dd>` : ''}
         <dt>Belt rank</dt><dd>${esc(s.belt_rank || '—')}</dd>
         ${danTarget(s) ? `<dt>Going for</dt><dd>${esc(danTarget(s))}</dd><dt>Dan number</dt><dd>${danFor(s) ? `<b>${danFor(s).dan_number}</b>` : '<span class="muted">Not assigned yet</span>'}
           ${danFor(s) ? '<button class="btn sm ghost need-admin" id="stDan" style="min-height:0;padding:0 6px">Change</button>' : ''}</dd>` : ''}
@@ -1455,6 +1554,8 @@ function openStudentForm(s = null) {
     <div class="field"><label for="fName">Full name</label><input type="text" id="fName" required value="${v('full_name')}" autocomplete="off"></div>
     <div class="field"><label for="fCert">Name on certificate, if different</label><input type="text" id="fCert" value="${v('certificate_name')}" autocomplete="off"></div>
     <div class="field"><label for="fRank">Belt rank</label><select id="fRank">${beltOptions(s ? s.belt_rank : '')}</select></div>
+    <div class="grid2"><div class="field"><label for="fPhone">Family mobile</label><input type="tel" id="fPhone" value="${v('contact_phone')}" autocomplete="off" placeholder="e.g. 0412 345 678"></div>
+      <div class="field"><label for="fEmail">Family email</label><input type="email" id="fEmail" value="${v('contact_email')}" autocomplete="off"></div></div>
     <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${v('notes')}</textarea></div>
     ${s ? '' : '<label class="check"><input type="checkbox" id="fTest"> Test record (kept out of real lists and new cycles)</label>'}
     <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="fSave">${s ? 'Save' : 'Add student'}</button></div>
@@ -1462,7 +1563,8 @@ function openStudentForm(s = null) {
   $('#stForm').onsubmit = async e => {
     e.preventDefault();
     const rec = { full_name: $('#fName').value.trim(), certificate_name: $('#fCert').value.trim() || null,
-      belt_rank: $('#fRank').value || null, notes: $('#fNotes').value.trim() || null };
+      belt_rank: $('#fRank').value || null, notes: $('#fNotes').value.trim() || null,
+      contact_phone: $('#fPhone').value.trim() || null, contact_email: $('#fEmail').value.trim() || null };
     if (!rec.full_name) return;
     if (!s) {
       rec.is_test = $('#fTest').checked;
@@ -1511,7 +1613,9 @@ const STUDENT_HEADERS = {
   firstname: 'first', givenname: 'first', first: 'first', middlename: 'middle', middle: 'middle', lastname: 'last', surname: 'last', familyname: 'last', last: 'last',
   certificatename: 'certificate_name', nameoncertificate: 'certificate_name',
   belt: 'belt_rank', beltrank: 'belt_rank', rank: 'belt_rank', grade: 'belt_rank', currentbeltrank: 'belt_rank', currentbelt: 'belt_rank',
-  notes: 'notes'
+  notes: 'notes',
+  phone: 'contact_phone', mobile: 'contact_phone', mobilenumber: 'contact_phone', phonenumber: 'contact_phone', contactphone: 'contact_phone', parentphone: 'contact_phone', parentmobile: 'contact_phone', guardianphone: 'contact_phone',
+  email: 'contact_email', emailaddress: 'contact_email', contactemail: 'contact_email', parentemail: 'contact_email', guardianemail: 'contact_email'
 };
 function importSheet(title, hint, onText) {
   openSheet(`<div class="body">
@@ -1537,7 +1641,7 @@ function importSheet(title, hint, onText) {
 }
 function openImportStudents() {
   let plan = [];
-  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Belt rank, Certificate name, Notes. Other columns are ignored. Existing students are skipped.', text => {
+  importSheet('Import students', 'Columns are matched by heading: Name (or First name and Last name), Student ID, Belt rank, Certificate name, Notes, Mobile, Email. Other columns are ignored. Existing students are skipped, except that a Mobile or Email fills in their family contact.', text => {
     const rows = parseCSV(text), cols = rows.length ? mapHeader(rows[0], STUDENT_HEADERS) : null;
     plan = [];
     if (!rows.length) { $('#impPreview').innerHTML = ''; $('#impGo').disabled = true; return; }
@@ -1549,7 +1653,7 @@ function openImportStudents() {
       const o = {}; cols.forEach((k, i) => { if (k && r[i]) o[k] = r[i]; });
       const full = (o.full_name || [o.first, o.middle, o.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
       const rec = { full_name: full, student_id: o.student_id || undefined, certificate_name: o.certificate_name || null,
-        belt_rank: matchBelt(o.belt_rank), notes: o.notes || null };
+        belt_rank: matchBelt(o.belt_rank), notes: o.notes || null, ...(o.contact_phone ? { contact_phone: o.contact_phone } : {}), ...(o.contact_email ? { contact_email: o.contact_email } : {}) };
       let why = '';
       if (o.belt_rank && !rec.belt_rank) why = `Belt "${o.belt_rank}" is not in the list`;
       if (!full) why = 'No name';
@@ -1559,18 +1663,30 @@ function openImportStudents() {
       else if (state.students.some(s => norm(s.full_name) === norm(full))) why = 'Already in the register';
       else if (seenNames.has(norm(full))) why = 'Repeated in this list';
       if (!why) { seenNames.add(norm(full)); if (rec.student_id) seenIds.add(rec.student_id.toLowerCase()); }
-      plan.push({ rec, why });
+      // Already in the register, with a mobile or email: fill in their family contact instead
+      let upd = null;
+      if (why && (rec.contact_phone || rec.contact_email)) {
+        const ex = (rec.student_id && student(rec.student_id)) || (() => { const m = state.students.filter(x => norm(x.full_name) === norm(full)); return m.length === 1 ? m[0] : null; })();
+        if (ex) {
+          const ch = {}; if (rec.contact_phone && rec.contact_phone !== ex.contact_phone) ch.contact_phone = rec.contact_phone; if (rec.contact_email && rec.contact_email !== ex.contact_email) ch.contact_email = rec.contact_email;
+          if (Object.keys(ch).length) upd = { id: ex.student_id, ch }; else why = 'Already in the register (contact already right)';
+        }
+      }
+      plan.push({ rec, why: upd ? '' : why, upd });
     }
-    const add = plan.filter(p => !p.why);
-    $('#impPreview').innerHTML = `<p class="hint"><b>${add.length}</b> to add${plan.length - add.length ? `, ${plan.length - add.length} skipped` : ''}.</p>
+    const add = plan.filter(p => !p.why && !p.upd), upds = plan.filter(p => p.upd);
+    $('#impPreview').innerHTML = `<p class="hint"><b>${add.length}</b> to add${upds.length ? `, <b>${upds.length}</b> family contact${upds.length > 1 ? 's' : ''} to fill in` : ''}${plan.length - add.length - upds.length ? `, ${plan.length - add.length - upds.length} skipped` : ''}.</p>
       <div class="preview"><table class="grid"><tr><th>Name</th><th>Belt</th><th>Result</th></tr>
-      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.rec.full_name || '—')}${p.rec.student_id ? ` <span class="muted">${esc(p.rec.student_id)}</span>` : ''}</td><td>${esc(p.rec.belt_rank || '')}</td><td>${p.why ? esc(p.why) : tag('ok', 'Add')}</td></tr>`).join('')}</table></div>`;
-    $('#impGo').disabled = !add.length;
-    $('#impGo').textContent = add.length ? `Import ${add.length}` : 'Import';
+      ${plan.map(p => `<tr class="${p.why ? 'skip' : ''}"><td>${esc(p.rec.full_name || '—')}${p.rec.student_id ? ` <span class="muted">${esc(p.rec.student_id)}</span>` : ''}</td><td>${esc(p.rec.belt_rank || '')}</td><td>${p.why ? esc(p.why) : p.upd ? tag('info', 'Fill in contact') : tag('ok', 'Add')}</td></tr>`).join('')}</table></div>`;
+    $('#impGo').disabled = !add.length && !upds.length;
+    $('#impGo').textContent = add.length + upds.length ? `Import ${add.length + upds.length}` : 'Import';
   });
   $('#impGo').onclick = async () => {
-    const add = plan.filter(p => !p.why).map(p => { const r = { ...p.rec }; if (!r.student_id) delete r.student_id; return r; });
-    if (!add.length || !await ask(`Add ${add.length} student${add.length > 1 ? 's' : ''} to the register?`, 'Import')) return;
+    const add = plan.filter(p => !p.why && !p.upd).map(p => { const r = { ...p.rec }; if (!r.student_id) delete r.student_id; return r; }), upds = plan.filter(p => p.upd);
+    if (!add.length && !upds.length) return;
+    if (!await ask([add.length ? `Add ${add.length} student${add.length > 1 ? 's' : ''} to the register` : '', upds.length ? `fill in ${upds.length} family contact${upds.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ') + '?', 'Import')) return;
+    for (const u of upds) { try { await run(sb.from('prep_students').update(u.upd.ch).eq('student_id', u.upd.id)); } catch (e) { toast('Import stopped: ' + errMsg(e), 7000); return; } }
+    if (!add.length) { sheet.close(); toast(`Filled in ${upds.length} family contact${upds.length > 1 ? 's' : ''}`); await loadAll(); render(); return; }
     $('#impGo').disabled = true;
     try {
       // Rows with and without their own Student ID are sent separately so generated IDs work
@@ -1679,6 +1795,7 @@ function openCycle(id) {
     <div class="field"><label for="cyName">Name</label><input type="text" id="cyName" value="${esc(c.name)}" ${admin ? '' : 'disabled'}></div>
     <div class="grid2">${sess.map(s => `<div class="field"><label for="cySess${s.session_number}">${esc(sessName(s))}</label><input type="date" id="cySess${s.session_number}" data-sid="${s.session_id}" value="${esc(s.session_date || '')}" ${admin ? '' : 'disabled'}></div>`).join('')}</div>
     ${state.danReady ? `<div class="field"><label for="cyGrade">Grading date</label><input type="date" id="cyGrade" value="${esc(c.grading_date || '')}" ${admin ? '' : 'disabled'}></div>` : ''}
+    ${state.textsReady ? `<div class="field"><label for="cyInvite">Grading invitation link</label><input type="url" id="cyInvite" value="${esc(c.invite_link || '')}" placeholder="Booking and payment link, e.g. from GoHighLevel" ${admin ? '' : 'disabled'}><p class="hint">Goes into grading invitation texts as {link}.</p></div>` : ''}
     ${state.essaysReady ? `<div class="field"><label for="cyEssayDue">Essays due</label><input type="date" id="cyEssayDue" value="${esc(c.essay_due || '')}" ${admin ? '' : 'disabled'}><p class="hint">For students going for a Dan.</p></div>` : ''}
     <div class="grid2">
       <div class="field"><label for="cyFee">${feeReady() ? 'Upfront fee ($)' : 'Session fee ($)'}</label><input type="number" id="cyFee" min="0" step="0.01" value="${Number(feeReady() ? c.upfront_fee : c.session_fee).toFixed(2)}" ${admin ? '' : 'disabled'}></div>
@@ -1724,7 +1841,7 @@ function openCycle(id) {
       const grading = $('#cyGrade') ? $('#cyGrade').value : '';
       if (grading && dates.length && grading < dates[dates.length - 1]) return toast('The grading date is before the sign-off.', 5000);
       await run(sb.from('prep_cycles').update({ name: $('#cyName').value.trim(), start_date: dates[0] || null, end_date: dates[dates.length - 1] || null,
-        ...(state.danReady ? { grading_date: grading || null } : {}), ...($('#cyEssayDue') ? { essay_due: $('#cyEssayDue').value || null } : {}),
+        ...(state.danReady ? { grading_date: grading || null } : {}), ...($('#cyEssayDue') ? { essay_due: $('#cyEssayDue').value || null } : {}), ...($('#cyInvite') ? { invite_link: $('#cyInvite').value.trim() || null } : {}),
         ...(feeReady() ? { upfront_fee: Number($('#cyFee').value || 0), per_session_fee: Number($('#cyPer').value || 0) } : { session_fee: Number($('#cyFee').value || 0) }), notes: $('#cyNotes').value.trim() || null }).eq('cycle_id', id));
       for (const inp of $$('#cyForm [data-sid]')) {
         const s = sess.find(x => x.session_id === inp.dataset.sid);
@@ -2481,7 +2598,7 @@ function renderGrading() {
   if (!state.gradingReady) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Grading</h2></div><div class="card">Run supabase/prep-update-04.sql in Supabase to use grading.</div>`; wireBack(); return; }
   const c = cycle(G.cycle), rows = grRows(), count = k => rows.filter(x => GR_FILTERS[k][1](x.st)).length;
   const keepFocus = document.activeElement && document.activeElement.id === 'grSearch';
-  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Grading</h2><div class="row">${canGradeRole() && rows.length ? `<button class="btn sm" id="grSelect">${grSel.on ? 'Cancel' : 'Select'}</button>` : ''}<button class="btn primary sm" id="grList">Grading list</button></div></div>
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Grading</h2><div class="row">${canGradeRole() && rows.length ? `<button class="btn sm" id="grSelect">${grSel.on ? 'Cancel' : 'Select'}</button>` : ''}${state.textsReady && Object.keys(MSG_KINDS).some(canText) ? '<button class="btn sm" id="grText">Text families</button>' : ''}<button class="btn primary sm" id="grList">Grading list</button></div></div>
     <div class="field"><label for="grCycle">Preparation cycle</label><select id="grCycle">${state.cycles.map(x => `<option value="${x.cycle_id}"${x.cycle_id === G.cycle ? ' selected' : ''}>${esc(x.name)}${x.status === 'active' ? ' (active)' : ` (${label(x.status).toLowerCase()})`}</option>`).join('')}</select></div>
     <p class="hint">${c.grading_date ? `Grading on <b>${fmt(c.grading_date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</b>. Grading fees are due ${fmt(addDays(c.grading_date, -21))}.` : 'No grading date set for this cycle yet (set it on the cycle).'}
       Attendance, readiness and payment are shown to help you decide; nobody is made eligible or passed automatically.</p>
@@ -2500,6 +2617,7 @@ function renderGrading() {
   const sr = $('#grSearch'); sr.oninput = () => { G.search = sr.value; renderGrList(); };
   if (keepFocus) { sr.focus(); sr.setSelectionRange(sr.value.length, sr.value.length); }
   $('#grList').onclick = () => openGradingList(G.cycle);
+  const gt = $('#grText'); if (gt) gt.onclick = () => openTexts(G.cycle, canText('invite') ? 'invite' : 'not_ready');
   const sb3 = $('#grSelect'); if (sb3) sb3.onclick = () => { grSel.on ? stopGrSelect() : startGrSelect(); renderGrading(); };
   renderGrList();
 }
@@ -3242,6 +3360,11 @@ async function renderMore() {
         <p class="hint" style="margin:8px 0">How many classes a student needs before grading to each belt. Students below it show under Needs attention on the dashboard. A belt left blank uses the cycle's number, if one is set.</p>
         <div class="grid2">${BELTS.slice(1).map((b, i) => `<div class="field"><label for="setCR${i}">${esc(b)}</label><input type="number" id="setCR${i}" data-creq="${esc(b)}" min="1" max="999" step="1" placeholder="Not set" value="${beltClasses(b) ?? ''}"></div>`).join('')}</div>
       </details></div>` : ''}
+      ${state.textsReady ? `<div class="section"><details><summary><b>Text messages</b> <span class="muted small">sent through GoHighLevel</span></summary>
+        <p class="hint" style="margin:8px 0">The usual wording for each text. Filled in for each student: {first_name} {name} {belt} (the belt they're going for) {current_belt} {grading_date} {link} {reason}. Staff see a preview and can change it before sending. Nothing is sent automatically.</p>
+        ${Object.entries(MSG_KINDS).map(([k, t]) => `<div class="field"><label for="setMsg_${k}">${esc(t)}</label><textarea id="setMsg_${k}" data-msg="${k}" rows="3" maxlength="1000">${esc(msgTpl(k))}</textarea></div>`).join('')}
+        <div class="row"><button type="button" class="btn sm" id="setTextCheck">Check the GoHighLevel link</button><span class="hint grow" id="setTextState"></span></div>
+      </details></div>` : ''}
       ${state.essaysReady ? `<div class="section"><details${state.essayQs.length ? '' : ' open'}><summary><b>Essay questions</b> <span class="muted small">${state.essayQs.length} of ${ESSAY_RANKS.length} set</span></summary>
         <p class="hint" style="margin:8px 0">The essay question for each belt (the Dans only; Probationary Black Belt has no essay), and an optional minimum number of words. Students see it on their personal link.</p>
         ${ESSAY_RANKS.map((b, i) => `<div class="field"><label for="setEQ${i}">${esc(b)}</label><textarea id="setEQ${i}" data-eq="${esc(b)}" rows="2" maxlength="2000" placeholder="Not set">${esc((essayQ(b) || {}).question || '')}</textarea>
@@ -3284,6 +3407,11 @@ async function renderMore() {
         else if (cur == null) await run(sb.from('prep_grading_fee_rates').insert({ target_rank: rank, fee: want }));
         else await run(sb.from('prep_grading_fee_rates').update({ fee: want }).eq('target_rank', rank));
       }
+      for (const inp of $$('#setForm [data-msg]')) {
+        const k = inp.dataset.msg, v = inp.value.trim();
+        if (!v) throw new Error(`${MSG_KINDS[k]}: the message can't be empty.`);
+        if (v !== msgTpl(k)) await run(sb.from('prep_message_templates').update({ body: v, updated_at: new Date().toISOString() }).eq('kind', k));
+      }
       for (const inp of $$('#setForm [data-eq]')) {
         const rank = inp.dataset.eq, cur = essayQ(rank), qv = inp.value.trim(), mn = $('#setForm [data-eqmin="' + CSS.escape(rank) + '"]').value, min = mn === '' ? null : Number(mn);
         if (min != null && !(Number.isInteger(min) && min >= 1 && min <= 20000)) throw new Error(`${rank}: minimum words must be a whole number.`);
@@ -3305,6 +3433,11 @@ async function renderMore() {
     } catch (err) { toast(errMsg(err), 6000); }
   };
   $('#addUserBtn').onclick = () => openUser();
+  const tc = $('#setTextCheck'); if (tc) tc.onclick = async () => {
+    $('#setTextState').textContent = 'Checking...';
+    try { const r = await sendTexts(); $('#setTextState').textContent = r.ready ? (r.testing ? 'Test mode: texts are logged, not sent.' : 'Connected. Texts will send.') : 'Not set up: add GHL_TOKEN and GHL_LOCATION_ID in Supabase.'; }
+    catch (e) { $('#setTextState').textContent = errMsg(e); }
+  };
   const [{ data: roles }, { data: log }] = await Promise.all([
     sb.from('prep_roles').select('*').order('email'),
     sb.from('prep_audit_log').select('*').order('changed_at', { ascending: false }).limit(40)
@@ -3315,7 +3448,7 @@ async function renderMore() {
     `<li><button class="item" data-user="${esc(em)}"><div class="main"><div class="name" style="font-weight:400;color:var(--fg)">${esc(em)}</div><div class="meta">${rs.map(r => ROLE_NAMES[r]).join(', ')}</div></div></button></li>`).join('')}</ul>` : 'No users.';
   $$('[data-user]').forEach(b => b.onclick = () => openUser(b.dataset.user, byEmail[b.dataset.user]));
   const TABLES = { prep_students: 'Student', prep_cycles: 'Cycle', prep_sessions: 'Session', prep_enrolments: 'Enrolment', prep_attendance: 'Attendance',
-    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_grading_fee_rates: 'Grading fee', prep_class_requirements: 'Classes needed', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
+    prep_settings: 'Settings', prep_roles: 'User role', prep_dan_numbers: 'Dan number', prep_dan_counters: 'Next Dan number', prep_grading_fee_rates: 'Grading fee', prep_class_requirements: 'Classes needed', prep_message_templates: 'Text wording', prep_essay_questions: 'Essay question', prep_payments: 'Fee', prep_payment_transactions: 'Payment', prep_grading: 'Grading', prep_certificates: 'Certificate', prep_id_cards: 'ID card' };
   const desc = l => {
     const n = l.new_row || l.old_row || {}, who = n.student_id && student(n.student_id) ? student(n.student_id).full_name : (n.name || n.email || l.record_key);
     let what = `${TABLES[l.table_name] || l.table_name} ${l.action === 'insert' ? 'added' : l.action === 'delete' ? 'removed' : 'changed'}`;

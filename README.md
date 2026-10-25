@@ -9,7 +9,7 @@ Attendance, readiness, payment, grading eligibility, grading result, certificate
 ## Folders
 
 - `docs/` the app (published with GitHub Pages, see [spec/stage-3-app.md](spec/stage-3-app.md))
-- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) `supabase/prep-update-06.sql` (linking ID cards) `supabase/prep-update-07.sql` (no due date for session fees, belts up to 9th Dan) `supabase/prep-update-08.sql` (delete students anyway), `supabase/prep-update-09.sql` (classes attended) and `supabase/prep-update-10.sql` (essays)
+- `supabase/prep-setup.sql` the database, then `supabase/prep-update-01.sql` (Dan numbers, sign-off, grading date, upfront or per-session fees) `supabase/prep-update-02.sql` (Dan numbers per rank) `supabase/prep-update-03.sql` (paid at each session) `supabase/prep-update-04.sql` (grading fees) `supabase/prep-update-05.sql` (deleting students, upfront payments at sessions) `supabase/prep-update-06.sql` (linking ID cards) `supabase/prep-update-07.sql` (no due date for session fees, belts up to 9th Dan) `supabase/prep-update-08.sql` (delete students anyway), `supabase/prep-update-09.sql` (classes attended) and `supabase/prep-update-10.sql` (essays) and `supabase/prep-update-11.sql` (texts through GoHighLevel)
 - `docs/essay/` the essay page students open from their personal link (no login)
 - `spec/` the specification and stage notes
 - `tests/` database and browser tests
@@ -68,3 +68,21 @@ This repository holds the app, specification and build files only; member data l
 ## Essays
 
 Students going for a Dan (1st Dan and up) hand in an essay; Probationary Black Belt has none. Set each Dan's question (and an optional minimum word count) in More > Settings > Essay questions, and the due date on the cycle. More > Essays lists everyone who needs one: tap a student for their personal link (Copy message, Copy link, Share, or New link to stop the old one working), or Copy all links for the whole cycle. The link opens `docs/essay/`, where they type or paste the essay and/or upload a file (PDF, Word or a photo, up to 10 MB). Admins and instructors read it there, open the file, and either Mark as reviewed (with an optional mark) or Send back for changes with feedback, which the student sees on their link before handing it in again. Earlier versions are kept. Files are in a private storage bucket (`prep-essays`) that only admins and instructors can open.
+
+## Texts through GoHighLevel
+
+Staff text families from Black Belt Prep: **grading invitations** (with the cycle's booking and payment link), **congratulations** for passes, **not ready yet** messages, and **essay links**. Nothing is sent automatically: on the Grading screen, **Text families** picks the message, shows who it's for (ticking those with a mobile who haven't had it yet), a preview for the first student, and lets you change the wording before **Send**. Essay links are texted from a student's essay. Every text is logged; anyone already texted shows "Texted" with the date.
+
+- Family **mobile** and **email** are on each student (Edit, or a Mobile / Email column in Import students, which also fills them in for students already in the register).
+- The usual wording for each text is in More > Settings > Text messages (admins), with {first_name} {name} {belt} {current_belt} {grading_date} {link} {reason}.
+- The booking and payment link for invitations is on the cycle (**Grading invitation link**).
+- Who can send: invitations and congratulations, the Grading role; not ready yet, Instructor or Grading; essay links, Instructor (admins can send all).
+
+Setup (once):
+1. Run `supabase/prep-update-11.sql` in Supabase > SQL Editor.
+2. In GoHighLevel (the sub-account): Settings > **Private Integrations** > Create new integration, name it "Black Belt Prep", and give it access to **View Contacts, Edit Contacts** and **View/Edit Conversation Messages** (conversations/message.write). Copy the token. The location ID is in Settings > Business Profile (also in the address bar after /location/).
+3. In Supabase: Edge Functions > Secrets: add `GHL_TOKEN` (the token) and `GHL_LOCATION_ID`. Optionally `GHL_TEST` = `1` to try it out: texts are logged but not sent.
+4. Edge Functions > Deploy a new function > Via Editor: name it `ghl`, paste the whole of `supabase/functions/ghl/index.ts`, Deploy, then turn off "Verify JWT" for it.
+5. In Black Belt Prep, More > Settings > Text messages > **Check the GoHighLevel link**.
+
+Each family is found in GoHighLevel by mobile (then email); if they're not there yet they're added as a contact (tag "ama black belt prep"). Texts go out from the sub-account's usual number and show in GoHighLevel Conversations, where replies arrive too.
