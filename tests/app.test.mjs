@@ -37,6 +37,8 @@ await db.exec(read(join(here, '../supabase/prep-update-09.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-10.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-11.sql')));
 await db.exec(read(join(here, '../supabase/prep-update-12.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-13.sql')));
+await db.exec(read(join(here, '../supabase/prep-update-14.sql')));
 await db.exec(`insert into prep_roles (email, role) values ('att@ama.test','attendance'), ('view@ama.test','viewer');
   update prep_settings set default_session_fee = 120;
   insert into prep_dan_counters (target_rank, next_number) values ('Probationary Black Belt', 501), ('1st Dan Black Belt', 701);`);
@@ -995,6 +997,56 @@ try {
     ok((await q(`select student_id from people where name = 'J. Lee'`))[0].student_id === 'BB0002', 'a card with a different name can be linked by hand');
     ok((await page.textContent('#sheet')).includes('Card not printed yet'), 'student record shows the linked card status');
     await ctx.close();
+  }
+
+  console.log('\nEFC Aquila links');
+  {
+    // The EFC copy (made-up people): Alex has one exact match, Jordan is spelled differently, Taylor has two namesakes
+    await q(`insert into efc_members (member_key, full_name, efc_reference, phone, email, guardian_name, location, belt) values
+      ('efc:1', 'ALEX smith', 'AU-023-0001', '0400 000 001', 'alex.family@example.test', 'Pat Smith', 'Marrickville', 'Cho Dan Bo'),
+      ('efc:2', 'Jordan Leigh', 'AU-256-0002', '0400 000 002', 'leigh@example.test', 'Sam Leigh', 'Sydenham', 'Black Belt: First Dan'),
+      ('efc:3', 'Taylor Brown', 'AU-257-0003', '0400 000 003', null, null, 'West', null),
+      ('efc:4', 'Taylor Brown', 'AU-258-0004', '0400 000 004', null, null, 'Concord', null),
+      ('efc:5', 'Morgan Quinn', 'AU-023-0005', '0400 000 005', 'quinn@example.test', 'Robin Quinn', 'Marrickville', null)`);
+    const before = (await q(`select contact_phone from prep_students where student_id = 'BB0001'`))[0].contact_phone;
+    const n = (await q(`select public.prep_efc_link_run(null) n`))[0].n;
+    const alex = (await q(`select efc_ref, contact_phone, contact_email, contact_name from prep_students where student_id = 'BB0001'`))[0];
+    ok(alex.efc_ref === 'AU-023-0001' && alex.contact_email === 'alex.family@example.test' && alex.contact_name === 'Pat Smith', 'a student is linked to the one EFC member with the same name and gets the email and parent name');
+    ok(alex.contact_phone === (before || '0400 000 001'), 'a phone number already on the student is not overwritten');
+    ok(n === 1 && !(await q(`select efc_ref from prep_students where full_name = 'Taylor Brown'`))[0].efc_ref, 'two EFC members with the same name: not linked automatically');
+    await q(`insert into prep_students (full_name, belt_rank) values ('Morgan Quinn', 'Cho Dan Bo')`);
+    ok((await q(`select efc_ref, contact_phone from prep_students where full_name = 'Morgan Quinn'`))[0].contact_phone === '0400 000 005', 'a new student links to EFC by themselves');
+
+    const { ctx, page } = await open('owner@ama.test');
+    await tab(page, 'students');
+    const alexRow = await page.textContent('#studentList .item:has-text("Alex Smith")');
+    ok(alexRow.includes('EFC') && !(await page.textContent('#studentList .item:has-text("Jordan Lee")')).includes('EFC'), 'the list shows an EFC badge on linked students only');
+    await page.fill('#studentSearch', 'AU-023-0001');
+    ok((await page.$$('#studentList [data-student]')).length === 1, 'search finds a student by EFC ref');
+    await page.fill('#studentSearch', '');
+    await page.click('#studentList .item:has-text("Alex Smith")'); await page.waitForSelector('#sheet #stEfc');
+    const rec = await page.textContent('#sheet');
+    ok(rec.includes('EFC profile') && rec.includes('Linked') && rec.includes('AU-023-0001') && rec.includes('Pat Smith'), 'student record shows the EFC link, ref and parent name');
+    await page.click('#stEdit'); await page.waitForSelector('#fEfc');
+    ok((await page.inputValue('#fEfc')) === 'AU-023-0001' && (await page.inputValue('#fParent')) === 'Pat Smith', 'edit form has EFC ref and parent fields');
+    await page.click('#sheet [data-close]');
+    await page.click('#studentList .item:has-text("Jordan Lee")'); await page.waitForSelector('#sheet #stEfc');
+    ok((await page.textContent('#sheet')).includes('Not linked'), 'an unlinked student shows "Not linked"');
+    await page.click('#stEfc'); await page.waitForSelector('#efcRes [data-ref]');
+    ok((await page.textContent('#efcRes')).includes('Jordan Leigh'), 'Find in EFC tries the surname, then the first name, when the full name finds nothing');
+    await page.click('#efcRes [data-ref="AU-256-0002"]'); await page.waitForSelector('#sheet #stEfc');
+    const jl = (await q(`select efc_ref, contact_name from prep_students where student_id = 'BB0002'`))[0];
+    ok(jl.efc_ref === 'AU-256-0002' && jl.contact_name === 'Sam Leigh' && (await page.textContent('#sheet')).includes('Linked'), 'a student with a different spelling can be linked by hand');
+    await page.click('#stEfc'); await page.waitForSelector('#efcClear'); await page.click('#efcClear'); await page.waitForSelector('#sheet #stEfc');
+    ok(!(await q(`select efc_ref from prep_students where student_id = 'BB0002'`))[0].efc_ref, 'Unlink removes the EFC ref and it stays unlinked');
+    await q(`update prep_students set efc_ref = 'AU-999-9999' where student_id = 'BB0002'`);
+    await ctx.close();
+    const { ctx: ctx2, page: p2 } = await open('owner@ama.test');
+    await tab(p2, 'students');
+    ok((await p2.textContent('#studentList .item:has-text("Jordan Lee")')).includes('EFC?'), 'an EFC ref that is not in the EFC copy shows "EFC?"');
+    await q(`update prep_students set efc_ref = null where student_id = 'BB0002'`);
+    await q(`delete from prep_students where full_name = 'Morgan Quinn'`);
+    await ctx2.close();
   }
 
   console.log('\nReports and exports');

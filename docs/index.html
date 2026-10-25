@@ -724,6 +724,9 @@ const classesNeeded = (cid, sid) => { const s = student(sid), c = cycle(cid); re
 const enrolledIds = id => new Set(state.enrolments.filter(e => e.cycle_id === id).map(e => e.student_id));
 const summaryFor = (cid, sid) => state.summary.find(s => s.cycle_id === cid && s.student_id === sid);
 const overviewFor = (cid, sid) => state.overview.find(s => s.cycle_id === cid && s.student_id === sid);
+// EFC link: 'linked' (ref matches an EFC record), 'missing' (ref typed but not in the EFC copy), '' (no ref)
+const efcState = s => !s.efc_ref ? '' : !state.efcReady || state.efcRefs.has(s.efc_ref) ? 'linked' : 'missing';
+const efcTag = s => ({ linked: '<span class="tag ok" title="Linked to EFC ' + esc(s.efc_ref || '') + '">EFC</span>', missing: '<span class="tag warn" title="EFC ref not found in EFC">EFC?</span>' })[efcState(s)] || '';
 
 async function loadAll() {
   const q = (t, order) => { let x = sb.from(t).select('*'); if (order) x = x.order(order[0], { ascending: order[1] !== false }); return x; };
@@ -767,6 +770,9 @@ async function loadAll() {
   // Who pays per session and which sessions they've paid at (no amounts); needs supabase/prep-update-03.sql
   const fees = canEditAttendance() ? await sb.rpc('prep_session_fees', { p_cycle: null }) : { data: [] };
   state.sessionFees = fees.error ? [] : (fees.data || []);
+  // EFC Aquila links (supabase/prep-update-14.sql): the refs that match a record in the EFC copy
+  const efc = await sb.rpc('prep_efc_refs');
+  state.efcReady = !efc.error; state.efcRefs = new Set(efc.error ? [] : (efc.data || []).map(r => typeof r === 'string' ? r : Object.values(r)[0]));
   if (res[9].error) res[9] = { data: [] };
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
@@ -970,7 +976,7 @@ function visibleStudents() {
   const cls = $('#studentClasses').hidden ? '' : $('#studentClasses').value, cc = currentCycle();
   return sortStudents(state.students.filter(s => (!cls || classEnough(cc && cc.cycle_id, s.student_id) === (cls === 'enough')) &&
     (st === 'all' || (st === 'active') === s.is_active) && (test || !s.is_test) && (!belt || s.belt_rank === belt) && cardMatch(s.student_id, card) &&
-    (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q))), $('#studentSort').value, cc && cc.cycle_id);
+    (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q) || (s.certificate_name || '').toLowerCase().includes(q) || (s.efc_ref || '').toLowerCase().includes(q))), $('#studentSort').value, cc && cc.cycle_id);
 }
 // Sorting lists of students (Students tab and Record classes). Ties go by name.
 function sortStudents(list, how, cid) {
@@ -1003,7 +1009,7 @@ function renderStudents() {
     return `<li><button class="item" data-student="${esc(s.student_id)}">
       ${stuSel.on ? `<input type="checkbox" tabindex="-1" ${stuSel.ids.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}" style="pointer-events:none">` : ''}
       <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}</div></div>
-      ${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}${c && enrolled.has(s.student_id) && classesReady() ? (() => { const n = classesOf(c.cycle_id, s.student_id), need = classesNeeded(c.cycle_id, s.student_id);
+      ${efcTag(s)}${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}${c && enrolled.has(s.student_id) && classesReady() ? (() => { const n = classesOf(c.cycle_id, s.student_id), need = classesNeeded(c.cycle_id, s.student_id);
         return tag(need ? (n >= need ? 'present' : 'warn') : '', `${n}${need ? '/' + need : ''} classes`); })() : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
@@ -1591,7 +1597,9 @@ function openStudent(id) {
     <div class="section"><h3>Details</h3>
       <dl class="kv">
         <dt>Certificate name</dt><dd>${esc(s.certificate_name || s.full_name)}</dd>
-        ${s.contact_phone || s.contact_email ? `<dt>Family contact</dt><dd>${esc([s.contact_phone, s.contact_email].filter(Boolean).join(' · '))}</dd>` : ''}
+        ${s.contact_phone || s.contact_email || s.contact_name ? `<dt>Family contact</dt><dd>${esc([s.contact_name, s.contact_phone, s.contact_email].filter(Boolean).join(' · '))}</dd>` : ''}
+        ${state.efcReady ? `<dt>EFC profile</dt><dd>${s.efc_ref ? `${efcState(s) === 'linked' ? '<span class="tag ok">Linked</span>' : '<span class="tag warn">Ref not found in EFC</span>'} <span class="small muted">${esc(s.efc_ref)}</span>` : '<span class="tag">Not linked</span>'}
+          ${has('admin') ? `<button class="btn sm ghost" id="stEfc" style="min-height:0;padding:0 6px">${s.efc_ref ? 'Change' : 'Find in EFC'}</button>` : ''}</dd>` : ''}
         <dt>Belt rank</dt><dd>${esc(s.belt_rank || '—')}</dd>
         ${danTarget(s) ? `<dt>Going for</dt><dd>${esc(danTarget(s))}</dd><dt>Dan number</dt><dd>${danFor(s) ? `<b>${danFor(s).dan_number}</b>` : '<span class="muted">Not assigned yet</span>'}
           ${danFor(s) ? '<button class="btn sm ghost need-admin" id="stDan" style="min-height:0;padding:0 6px">Change</button>' : ''}</dd>` : ''}
@@ -1606,6 +1614,7 @@ function openStudent(id) {
     ${myCycles.length > 1 ? `<div class="section"><h3>History</h3>${myCycles.filter(x => x !== c).map(cy => `<div class="card" style="box-shadow:none;border:1px solid var(--line)">${cycleBlock(cy)}</div>`).join('')}</div>` : ''}
   </div>`);
   const ed = $('#stEdit'); if (ed) ed.onclick = () => openStudentForm(s);
+  const ef = $('#stEfc'); if (ef) ef.onclick = () => openEfcLink(s);
   const dn = $('#stDan'); if (dn) dn.onclick = () => openDanEdit(s);
   sheet.querySelectorAll('[data-cardlink]').forEach(b => b.onclick = () => openCardLink(s));
   sheet.querySelectorAll('[data-rdopen]').forEach(b => b.onclick = () => openReadiness(b.dataset.rdopen, id));
@@ -1688,6 +1697,8 @@ function openStudentForm(s = null) {
     <div class="field"><label for="fRank">Belt rank</label><select id="fRank">${beltOptions(s ? s.belt_rank : '')}</select></div>
     <div class="grid2"><div class="field"><label for="fPhone">Family mobile</label><input type="tel" id="fPhone" value="${v('contact_phone')}" autocomplete="off" placeholder="e.g. 0412 345 678"></div>
       <div class="field"><label for="fEmail">Family email</label><input type="email" id="fEmail" value="${v('contact_email')}" autocomplete="off"></div></div>
+    <div class="grid2"><div class="field"><label for="fParent">Parent or guardian</label><input type="text" id="fParent" value="${v('contact_name')}" autocomplete="off"></div>
+      <div class="field"><label for="fEfc">EFC ref</label><input type="text" id="fEfc" value="${v('efc_ref')}" autocomplete="off" placeholder="e.g. AU-023-17050"></div></div>
     <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${v('notes')}</textarea></div>
     ${s ? '' : '<label class="check"><input type="checkbox" id="fTest"> Test record (kept out of real lists and new cycles)</label>'}
     <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" id="fSave">${s ? 'Save' : 'Add student'}</button></div>
@@ -1696,7 +1707,9 @@ function openStudentForm(s = null) {
     e.preventDefault();
     const rec = { full_name: $('#fName').value.trim(), certificate_name: $('#fCert').value.trim() || null,
       belt_rank: $('#fRank').value || null, notes: $('#fNotes').value.trim() || null,
-      contact_phone: $('#fPhone').value.trim() || null, contact_email: $('#fEmail').value.trim() || null };
+      contact_phone: $('#fPhone').value.trim() || null, contact_email: $('#fEmail').value.trim() || null,
+      contact_name: $('#fParent').value.trim() || null, efc_ref: $('#fEfc').value.trim().toUpperCase() || null };
+    if (!state.efcReady) { delete rec.contact_name; delete rec.efc_ref; }   // before prep-update-14.sql
     if (!rec.full_name) return;
     if (!s) {
       rec.is_test = $('#fTest').checked;
@@ -1711,6 +1724,43 @@ function openStudentForm(s = null) {
       await loadAll(); render(); openStudent(id);
     } catch (err) { $('#fSave').disabled = false; toast('Could not save: ' + errMsg(err), 6000); }
   };
+}
+
+// Link a student to their EFC record: search the EFC copy by name, pick one, fill blank contact details.
+function openEfcLink(s) {
+  openSheet(`<div class="body">${sheetHead('Link to EFC', esc(s.full_name) + (s.efc_ref ? ' · now ' + esc(s.efc_ref) : ''))}
+    <div class="field"><label for="efcQ">Search EFC by name, phone or email</label><input type="search" id="efcQ" value="${esc(s.full_name.replace(/[*]/g, ''))}" autocomplete="off"></div>
+    <ul class="list" id="efcRes"><li><div class="empty">Searching…</div></li></ul>
+    <div class="dlg-actions">${s.efc_ref ? '<button type="button" class="btn danger" id="efcClear">Unlink</button>' : ''}<button type="button" class="btn" data-close>Close</button></div></div>`);
+  let t = 0;
+  const search = async () => {
+    const q = $('#efcQ').value.trim(), box = $('#efcRes');
+    // When the full name finds nothing (spelling differences), try the surname, then the first name
+    let { data, error } = await sb.rpc('efc_search', { p_q: q, p_limit: 20 });
+    const words = q.split(/\s+/);
+    for (const w of words.length > 1 ? [words[words.length - 1], words[0]] : []) {
+      if (error || (data || []).length) break;
+      ({ data, error } = await sb.rpc('efc_search', { p_q: w, p_limit: 20 }));
+    }
+    if (error) { box.innerHTML = `<li><div class="empty">${esc(/permission|denied/i.test(error.message) ? 'You need the instructor or grading role to search EFC.' : error.message)}</div></li>`; return; }
+    const rows = (data || []).filter(m => m.efc_reference);
+    box.innerHTML = rows.length ? rows.map(m => `<li><button class="item" data-ref="${esc(m.efc_reference)}">
+      <div class="main"><div class="name">${esc(m.full_name)}</div><div class="meta">${esc([m.efc_reference, m.location, m.belt, m.guardian_name, m.phone || m.guardian_phone].filter(Boolean).join(' · '))}</div></div>
+      ${m.efc_reference === s.efc_ref ? '<span class="tag ok">Linked</span>' : ''}</button></li>`).join('') : '<li><div class="empty">No EFC members match.</div></li>';
+    box.querySelectorAll('[data-ref]').forEach(b => b.onclick = async () => {
+      const m = rows.find(x => x.efc_reference === b.dataset.ref);
+      const fill = { efc_ref: m.efc_reference };
+      if (!s.contact_phone && (m.phone || m.guardian_phone)) fill.contact_phone = m.phone || m.guardian_phone;
+      if (!s.contact_email && (m.email || m.guardian_email)) fill.contact_email = m.email || m.guardian_email;
+      if (!s.contact_name && m.guardian_name) fill.contact_name = m.guardian_name;
+      try { await run(sb.from('prep_students').update(fill).eq('student_id', s.student_id), `Linked to ${m.efc_reference}`); await loadAll(); render(); openStudent(s.student_id); }
+      catch (e) { toast(errMsg(e), 6000); }
+    });
+  };
+  $('#efcQ').oninput = () => { clearTimeout(t); t = setTimeout(search, 300); };
+  const cl = $('#efcClear');
+  if (cl) cl.onclick = async () => { try { await run(sb.from('prep_students').update({ efc_ref: null }).eq('student_id', s.student_id), 'Unlinked from EFC'); await loadAll(); render(); openStudent(s.student_id); } catch (e) { toast(errMsg(e), 6000); } };
+  search();
 }
 
 function openDuplicates(dups) {
@@ -3436,8 +3486,8 @@ async function exportEverything() {
   const sname = id => (student(id) || {}).full_name || '', cname = id => (cycle(id) || {}).name || '';
   const sessName2 = id => { const se = state.sessions.find(x => x.session_id === id); return se ? (isSignoff(se) ? 'Sign-off' : 'Session ' + se.session_number) : ''; };
   const sheets = [
-    { name: 'Students', head: ['Student ID', 'Full name', 'Certificate name', 'Belt', 'Dan number', 'Active', 'Test record', 'Date added', 'ID card', 'Notes'],
-      rows: state.students.map(s => [s.student_id, s.full_name, s.certificate_name || '', s.belt_rank || '', (danFor(s) || {}).dan_number ?? '', s.is_active ? 'Yes' : 'No', s.is_test ? 'Yes' : '', s.date_added || '', cardText(s.student_id), s.notes || '']) },
+    { name: 'Students', head: ['Student ID', 'Full name', 'Certificate name', 'Belt', 'Dan number', 'Active', 'Test record', 'Date added', 'ID card', 'EFC ref', 'Notes'],
+      rows: state.students.map(s => [s.student_id, s.full_name, s.certificate_name || '', s.belt_rank || '', (danFor(s) || {}).dan_number ?? '', s.is_active ? 'Yes' : 'No', s.is_test ? 'Yes' : '', s.date_added || '', cardText(s.student_id), s.efc_ref || '', s.notes || '']) },
     { name: 'Cycles', head: ['Cycle', 'Status', 'Grading date', 'Upfront fee', 'Per-session fee', 'Students', 'Notes'],
       rows: state.cycles.map(c => [c.name, label(c.status), c.grading_date || '', c.upfront_fee ?? c.session_fee ?? '', c.per_session_fee ?? '', enrolledIds(c.cycle_id).size, c.notes || '']) },
     { name: 'Sessions', head: ['Cycle', 'Session', 'Date'], rows: state.sessions.map(se => [cname(se.cycle_id), isSignoff(se) ? `${se.session_number} (sign-off)` : se.session_number, se.session_date || '']) },
