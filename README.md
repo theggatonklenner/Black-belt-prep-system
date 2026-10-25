@@ -86,3 +86,12 @@ Setup (once):
 5. In Black Belt Prep, More > Settings > Text messages > **Check the GoHighLevel link**.
 
 Each family is found in GoHighLevel by mobile (then email); if they're not there yet they're added as a contact (tag "ama black belt prep"). Texts go out from the sub-account's usual number and show in GoHighLevel Conversations, where replies arrive too.
+
+## EFC Aquila contacts (through Zapier)
+
+EFC's Zapier app has no "find member" search, so Zapier sends members in and Supabase keeps a searchable copy (table `efc_members`: names, mobile, email, parent details). Admins, instructors and grading staff can read it (`efc_search('part of a name')`).
+
+- `supabase/prep-update-13.sql` makes the table, the search, and the webhook secret (table `efc_hook`).
+- `supabase/functions/efc/index.ts` is the webhook (deploy as `efc`, "Verify JWT" off; the secret in the address is the check).
+- Zap: EFC Aquila trigger (New Member, New Lead, Member Query), then Webhooks by Zapier > POST to `https://ptdrcxngaptcgswfbjhg.supabase.co/functions/v1/efc?key=<secret from efc_hook>` (add `&kind=lead` for leads), payload type json, Data left empty so every EFC field is sent. Field names are matched loosely (First Name, Mobile, Guardian Email and similar); anything else is kept in `raw`.
+- Zapier only sends members added after the Zap is turned on, so load existing members once from an Aquila export.
