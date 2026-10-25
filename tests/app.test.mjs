@@ -554,10 +554,15 @@ try {
     await tab(page, 'dashboard');
     const d = await page.textContent('#view-dashboard');
     ok(d.includes('Essays') && d.includes('Not handed in') && d.includes('To mark') && d.includes('Marked'), 'the dashboard counts essays');
+    await tab(page, 'students');
+    ok((await page.textContent('#studentList [data-student="ES-001"]')).includes('Essay in'), 'the student list shows a green "Essay in" badge once the essay is marked');
+    await tab(page, 'dashboard');
     await q(`update prep_essays set status = 'not_submitted' where student_id = 'ES-001'`).catch(() => {});
     await q(`alter table prep_essays disable trigger prep_essay_mark_guard`); await q(`update prep_essays set status = 'not_submitted' where student_id = 'ES-001'`); await q(`alter table prep_essays enable trigger prep_essay_mark_guard`);
     await page.evaluate(() => loadAll().then(render));
     ok((await page.textContent('#view-dashboard')).includes('Essay not handed in'), 'and lists those not handed in as the due date nears');
+    await tab(page, 'students');
+    ok(await page.$('#studentList [data-student="ES-001"] .tag.bad:has-text("No essay")'), '...and a red "No essay" badge when a student going for a Dan has not handed one in');
     await tab(page, 'more'); await page.waitForSelector('#userList ul');
     for (const t of ['prep_dan_numbers', 'prep_enrolments', 'prep_students']) await q(`delete from ${t} where student_id = 'ES-001'`);
     await page.evaluate(() => loadAll().then(render)); await page.waitForSelector('#userList ul');

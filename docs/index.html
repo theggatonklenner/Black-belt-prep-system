@@ -1013,7 +1013,7 @@ function renderStudents() {
     return `<li><button class="item" data-student="${esc(s.student_id)}">
       ${stuSel.on ? `<input type="checkbox" tabindex="-1" ${stuSel.ids.has(s.student_id) ? 'checked' : ''} aria-label="Select ${esc(s.full_name)}" style="pointer-events:none">` : ''}
       <div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank, danMeta(s)].filter(Boolean).join(' · '))}</div></div>
-      ${efcTag(s)}${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}${c && enrolled.has(s.student_id) && classesReady() ? (() => { const n = classesOf(c.cycle_id, s.student_id), need = classesNeeded(c.cycle_id, s.student_id);
+      ${efcTag(s)}${c && enrolled.has(s.student_id) && state.essaysReady && has('instructor') && needsEssay(s) ? essayBadge(essayStatus(c.cycle_id, s.student_id)) : ''}${cardState(s.student_id) && cardState(s.student_id).tone === 'ok' ? '<span class="tag ok" title="ID card printed">Card</span>' : ''}${s.is_test ? tag('', 'Test') : ''}${!s.is_active ? tag('', 'Inactive') : ''}${sum ? tag(sum.attended === sum.sessions ? 'present' : '', `${sum.attended}/${sum.sessions}`) : ''}${c && enrolled.has(s.student_id) && classesReady() ? (() => { const n = classesOf(c.cycle_id, s.student_id), need = classesNeeded(c.cycle_id, s.student_id);
         return tag(need ? (n >= need ? 'present' : 'warn') : '', `${n}${need ? '/' + need : ''} classes`); })() : ''}
     </button></li>`;
   }).join('') : `<li><div class="empty">${state.students.length ? 'No students match.' : 'No students yet.'}</div></li>`;
@@ -1216,8 +1216,11 @@ function openImportClasses(cid) {
    Essays: students going for a Dan (1st Dan and up) hand in an essay through a personal link
    ========================================================================= */
 const ESSAY_RANKS = ['1st Dan Black Belt', '2nd Dan', '3rd Dan', '4th Dan', '5th Dan', '6th Dan', '7th Dan', '8th Dan', '9th Dan'];
-const ESSAY_ST = { not_submitted: ['Not handed in', ''], submitted: ['To mark', 'info'], needs_changes: ['Sent back', 'warn'], reviewed: ['Marked', 'ok'] };
+const ESSAY_ST = { not_submitted: ['Not handed in', 'bad'], submitted: ['To mark', 'info'], needs_changes: ['Sent back', 'warn'], reviewed: ['Marked', 'ok'] };
 const essayTag = st => `<span class="tag ${ESSAY_ST[st][1]}">${ESSAY_ST[st][0]}</span>`;
+// Short badge for lists: handed in and marked (green), handed in to mark (blue), sent back (orange), none yet (red)
+const ESSAY_BADGE = { not_submitted: ['No essay', 'bad'], submitted: ['Essay to mark', 'info'], needs_changes: ['Essay sent back', 'warn'], reviewed: ['Essay in', 'ok'] };
+const essayBadge = st => `<span class="tag ${ESSAY_BADGE[st][1]}" title="Essay: ${ESSAY_ST[st][0]}">${ESSAY_BADGE[st][0]}</span>`;
 const essayFor = (cid, sid) => state.essays.find(e => e.cycle_id === cid && e.student_id === sid) || null;
 const essayQ = rank => state.essayQs.find(q => q.target_rank === rank) || null;
 const needsEssay = s => !!s && ESSAY_RANKS.includes(nextBelt(s.belt_rank));
