@@ -43,7 +43,7 @@ export function startServer({ db, port = 0, appDir, users, config }) {
     const where = [], vals = [];
     let order = '', limit = '';
     for (const [k, v] of params) {
-      if (k === 'select' || k === 'columns') continue;
+      if (k === 'select' || k === 'columns' || k === 'on_conflict') continue;
       if (k === 'order') {
         order = ' order by ' + v.split(',').map(p => { const [c, dir, nulls] = p.split('.'); return `t.${ident(c)} ${dir === 'desc' ? 'desc' : 'asc'}${nulls === 'nullsfirst' ? ' nulls first' : nulls === 'nullslast' ? ' nulls last' : ''}`; }).join(', ');
         continue;
@@ -105,12 +105,21 @@ export function startServer({ db, port = 0, appDir, users, config }) {
       if (req.method === 'POST') {
         const rows = Array.isArray(body) ? body : [body];
         const out = [];
+        // Upsert (Prefer: resolution=merge-duplicates): on the on_conflict columns, or the primary key
+        let conflict = '';
+        if (/resolution=(merge|ignore)-duplicates/.test(prefer)) {
+          let cols = url.searchParams.get('on_conflict');
+          if (!cols) cols = (await tx.query(`select string_agg(a.attname, ',' order by a.attnum) c from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey) where i.indrelid = $1::regclass and i.indisprimary`, [table])).rows[0].c;
+          conflict = cols ? { cols: cols.split(',').map(c => ident(c.trim())), ignore: /ignore-duplicates/.test(prefer) } : '';
+        }
         for (const r of rows) {
           const keys = Object.keys(r);
+          const onc = conflict ? ` on conflict (${conflict.cols.join(', ')}) do ${conflict.ignore || !keys.length ? 'nothing' : 'update set ' + keys.map(k => `${ident(k)} = excluded.${ident(k)}`).join(', ')}` : '';
           const q = keys.length
-            ? `insert into ${table} as t (${keys.map(ident).join(', ')}) select ${keys.map(k => 'r.' + ident(k)).join(', ')} from json_populate_record(null::${table}, $1::json) r returning to_json(t) as j`
+            ? `insert into ${table} as t (${keys.map(ident).join(', ')}) select ${keys.map(k => 'r.' + ident(k)).join(', ')} from json_populate_record(null::${table}, $1::json) r${onc} returning to_json(t) as j`
             : `insert into ${table} as t default values returning to_json(t) as j`;
-          out.push((await tx.query(q, keys.length ? [JSON.stringify(r)] : [])).rows[0].j);
+          const got = (await tx.query(q, keys.length ? [JSON.stringify(r)] : [])).rows[0];
+          if (got) out.push(got.j);
         }
         return wantRows ? { status: 201, json: out } : { status: 201, json: null };
       }
