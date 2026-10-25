@@ -46,5 +46,17 @@ ok(r.saved === 2 && r.skipped === 1 && r.fields.includes('foo') && tables.efc_me
 r = await post('First+Name=Zoe&Last+Name=Tan');
 ok(r.saved === 1 && tables.efc_members.some(m => m.full_name === 'Zoe Tan'), 'form-encoded posts work too');
 
+console.log('\nWhat EFC actually sends (Member Query)');
+const efc = { id: 'd93acafb79e1044ff2a88d265fb2b6c8', member: { id: '3d65d8b3-58e8', reference: 'AU-023-1', firstName: 'Ana', lastName: 'Test', dob: '2019-04-06',
+  contactFirstName: 'Achy ', contactLastName: 'Test', eMail: 'parent@x.test', telephoneMobile: '+61482000000', attended: '2026-09-27', attendanceTotal: 18,
+  status: 'Inactive', medical: 'asthma', allergies: 'nuts', overdueBalance: 96, notes: 'private' } };
+r = toRow(efc);
+ok(r.member_key === 'efc:3d65d8b3-58e8' && r.full_name === 'Ana Test' && r.guardian_name === 'Achy Test' && r.phone === '+61482000000' && r.email === 'parent@x.test', 'EFC member: real member ID, name, parent name, mobile and email');
+ok(r.efc_reference === 'AU-023-1' && r.attendance_total === 18 && r.last_attended === '2026-09-27' && r.status === 'Inactive' && r.date_of_birth === '2019-04-06', 'reference, total classes, last attended, status and birthday');
+ok(!JSON.stringify(r.raw).match(/asthma|nuts|96|private/), 'medical, allergies, money owed and notes are not kept');
+const flat = { id: 'hash', member__id: 'M9', member__firstName: 'Liz', member__lastName: 'Mc', member__contactFirstName: 'Liz', member__contactLastName: 'Mc', member__telephoneMobile: '0400' };
+r = toRow(flat);
+ok(r.member_key === 'efc:M9' && r.full_name === 'Liz Mc' && r.guardian_name === null, 'Zapier-flattened fields work, and an adult who is their own contact has no separate parent');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

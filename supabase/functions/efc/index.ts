@@ -19,21 +19,28 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
 
 // Field names EFC (or a person in Zapier) might use, compared without case, spaces or punctuation
 const FIELDS = {
-  id: ['memberid', 'id', 'studentid', 'leadid', 'contactid', 'personid', 'memberno', 'membernumber', 'membershipnumber'],
+  id: ['id', 'memberid', 'studentid', 'leadid', 'contactid', 'personid', 'memberno', 'membernumber', 'membershipnumber'],
   first: ['firstname', 'givenname', 'forename', 'first', 'memberfirstname', 'studentfirstname', 'leadfirstname'],
   last: ['lastname', 'surname', 'familyname', 'last', 'memberlastname', 'studentlastname', 'memberssurname', 'leadlastname'],
   full: ['fullname', 'name', 'membername', 'studentname', 'displayname', 'leadname', 'memberfullname'],
-  phone: ['mobile', 'mobilephone', 'mobilenumber', 'phone', 'phonenumber', 'cell', 'cellphone', 'membermobile', 'memberphone', 'homephone', 'contactnumber'],
+  phone: ['telephonemobile', 'mobile', 'mobilephone', 'mobilenumber', 'phone', 'phonenumber', 'cell', 'cellphone', 'membermobile', 'memberphone', 'homephone', 'contactnumber'],
   email: ['email', 'emailaddress', 'memberemail', 'studentemail', 'leademail'],
   guardian_name: ['guardianname', 'parentname', 'guardian', 'parent', 'parentguardian', 'parentguardianname', 'guardianfullname', 'emergencycontactname', 'emergencycontact', 'contactname'],
-  guardian_first: ['guardianfirstname', 'parentfirstname'],
-  guardian_last: ['guardianlastname', 'guardiansurname', 'parentlastname', 'parentsurname'],
+  guardian_first: ['guardianfirstname', 'parentfirstname', 'contactfirstname'],
+  guardian_last: ['guardianlastname', 'guardiansurname', 'parentlastname', 'parentsurname', 'contactlastname'],
   guardian_phone: ['guardianmobile', 'guardianphone', 'guardianmobilenumber', 'parentmobile', 'parentphone', 'parentguardianmobile', 'parentguardianphone', 'emergencycontactphone', 'emergencycontactmobile', 'emergencycontactnumber'],
   guardian_email: ['guardianemail', 'parentemail', 'parentguardianemail', 'guardianemailaddress', 'parentemailaddress'],
   dob: ['dateofbirth', 'dob', 'birthday', 'birthdate'],
   status: ['status', 'memberstatus', 'enrolmentstatus', 'membershipstatus', 'leadstatus'],
-  location: ['location', 'locationname', 'school', 'club', 'site']
+  location: ['location', 'locationname', 'school', 'club', 'site'],
+  reference: ['reference', 'memberreference', 'ref'],
+  attendance_total: ['attendancetotal', 'totalattendance', 'sessionsattended'],
+  last_attended: ['attended', 'lastattended', 'lastattendance']
 };
+// Not kept: health, money and notes (EFC sends these too)
+const DROP = ['medical', 'allergies', 'diet', 'alerts', 'notes', 'overduebalance', 'unpaidbalance', 'balance'];
+const clean = o => Array.isArray(o) ? o.map(clean) : o && typeof o === 'object'
+  ? Object.fromEntries(Object.entries(o).filter(([k]) => !DROP.includes(norm(k))).map(([k, v]) => [k, clean(v)])) : o;
 const norm = k => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // {guardian: {mobile: 1}} -> {guardianmobile: 1}; keeps the first value seen for each name
@@ -47,19 +54,27 @@ export function flatten(o, pre = '', out = {}) {
 }
 
 export function toRow(rec, kind = 'member') {
-  const f = flatten(rec), pick = n => { for (const k of FIELDS[n]) if (f[k]) return f[k]; return null; };
+  // EFC sends { member: {...} } (or member__firstName from Zapier): read the member's own fields first
+  const f = flatten(rec);
+  for (const k of Object.keys(f)) if (k.startsWith('member') && k.length > 6) f[k.slice(6)] = f[k];
+  if (rec && rec.member && typeof rec.member === 'object') Object.assign(f, flatten(rec.member));
+  const pick = n => { for (const k of FIELDS[n]) if (f[k]) return f[k]; return null; };
   const first = pick('first'), last = pick('last');
   const full = pick('full') || [first, last].filter(Boolean).join(' ');
   if (!full) return null;
   const phone = pick('phone'), email = pick('email'), id = pick('id');
-  const gName = pick('guardian_name') || [pick('guardian_first'), pick('guardian_last')].filter(Boolean).join(' ') || null;
+  let gName = pick('guardian_name') || [pick('guardian_first'), pick('guardian_last')].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim() || null;
+  if (gName && gName.toLowerCase() === full.replace(/\s+/g, ' ').trim().toLowerCase()) gName = null;   // an adult who is their own contact
   const k = String(f.kind || f.type || kind).toLowerCase().includes('lead') ? 'lead' : 'member';
   const key = id ? 'efc:' + id : 'n:' + full.toLowerCase().replace(/\s+/g, ' ') + '|' + ((phone || '').replace(/\D/g, '') || (email || '').toLowerCase());
   return {
     member_key: key, kind: k, full_name: full.replace(/\s+/g, ' '), first_name: first, last_name: last,
     phone, email: email && email.toLowerCase(), guardian_name: gName, guardian_phone: pick('guardian_phone'),
     guardian_email: (pick('guardian_email') || '').toLowerCase() || null, date_of_birth: pick('dob'),
-    status: pick('status'), location: pick('location'), raw: rec, updated_at: new Date().toISOString()
+    status: pick('status'), location: pick('location'), efc_reference: pick('reference'),
+    attendance_total: /^\d+$/.test(pick('attendance_total') || '') ? +pick('attendance_total') : null,
+    last_attended: /^\d{4}-\d{2}-\d{2}/.test(pick('last_attended') || '') ? pick('last_attended').slice(0, 10) : null,
+    raw: clean(rec), updated_at: new Date().toISOString()
   };
 }
 
@@ -78,7 +93,8 @@ export async function handle(req, db) {
     const list = Array.isArray(body) ? body : Array.isArray(body.members) ? body.members : [body];
     const kind = url.searchParams.get('kind') === 'lead' ? 'lead' : 'member';
     const rows = [], skipped = [];
-    for (const rec of list.slice(0, 5000)) { const r = toRow(rec, kind); if (r) rows.push(r); else skipped.push(rec); }
+    const where = (url.searchParams.get('location') || '').slice(0, 100) || null;   // e.g. &location=Marrickville (EFC doesn't send it)
+    for (const rec of list.slice(0, 5000)) { const r = toRow(rec, kind); if (r) { r.location = r.location || where; rows.push(r); } else skipped.push(rec); }
     // The same person twice in one batch: keep the last
     const byKey = new Map(rows.map(r => [r.member_key, r]));
     if (byKey.size) {

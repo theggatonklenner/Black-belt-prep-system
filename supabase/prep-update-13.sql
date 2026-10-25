@@ -24,6 +24,9 @@ create table if not exists public.efc_members (
   updated_at     timestamptz not null default now()
 );
 create index if not exists efc_members_name_idx on public.efc_members (lower(full_name));
+alter table public.efc_members add column if not exists efc_reference text;      -- EFC's member number (e.g. AU-023-19052)
+alter table public.efc_members add column if not exists attendance_total int;    -- total classes attended, as EFC counts them
+alter table public.efc_members add column if not exists last_attended date;
 
 alter table public.efc_members enable row level security;
 drop policy if exists "read" on public.efc_members;
