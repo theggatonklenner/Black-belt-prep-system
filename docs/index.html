@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
+<script src="hub-signin.js"></script>
 <style>
   /* Same look as AMA ID Cards: app bar, one view at a time, tab bar at the bottom on phones. */
   :root {
@@ -531,6 +532,9 @@
 
 const CFG = window.PREP_CONFIG || {};
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+// Sign in with the AMA Admin Hub mobile and PIN (hub-signin.js)
+const HUB = { sb, url: CFG.SUPABASE_URL, key: CFG.SUPABASE_ANON_KEY, form: '#loginForm' };
+if (window.AmaHub) { AmaHub.mount(HUB); AmaHub.recheck(HUB); }
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
