@@ -3529,7 +3529,7 @@ async function renderMore() {
       <li><button class="item" data-goto="certificates"><div class="main"><div class="name">Certificates</div><div class="meta">Names, numbers, approval, printing and issuing</div></div><span class="muted">›</span></button></li>
       ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
     </ul>
-    <div class="card"><div class="row"><div class="grow"><b>${esc(state.email)}</b><div class="small muted">${state.roles.map(r => ROLE_NAMES[r] || r).join(', ')}</div></div>
+    <div class="card"><div class="row"><div class="grow"><b>${esc(state.myName || state.email)}</b><div class="small muted">${state.roles.map(r => ROLE_NAMES[r] || r).join(', ')}</div></div>
       <button class="btn danger" id="signOutBtn">Sign out</button></div></div>
     ${admin ? `<form class="card" id="setForm"><h3>Settings</h3>
       <div class="grid2">
@@ -3687,10 +3687,11 @@ async function start() {
   const session = data && data.session;
   if (!session) return showOnly('#authView');
   state.email = (session.user.email || '').toLowerCase();
+  state.myName = (session.user.user_metadata || {}).full_name || state.email;   // hub sign-in logins have a stand-in email
   const { data: roles, error } = await sb.rpc('prep_my_roles');
   if (error) { showOnly('#setupView'); $('#setupError').textContent = /prep_my_roles|function|schema cache/i.test(error.message) ? '' : error.message; return; }
   state.roles = roles || [];
-  if (!state.roles.length) { $('#noAccessEmail').textContent = state.email; return showOnly('#noAccessView'); }
+  if (!state.roles.length) { $('#noAccessEmail').textContent = state.myName || state.email; return showOnly('#noAccessView'); }
   document.body.classList.toggle('can-admin', has('admin'));
   document.body.classList.toggle('can-attendance', canEditAttendance());
   showOnly(null);
