@@ -4,7 +4,7 @@
 // user, so the real security rules and calculations are exercised.
 
 import { createServer } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
 const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -169,7 +169,8 @@ export function startServer({ db, port = 0, appDir, users, config }) {
         }
         if (url.pathname === '/config.js') { res.writeHead(200, { ...cors, 'content-type': 'text/javascript' }); return res.end(config); }
         // Static app files
-        const file = join(appDir, url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, ''));
+        let file = join(appDir, url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, ''));
+        if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');   // a folder: its index.html
         if (!file.startsWith(appDir) || !existsSync(file)) { res.writeHead(404, cors); return res.end(); }
         const types = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
         res.writeHead(200, { ...cors, 'content-type': types[extname(file)] || 'application/octet-stream' });
