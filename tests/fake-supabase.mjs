@@ -12,7 +12,7 @@ const unb64 = s => JSON.parse(Buffer.from(s, 'base64url').toString());
 const ident = s => { if (!/^[a-z_][a-z0-9_]*$/i.test(s)) throw Object.assign(new Error('bad identifier ' + s), { status: 400 }); return `"${s}"`; };
 const pgArray = a => '{' + a.map(v => v == null ? 'NULL' : '"' + String(v).replace(/(["\\])/g, '\\$1') + '"').join(',') + '}';
 
-export function startServer({ db, port = 0, appDir, users, config }) {
+export function startServer({ db, port = 0, appDir, users, config, maxRows = 0 }) {   // maxRows: like Supabase's 1,000-row cap per request (0: no cap)
   let queue = Promise.resolve();
   const serial = fn => (queue = queue.then(fn, fn));
 
@@ -41,15 +41,15 @@ export function startServer({ db, port = 0, appDir, users, config }) {
 
   function filters(params, table, startIdx) {
     const where = [], vals = [];
-    let order = '', limit = '';
+    let order = '', lim = null, off = null;
     for (const [k, v] of params) {
       if (k === 'select' || k === 'columns' || k === 'on_conflict') continue;
       if (k === 'order') {
         order = ' order by ' + v.split(',').map(p => { const [c, dir, nulls] = p.split('.'); return `t.${ident(c)} ${dir === 'desc' ? 'desc' : 'asc'}${nulls === 'nullsfirst' ? ' nulls first' : nulls === 'nullslast' ? ' nulls last' : ''}`; }).join(', ');
         continue;
       }
-      if (k === 'limit') { limit = ` limit ${parseInt(v, 10)}`; continue; }
-      if (k === 'offset') { limit += ` offset ${parseInt(v, 10)}`; continue; }
+      if (k === 'limit') { lim = parseInt(v, 10); continue; }
+      if (k === 'offset') { off = parseInt(v, 10); continue; }
       const m = v.match(/^(not\.)?(eq|neq|gt|gte|lt|lte|like|ilike|is|in)\.(.*)$/s);
       if (!m) throw Object.assign(new Error('unsupported filter ' + k + '=' + v), { status: 400 });
       const [, not, op, raw] = m, col = `t.${ident(k)}`;
@@ -65,6 +65,8 @@ export function startServer({ db, port = 0, appDir, users, config }) {
       }
       where.push(not ? `not (${expr})` : expr);
     }
+    if (maxRows && (lim == null || lim > maxRows)) lim = maxRows;
+    const limit = (lim != null ? ` limit ${lim}` : '') + (off != null ? ` offset ${off}` : '');
     return { where: where.length ? ' where ' + where.join(' and ') : '', vals, order, limit };
   }
 
