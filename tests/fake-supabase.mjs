@@ -83,7 +83,7 @@ export function startServer({ db, port = 0, appDir, users, config }) {
         for (const [k, v] of Object.entries(body || {})) {
           const i = (meta.names || []).indexOf(k);
           if (i < 0) throw Object.assign(new Error(`unknown argument ${k}`), { status: 400 });
-          vals.push(Array.isArray(v) ? pgArray(v) : v == null ? null : typeof v === 'object' ? JSON.stringify(v) : String(v));
+          vals.push(Array.isArray(v) && !/^jsonb?$/.test(meta.types[i]) ? pgArray(v) : v == null ? null : typeof v === 'object' ? JSON.stringify(v) : String(v));
           args.push(`${ident(k)} => $${vals.length}::${meta.types[i]}`);
         }
         const call = `public.${ident(fn)}(${args.join(', ')})`;
