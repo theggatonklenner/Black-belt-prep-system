@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Black Belt Prep: sends texts to families through GoHighLevel (grading invitations, congratulations,
-// "not ready yet" messages, essay links). Staff choose who and check the wording in the app; this sends them
+// "not ready yet" messages, essay links, polo order links). Staff choose who and check the wording in the app; this sends them
 // one by one, finding (or adding) each family as a GoHighLevel contact by phone number, and logs every text.
 //
 // Deploy in Supabase: Edge Functions > Deploy a new function > Via Editor, name it "ghl", paste this whole file,
@@ -16,7 +16,7 @@
 //   { action: 'send', items: [{ student_id, cycle_id, kind, body }] }
 
 const API = 'https://services.leadconnectorhq.com';
-const KINDS = { invite: ['grading'], congrats: ['grading'], not_ready: ['instructor', 'grading'], essay: ['instructor'] };   // who may send each kind (admins always can)
+const KINDS = { invite: ['grading'], congrats: ['grading'], not_ready: ['instructor', 'grading'], essay: ['instructor'], polo: ['grading'] };   // who may send each kind (admins always can)
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',

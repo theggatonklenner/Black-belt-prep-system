@@ -454,6 +454,7 @@
 
   <!-- Essays -->
   <section class="view" id="view-essays" hidden></section>
+  <section class="view" id="view-polos" hidden></section>
 
   <!-- More -->
   <section class="view" id="view-more" hidden></section>
@@ -699,7 +700,7 @@ const sheetHead = (title, sub = '') => `<div class="dlg-head"><div><h3>${esc(tit
 /* ---------- State ---------- */
 const state = {
   email: null, roles: [], view: 'dashboard', loaded: false,
-  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, classReqs: [], essays: [], essayQs: [], essaysReady: false, msgTemplates: [], messages: [], textsReady: false, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
+  settings: {}, readiness: [], grading: [], templates: [], certificates: [], cards: [], payments: [], sessionFees: [], gradingRates: [], gradingReady: false, classReqs: [], essays: [], essayQs: [], essaysReady: false, msgTemplates: [], messages: [], textsReady: false, polos: [], poloSet: {}, polosReady: false, po: { filter: 'topay', search: '' }, danNumbers: [], danCounters: [], countersReady: true, danReady: true, students: [], cycles: [], sessions: [], enrolments: [], attendance: [], summary: [], overview: [], duplicates: [],
   att: { cycle: null, session: 1, search: '', belt: '', status: '', card: '', mode: 'sessions', selecting: false, selected: new Set() }
 };
 const has = (...r) => state.roles.includes('admin') || r.some(x => state.roles.includes(x));
@@ -771,6 +772,11 @@ async function loadAll() {
   state.textsReady = !mt.error; state.msgTemplates = mt.data || [];
   const ml = state.textsReady && has('instructor', 'grading') ? await sb.from('prep_messages').select('student_id, cycle_id, kind, status, sent_at, error').order('sent_at', { ascending: false }).limit(3000) : { data: [] };
   state.messages = ml.data || [];
+  // Polo shirt orders (supabase/prep-update-15.sql): grading and payments staff
+  if (has('grading', 'payments')) {
+    const [ps, po] = await Promise.all([sb.from('prep_polo_settings').select('*'), sb.from('prep_polo_orders').select('*').order('created_at')]);
+    state.polosReady = !ps.error && !po.error; state.poloSet = (ps.data || [])[0] || {}; state.polos = po.data || [];
+  } else { state.polosReady = false; state.polos = []; }
   // Who pays per session and which sessions they've paid at (no amounts); needs supabase/prep-update-03.sql
   const fees = canEditAttendance() ? await sb.rpc('prep_session_fees', { p_cycle: null }) : { data: [] };
   state.sessionFees = fees.error ? [] : (fees.data || []);
@@ -798,7 +804,7 @@ function scheduleReload() {
 /* ---------- Navigation ---------- */
 // Each screen has its own address (like the AMA dashboard): .../#more, #grading, #students, #student/BB0001 ...
 // so the browser's back button, bookmarks and shared links work.
-const VIEWS = ['dashboard', 'students', 'attendance', 'checkin', 'readiness', 'cycles', 'payments', 'grading', 'certificates', 'reports', 'essays', 'more'];
+const VIEWS = ['dashboard', 'students', 'attendance', 'checkin', 'readiness', 'cycles', 'payments', 'grading', 'certificates', 'reports', 'essays', 'polos', 'more'];
 function fromHash() {
   const p = location.hash.replace(/^#\/?/, '').split('/').map(x => { try { return decodeURIComponent(x); } catch (e) { return x; } });
   const k = (p[0] || '').toLowerCase();
@@ -816,7 +822,7 @@ window.addEventListener('hashchange', route);
 function showView(v, fromAddress) {
   state.view = v;
   if (!fromAddress && location.hash !== '#' + v) { try { history.pushState(null, '', '#' + v); } catch (e) { /* ignore */ } }
-  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'attendance' && v === 'checkin') || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates', 'reports', 'essays'].includes(v)))));
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === v || (t.dataset.view === 'attendance' && v === 'checkin') || (t.dataset.view === 'more' && ['cycles', 'payments', 'grading', 'certificates', 'reports', 'essays', 'polos'].includes(v)))));
   $$('#app > .view').forEach(s => s.hidden = s.id !== 'view-' + v);
   if (v !== 'attendance') stopSelecting();
   if (v !== 'students') stopStudentSelect();
@@ -833,7 +839,7 @@ function render() {
   const c = currentCycle();
   $('#cyclePill').hidden = !c;
   if (c) { $('#cyclePill').dataset.kind = 'ok'; $('#cyclePillText').textContent = c.name; }
-  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, checkin: renderCheckin, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, reports: renderReports, essays: renderEssays, more: renderMore })[state.view]();
+  ({ dashboard: renderDashboard, students: renderStudents, attendance: renderAttendance, checkin: renderCheckin, readiness: renderReadiness, cycles: renderCycles, payments: renderPayments, grading: renderGrading, certificates: renderCertificates, reports: renderReports, essays: renderEssays, polos: renderPolos, more: renderMore })[state.view]();
 }
 
 /* =========================================================================
@@ -3521,6 +3527,187 @@ async function exportEverything() {
 /* =========================================================================
    More: settings, users, audit log
    ========================================================================= */
+/* =========================================================================
+   Polo shirts: everyone who passes a Dan grading can order an AMA polo with their name on the back.
+   Families pay by card on their personal link (Stripe, through the "polo" function); it's marked paid with the size.
+   ========================================================================= */
+const POLO_RANKS = ESSAY_RANKS;   // 1st Dan and up (Probationary is not a Dan)
+const PO_STATUS = { invited: ['Link made', ''], pending: ['Not paid yet', 'warn'], paid: ['Paid', 'ok'], ordered: ['Ordered', 'info'], delivered: ['Handed out', 'ok'], cancelled: ['Cancelled', 'bad'] };
+const PO_FILTERS = { topay: ['To pay', o => ['invited', 'pending'].includes(o.status)], paid: ['Paid, to order', o => o.status === 'paid'], ordered: ['Ordered', o => o.status === 'ordered'],
+  delivered: ['Handed out', o => o.status === 'delivered'], cancelled: ['Cancelled', o => o.status === 'cancelled'] };
+const PAID_HOW = { stripe: 'Card (Stripe)', cash: 'Cash', eftpos: 'EFTPOS', transfer: 'Bank transfer', efc: 'Through EFC', other: 'Other' };
+const poloUrl = token => location.origin + location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/') + 'polo/#t=' + token;
+const poloOpen = sid => state.polos.find(o => o.student_id === sid && o.status !== 'cancelled') || null;
+// Passed a Dan grading (newest first), with no polo order yet
+function poloEligible() {
+  const seen = new Set(), out = [];
+  state.grading.filter(g => g.result === 'passed' && POLO_RANKS.includes(g.target_rank)).sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
+    .forEach(g => { if (seen.has(g.student_id)) return; seen.add(g.student_id); const s = student(g.student_id); if (s && !s.is_test && !poloOpen(s.student_id)) out.push({ s, rank: g.target_rank }); });
+  return out;
+}
+const poTag = o => `<span class="tag ${PO_STATUS[o.status][1]}">${PO_STATUS[o.status][0]}</span>`;
+function renderPolos() {
+  const v = $('#view-polos'), P = state.po;
+  if (!state.polosReady) { v.innerHTML = `${backToMore()}<div class="view-head"><h2>Polo shirts</h2></div><div class="card">${has('grading', 'payments') ? 'Run supabase/prep-update-15.sql in Supabase to take polo orders.' : 'Only admins, grading and payments staff can see polo orders.'}</div>`; wireBack(); return; }
+  const S = state.poloSet || {}, all = state.polos, el = poloEligible(), n = k => all.filter(PO_FILTERS[k][1]).length;
+  const toOrder = all.filter(o => o.status === 'paid'), sizes = {};
+  toOrder.forEach(o => { sizes[o.size || '?'] = (sizes[o.size || '?'] || 0) + (o.qty || 1); });
+  const sizeOrder = s => { const i = (S.sizes || []).indexOf(s); return i < 0 ? 99 : i; };
+  v.innerHTML = `${backToMore()}<div class="view-head"><h2>Polo shirts</h2><div class="row">${has('admin') ? '<button class="btn sm" id="poSet">Settings</button>' : ''}<button class="btn sm" id="poCsv" ${all.some(o => ['paid', 'ordered'].includes(o.status)) ? '' : 'disabled'}>Supplier list (CSV)</button></div></div>
+    <p class="hint">Everyone who passes a Dan grading can order a polo with their name on the back. Each family gets a personal link: they pick the size, check the name and pay by card. It's marked paid here automatically. ${S.is_open ? `Price <b>${money(S.price)}</b>.` : '<b>Orders are closed</b> (Settings).'}</p>
+    <div class="stats">
+      <div class="stat"><span class="n">${el.length}</span><span class="l">passed a Dan, no link yet</span></div>
+      <div class="stat"><span class="n">${n('topay')}</span><span class="l">not paid yet</span></div>
+      <div class="stat"><span class="n">${toOrder.reduce((t, o) => t + (o.qty || 1), 0)}</span><span class="l">paid, to order</span></div>
+      <div class="stat"><span class="n">${n('ordered')}</span><span class="l">ordered</span></div></div>
+    ${toOrder.length ? `<div class="card"><h3>Sizes to order</h3><table class="grid"><thead><tr><th>Size</th><th>Shirts</th></tr></thead><tbody>${Object.entries(sizes).sort((a, b) => sizeOrder(a[0]) - sizeOrder(b[0])).map(([s, c]) => `<tr><td>${esc(s)}</td><td>${c}</td></tr>`).join('')}</tbody></table>
+      ${has('grading') ? `<div class="row"><button class="btn sm" id="poOrdered">Mark these ${toOrder.length} as ordered</button></div><p class="hint">Download the supplier list first, then mark them ordered once the order is placed.</p>` : ''}</div>` : ''}
+    ${has('grading') ? `<div class="card"><h3>Passed a Dan, no polo link yet (${el.length})</h3>
+      ${el.length ? `<p class="hint">${esc(el.slice(0, 6).map(x => x.s.full_name).join(', '))}${el.length > 6 ? ` and ${el.length - 6} more` : ''}</p>` : '<p class="hint">Everyone who has passed a Dan has a link.</p>'}
+      <div class="row"><button class="btn primary sm" id="poMake" ${el.length ? '' : 'disabled'}>Make links for all ${el.length || ''}</button><button class="btn sm" id="poAdd">Add someone else</button>
+        ${state.textsReady ? `<button class="btn sm" id="poText" ${all.some(o => o.status === 'invited') ? '' : 'disabled'}>Text links</button>` : ''}</div></div>` : ''}
+    <div class="seg" role="group" aria-label="Show">${Object.entries(PO_FILTERS).map(([k, [t]]) => `<button data-pof="${k}" aria-pressed="${P.filter === k}">${t}<small>${n(k)}</small></button>`).join('')}</div>
+    <input type="search" id="poSearch" placeholder="Search name or Student ID" aria-label="Search" value="${esc(P.search)}">
+    <ul class="list" id="poList"></ul>`;
+  wireBack();
+  const list = () => {
+    const q = P.search.trim().toLowerCase();
+    const sel = all.filter(o => PO_FILTERS[P.filter][1](o)).map(o => ({ o, s: student(o.student_id) || { full_name: o.student_id, student_id: o.student_id } }))
+      .filter(x => !q || x.s.full_name.toLowerCase().includes(q) || x.s.student_id.toLowerCase().includes(q)).sort((a, b) => a.s.full_name.localeCompare(b.s.full_name));
+    $('#poList').innerHTML = sel.length ? sel.map(({ o, s }) => `<li><button class="item" data-po="${o.order_id}"><div class="main"><div class="name">${esc(s.full_name)}</div>
+      <div class="meta">${esc([o.rank, o.size ? `size ${o.size}${o.qty > 1 ? ' x' + o.qty : ''}` : 'size not chosen', o.name_on_back ? `"${o.name_on_back}" on the back` : '', has('payments') && o.amount != null ? money(o.amount) + (o.paid_how ? ' ' + (PAID_HOW[o.paid_how] || o.paid_how).toLowerCase() : '') : ''].filter(Boolean).join(' · '))}</div></div>${poTag(o)}</button></li>`).join('')
+      : '<li><div class="empty">No orders here.</div></li>';
+    $$('#poList [data-po]').forEach(b => b.onclick = () => openPolo(b.dataset.po));
+  };
+  list();
+  $('#poSearch').oninput = e => { P.search = e.target.value; list(); };
+  $$('#view-polos [data-pof]').forEach(b => b.onclick = () => { P.filter = b.dataset.pof; renderPolos(); });
+  const on = (id, f) => { const b = $(id); if (b) b.onclick = f; };
+  on('#poSet', () => poloSettings());
+  on('#poCsv', () => poloCsv());
+  on('#poMake', () => poloLinks(el.map(x => x.s.student_id)));
+  on('#poAdd', () => poloPick());
+  on('#poText', () => poloTexts());
+  on('#poOrdered', async () => {
+    if (!await ask(`Mark ${toOrder.length} paid polo order${toOrder.length === 1 ? '' : 's'} as ordered from the supplier?`, 'Mark ordered')) return;
+    try { await run(sb.from('prep_polo_orders').update({ status: 'ordered', ordered_at: new Date().toISOString() }).in('order_id', toOrder.map(o => o.order_id)), 'Marked ordered'); await loadAll(); render(); } catch (e) { toast(errMsg(e), 6000); }
+  });
+}
+async function poloLinks(ids) {
+  if (!ids.length) return;
+  try { const r = await run(sb.rpc('prep_polo_links', { p_students: ids })); toast(`Polo links ready for ${(r || []).length} student${(r || []).length === 1 ? '' : 's'}`); sheet.open && sheet.close(); await loadAll(); render(); }
+  catch (e) { toast(errMsg(e), 6000); }
+}
+function poloPick() {
+  openSheet(`<div class="body">${sheetHead('Add someone else', 'Any student can be given a polo link (for example someone who graded before this system).')}
+    <input type="search" id="ppQ" placeholder="Search name or Student ID" aria-label="Search"><ul class="list" id="ppList" style="max-height:50vh;overflow:auto"></ul></div>`);
+  const draw = () => { const q = $('#ppQ').value.trim().toLowerCase();
+    const l = state.students.filter(s => !s.is_test && (!q || s.full_name.toLowerCase().includes(q) || s.student_id.toLowerCase().includes(q))).slice(0, 50);
+    $('#ppList').innerHTML = l.map(s => { const o = poloOpen(s.student_id); return `<li><button class="item" data-pp="${esc(s.student_id)}" ${o ? 'disabled' : ''}><div class="main"><div class="name">${esc(s.full_name)}</div><div class="meta">${esc([s.student_id, s.belt_rank].filter(Boolean).join(' · '))}</div></div>${o ? poTag(o) : ''}</button></li>`; }).join('') || '<li><div class="empty">No one matches.</div></li>';
+    $$('#ppList [data-pp]').forEach(b => b.onclick = () => poloLinks([b.dataset.pp])); };
+  $('#ppQ').oninput = draw; draw(); $('#ppQ').focus();
+}
+function openPolo(id) {
+  const o = state.polos.find(x => x.order_id === id); if (!o) return;
+  const s = student(o.student_id) || { full_name: o.student_id, student_id: o.student_id }, S = state.poloSet || {}, pay = has('payments'), grade = has('grading');
+  const open = ['invited', 'pending'].includes(o.status), edit = grade || (pay && open), when = t => t ? new Date(t).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  openSheet(`<form id="poForm" class="body">${sheetHead(s.full_name, `${esc(s.student_id)} · ${esc(o.rank || '')} · ${PO_STATUS[o.status][0]}`)}
+    <dl class="kv">
+      ${o.paid_at ? `<dt>Paid</dt><dd>${esc(when(o.paid_at))}${pay && o.amount != null ? ` · ${money(o.amount)}` : ''} · ${esc(PAID_HOW[o.paid_how] || o.paid_how || '')}${o.paid_by ? ' · recorded by ' + esc(o.paid_by) : ''}</dd>` : ''}
+      ${o.ordered_at ? `<dt>Ordered</dt><dd>${esc(when(o.ordered_at))}</dd>` : ''}${o.delivered_at ? `<dt>Handed out</dt><dd>${esc(when(o.delivered_at))}</dd>` : ''}
+      ${pay && o.stripe_payment ? `<dt>Stripe</dt><dd class="small">${esc(o.stripe_payment)}</dd>` : ''}
+    </dl>
+    <div class="grid2"><div class="field"><label for="poName">Name on the back</label><input type="text" id="poName" maxlength="24" value="${esc(o.name_on_back || '')}" ${edit ? '' : 'disabled'}></div>
+      <div class="field"><label for="poSize">Size</label><select id="poSize" ${edit ? '' : 'disabled'}><option value="">Not chosen</option>${(S.sizes || []).map(z => `<option${z === o.size ? ' selected' : ''}>${esc(z)}</option>`).join('')}</select></div>
+      <div class="field"><label for="poQty">How many</label><select id="poQty" ${edit ? '' : 'disabled'}>${[1, 2, 3, 4, 5].map(q => `<option${q === (o.qty || 1) ? ' selected' : ''}>${q}</option>`).join('')}</select></div></div>
+    <div class="field"><label for="poNotes">Notes</label><textarea id="poNotes" rows="2" ${grade ? '' : 'disabled'}>${esc(o.notes || '')}</textarea></div>
+    ${o.status !== 'cancelled' ? `<div class="section"><h3>Family's link</h3><p class="hint" style="word-break:break-all">${esc(poloUrl(o.token))}</p><div class="row"><button type="button" class="btn sm" id="poCopy">Copy link</button>${state.textsReady && grade && open ? '<button type="button" class="btn sm" id="poTextOne">Text it</button>' : ''}</div></div>` : ''}
+    ${pay && open ? `<div class="section"><h3>Paid another way</h3><div class="grid2"><div class="field"><label for="poHow">How</label><select id="poHow">${Object.entries(PAID_HOW).filter(([k]) => k !== 'stripe').map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
+      <div class="field"><label for="poAmt">Amount ($)</label><input type="number" id="poAmt" min="0" step="0.01" value="${Number((S.price || 0) * (o.qty || 1)).toFixed(2)}"></div></div>
+      <div class="row"><button type="button" class="btn" id="poPaid">Mark paid</button></div></div>` : ''}
+    <div class="dlg-actions">
+      ${grade && o.status === 'paid' ? '<button type="button" class="btn" id="poOrd">Mark ordered</button>' : ''}
+      ${grade && ['paid', 'ordered'].includes(o.status) ? '<button type="button" class="btn" id="poDel">Mark handed out</button>' : ''}
+      ${grade && o.status === 'delivered' ? '<button type="button" class="btn" id="poUndel">Not handed out</button>' : ''}
+      ${grade && o.status !== 'cancelled' ? '<button type="button" class="btn danger" id="poCancel">Cancel order</button>' : ''}
+      ${grade ? '<button class="btn primary" type="submit">Save</button>' : '<button type="button" class="btn" data-close>Close</button>'}</div></form>`);
+  const save = async (rec, msg) => { try { await run(sb.from('prep_polo_orders').update(rec).eq('order_id', id), msg); sheet.close(); await loadAll(); render(); } catch (e) { toast(errMsg(e), 6000); } };
+  $('#poForm').onsubmit = e => { e.preventDefault(); const nm = $('#poName').value.trim();
+    if (nm && !/^[\p{L}\p{M}' .-]{1,24}$/u.test(nm)) return toast('The name on the back can be up to 24 letters.');
+    save({ name_on_back: nm || null, size: $('#poSize').value || null, qty: +$('#poQty').value, notes: $('#poNotes').value.trim() || null }, 'Saved'); };
+  const on = (sel, f) => { const b = $(sel); if (b) b.onclick = f; };
+  on('#poCopy', async () => { try { await navigator.clipboard.writeText(poloUrl(o.token)); toast('Link copied'); } catch (e) { toast('Press and hold the link to copy it.'); } });
+  on('#poTextOne', () => poloTexts([o]));
+  on('#poPaid', () => { if (!$('#poSize').value) return toast('Choose the size first.'); save({ status: 'paid', paid_at: new Date().toISOString(), paid_how: $('#poHow').value, paid_by: state.email, amount: Number($('#poAmt').value || 0),
+    price: S.price, size: $('#poSize').value, qty: +$('#poQty').value, name_on_back: $('#poName').value.trim() || o.name_on_back }, 'Marked paid'); });
+  on('#poOrd', () => save({ status: 'ordered', ordered_at: new Date().toISOString() }, 'Marked ordered'));
+  on('#poDel', () => save({ status: 'delivered', delivered_at: new Date().toISOString() }, 'Marked handed out'));
+  on('#poUndel', () => save({ status: o.ordered_at ? 'ordered' : 'paid', delivered_at: null }, 'Changed'));
+  on('#poCancel', async () => { if (!await ask(o.paid_at ? 'This order is paid. Cancel it? Refund card payments in Stripe.' : 'Cancel this order? The family\'s link will stop working.', 'Cancel order', true)) return; save({ status: 'cancelled' }, 'Order cancelled'); });
+}
+function poloTexts(only) {
+  const people = (only || state.polos.filter(o => o.status === 'invited')).map(o => ({ o, s: student(o.student_id) })).filter(x => x.s);
+  const vars = x => ({ first_name: x.s.full_name.split(' ')[0], name: x.s.full_name, belt: x.o.rank || '', current_belt: x.s.belt_rank || '', link: poloUrl(x.o.token) });
+  let body = msgTpl('polo') || 'Congratulations {first_name} on your {belt}! Order your AMA black belt polo here: {link}';
+  const picked = new Set(people.filter(x => mobileOk(x.s.contact_phone) && !lastText(null, x.s.student_id, 'polo')).map(x => x.o.order_id));
+  if (only) people.forEach(x => { if (mobileOk(x.s.contact_phone)) picked.add(x.o.order_id); });
+  const draw = () => {
+    const first = people.find(x => picked.has(x.o.order_id)) || people[0];
+    openSheet(`<div class="body">${sheetHead('Text polo links', 'Sent through GoHighLevel')}
+      <div class="field"><label for="ptBody">Message</label><textarea id="ptBody" rows="4" maxlength="1000">${esc(body)}</textarea><p class="hint">Filled in for each student: {first_name} {name} {belt} {link}.</p></div>
+      ${first ? `<div class="card" style="box-shadow:none;border:1px solid var(--line)"><b class="small">Preview for ${esc(first.s.full_name)}</b><div id="ptPrev" style="white-space:pre-wrap">${esc(fillMsg(body, vars(first)))}</div></div>` : ''}
+      <ul class="list">${people.map(x => { const okp = mobileOk(x.s.contact_phone), last = lastText(null, x.s.student_id, 'polo');
+        return `<li><label class="item"><input type="checkbox" data-pt="${x.o.order_id}" ${picked.has(x.o.order_id) ? 'checked' : ''} ${okp ? '' : 'disabled'}><div class="main"><div class="name">${esc(x.s.full_name)}</div><div class="meta">${okp ? esc(x.s.contact_phone) : '<span style="color:var(--danger)">No mobile number</span>'}</div></div>${last ? `<span class="tag">Texted ${fmtShort(last.sent_at.slice(0, 10))}</span>` : ''}</label></li>`; }).join('') || '<li><div class="empty">No one to text.</div></li>'}</ul>
+      <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="ptGo" ${picked.size ? '' : 'disabled'}>Send ${picked.size} text${picked.size === 1 ? '' : 's'}</button></div></div>`);
+    $('#ptBody').oninput = () => { body = $('#ptBody').value; const pv = $('#ptPrev'); if (pv && first) pv.textContent = fillMsg(body, vars(first)); };
+    sheet.querySelectorAll('[data-pt]').forEach(c => c.onchange = () => { body = $('#ptBody').value; c.checked ? picked.add(c.dataset.pt) : picked.delete(c.dataset.pt); draw(); });
+    $('#ptGo').onclick = async () => {
+      body = $('#ptBody').value;
+      const to = people.filter(x => picked.has(x.o.order_id));
+      $('#ptGo').disabled = true; toast('Sending...', 0);
+      try {
+        const r = await sendTexts(to.map(x => ({ student_id: x.s.student_id, cycle_id: null, kind: 'polo', body: fillMsg(body, vars(x)) })));
+        const bad = r.results.filter(x => !x.ok);
+        toast(`${r.testing ? 'Test mode: logged ' : 'Sent '}${r.sent} text${r.sent === 1 ? '' : 's'}${bad.length ? `. Not sent: ${bad.map(x => x.error).join(', ')}` : ''}`, bad.length ? 10000 : 4000);
+        sheet.close(); await loadAll(); render();
+      } catch (e) { toast(errMsg(e), 8000); draw(); }
+    };
+  };
+  draw();
+}
+function poloSettings() {
+  const S = state.poloSet || {};
+  openSheet(`<form id="psForm" class="body">${sheetHead('Polo settings')}
+    <label class="check"><input type="checkbox" id="psOpen" ${S.is_open ? 'checked' : ''}> Taking orders (families can pay)</label>
+    <div class="field"><label for="psPrice">Price per polo ($)</label><input type="number" id="psPrice" min="0" step="0.01" value="${Number(S.price || 0).toFixed(2)}"></div>
+    <div class="field"><label for="psSizes">Sizes, in order, separated by commas</label><input type="text" id="psSizes" value="${esc((S.sizes || []).join(', '))}"></div>
+    <div class="field"><label for="psNote">Note for families (optional)</label><input type="text" id="psNote" maxlength="200" value="${esc(S.note || '')}" placeholder="e.g. Polos arrive about 4 weeks after ordering"></div>
+    ${state.textsReady ? `<div class="field"><label for="psMsg">Text message with the link</label><textarea id="psMsg" rows="3" maxlength="1000">${esc(msgTpl('polo'))}</textarea><p class="hint">{first_name} {name} {belt} {link}</p></div>` : ''}
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+  $('#psForm').onsubmit = async e => {
+    e.preventDefault();
+    const sizes = $('#psSizes').value.split(',').map(x => x.trim()).filter(Boolean), price = Number($('#psPrice').value);
+    if (!sizes.length) return toast('Add at least one size.');
+    if (!(price >= 0)) return toast('Check the price.');
+    try {
+      await run(sb.from('prep_polo_settings').update({ is_open: $('#psOpen').checked, price, sizes: [...new Set(sizes)], note: $('#psNote').value.trim() || null, updated_at: new Date().toISOString() }).eq('id', 1));
+      const m = $('#psMsg'); if (m && m.value.trim() && m.value.trim() !== msgTpl('polo')) await run(sb.from('prep_message_templates').update({ body: m.value.trim(), updated_at: new Date().toISOString() }).eq('kind', 'polo'));
+      toast('Polo settings saved'); sheet.close(); await loadAll(); render();
+    } catch (er) { toast(errMsg(er), 6000); }
+  };
+}
+// For the supplier: name on the back, size and how many, for paid orders not yet handed out
+function poloCsv() {
+  const rows = state.polos.filter(o => ['paid', 'ordered'].includes(o.status)).map(o => ({ o, s: student(o.student_id) || {} }))
+    .sort((a, b) => ((state.poloSet.sizes || []).indexOf(a.o.size) - (state.poloSet.sizes || []).indexOf(b.o.size)) || String(a.o.name_on_back).localeCompare(String(b.o.name_on_back)));
+  const cell = v => /[",\r\n]/.test(String(v ?? '')) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v ?? '');
+  const lines = [['Name on back', 'Size', 'Qty', 'Student', 'Student ID', 'Rank', 'Status'], ...rows.map(({ o, s }) => [o.name_on_back || '', o.size || '', o.qty || 1, s.full_name || '', o.student_id, o.rank || '', PO_STATUS[o.status][0]])];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + lines.map(l => l.map(cell).join(',')).join('\r\n') + '\r\n'], { type: 'text/csv' }));
+  a.download = `polo-orders-${new Date().toISOString().slice(0, 10)}.csv`; document.body.append(a); a.click(); a.remove();
+  toast(`Supplier list: ${rows.length} order${rows.length === 1 ? '' : 's'}`);
+}
+
 async function renderMore() {
   const v = $('#view-more'), S = state.settings, admin = has('admin');
   v.innerHTML = `<div class="view-head"><h2>More</h2></div>
@@ -3529,6 +3716,7 @@ async function renderMore() {
       <li><button class="item" data-goto="grading"><div class="main"><div class="name">Grading</div><div class="meta">Eligibility, who is grading, results, grading lists</div></div><span class="muted">›</span></button></li>
       <li><button class="item" data-goto="reports"><div class="main"><div class="name">Reports and exports</div><div class="meta">Download Excel, CSV or PDF: register, attendance, readiness, payments, follow-up, ID cards</div></div><span class="muted">›</span></button></li>
       ${state.essaysReady && has('instructor') ? '<li><button class="item" data-goto="essays"><div class="main"><div class="name">Essays</div><div class="meta">Dan essays: personal links, read and mark essays, send them back with feedback</div></div><span class="muted">›</span></button></li>' : ''}
+      ${has('grading', 'payments') ? '<li><button class="item" data-goto="polos"><div class="main"><div class="name">Polo shirts</div><div class="meta">Black belt polos with their name on the back: order links, who has paid, sizes, supplier list</div></div><span class="muted">›</span></button></li>' : ''}
       <li><button class="item" data-goto="certificates"><div class="main"><div class="name">Certificates</div><div class="meta">Names, numbers, approval, printing and issuing</div></div><span class="muted">›</span></button></li>
       ${has('payments') ? '<li><button class="item" data-goto="payments"><div class="main"><div class="name">Payments</div><div class="meta">Session and grading fees, balances, record payments</div></div><span class="muted">›</span></button></li>' : ''}
     </ul>

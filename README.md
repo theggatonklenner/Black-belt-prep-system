@@ -96,3 +96,16 @@ EFC's Zapier app has no "find member" search, so Zapier sends members in and Sup
 - Zap: EFC Aquila trigger (New Member, New Lead, Member Query), then Webhooks by Zapier > POST to `https://ptdrcxngaptcgswfbjhg.supabase.co/functions/v1/efc?key=<secret from efc_hook>` (add `&kind=lead` for leads), payload type json, Data left empty so every EFC field is sent. Field names are matched loosely (First Name, Mobile, Guardian Email and similar); anything else is kept in `raw`.
 - Zapier only sends members added after the Zap is turned on, so load existing members once from an Aquila export.
 - `supabase/prep-update-14.sql` links students to EFC. Each student has an EFC ref (EFC member number) and a parent or guardian name. A student links by themselves when exactly one EFC member has the same name (ignoring capitals and punctuation); blank mobile, email and parent name are then filled from EFC, and nothing typed in is overwritten. Linked students show an EFC badge (EFC? means the ref isn't in the EFC copy). Admins link the rest from the student record with Find in EFC. After loading new EFC data, run `select prep_efc_link();` (as an admin) to link and fill again.
+
+### Polo shirts (prep-update-15)
+
+- `supabase/prep-update-15.sql` adds black belt polo orders (More > Polo shirts, for admins, grading and payments staff).
+- Everyone who passes a Dan grading is listed. Grading staff press **Make links for all** (or **Add someone else**) and **Text links**. Each family's link (`polo/#t=...`) shows their name for the back (the certificate name to start with), the sizes and the price.
+- The family checks the name, picks a size and how many, and pays by card on Stripe's page. The `polo` function marks the order paid with the size, straight away.
+- Staff see who has paid and the sizes to order, download the supplier list (name on back, size, quantity), then mark orders ordered and handed out. Payments staff can also record a polo paid by cash, EFTPOS or transfer. Only Stripe or payments staff can mark a polo paid.
+- Admins set the price, sizes, whether orders are open and the text wording (Polo shirts > Settings).
+- Stripe setup (once):
+  1. In Stripe, Developers > API keys: copy the Secret key. In Supabase, Edge Functions > Secrets, add `STRIPE_SECRET_KEY`.
+  2. Stripe > Developers > Webhooks > Add endpoint: `https://ptdrcxngaptcgswfbjhg.supabase.co/functions/v1/polo`, events `checkout.session.completed` and `checkout.session.async_payment_succeeded`. Copy its Signing secret and add it as `STRIPE_WEBHOOK_SECRET`.
+  3. Try it with a test key (`sk_test_...`) and Stripe's test card 4242 4242 4242 4242 first, then swap in the live key.
+
