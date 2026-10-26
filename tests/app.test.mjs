@@ -1,4 +1,4 @@
-// Browser tests for the Black Belt Prep app (Stage 3: students, cycles, attendance).
+// Browser tests for the Black Belt Gradings app (Stage 3: students, cycles, attendance).
 // Runs the real app in headless Chromium at phone size, against a local stand-in for Supabase
 // that uses the real database rules (card software SQL + prep-setup.sql).
 //

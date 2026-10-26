@@ -53,7 +53,7 @@ ok(phoneE164('') === null && phoneE164('12') === null, 'missing or short numbers
 
 console.log('\nAccess');
 ok((await call(null, { action: 'check' })).status === 401, 'you must be signed in');
-ok((await call('stranger@ama.test', { action: 'check' })).status === 403, 'only Black Belt Prep logins');
+ok((await call('stranger@ama.test', { action: 'check' })).status === 403, 'only Black Belt Gradings logins');
 ok((await call('inst@ama.test', { action: 'check' })).ready === true, 'check says it is set up');
 ok((await call('inst@ama.test', { action: 'check' }, {})).ready === false, '...and says when it is not');
 ok((await call('inst@ama.test', { action: 'send', items: [{ student_id: 'S1', kind: 'not_ready', body: 'x' }] }, {})).status === 409, 'sending without the GoHighLevel secrets explains what to add');

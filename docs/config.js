@@ -1,4 +1,4 @@
-// Black Belt Prep: connection settings (the same Supabase project as AMA ID Cards).
+// Black Belt Gradings: connection settings (the same Supabase project as AMA ID Cards).
 // The anon key is designed to be public; data is protected by the login and the
 // security rules in supabase/prep-setup.sql.
 

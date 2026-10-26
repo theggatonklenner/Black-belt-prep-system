@@ -1,4 +1,4 @@
-// Database tests for the Black Belt Prep System.
+// Database tests for the Black Belt Gradings System.
 // Builds the card software's database, adds the prep system on top, then checks the
 // scenarios from spec section 16 that the database is responsible for.
 //

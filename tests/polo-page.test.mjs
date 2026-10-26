@@ -1,4 +1,4 @@
-// Browser tests for black belt polo orders: the staff screen in Black Belt Prep and the family's order page.
+// Browser tests for black belt polo orders: the staff screen in Black Belt Gradings and the family's order page.
 // Uses the local stand-in for Supabase (real database rules) with supabase/prep-update-15.sql. The "polo" and "ghl"
 // functions are tested on their own; here they are played by the test, with a pretend Stripe payment page.
 //   cd tests && CARD_REPO=/path/to/ama-id-cards node polo-page.test.mjs

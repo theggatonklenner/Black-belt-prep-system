@@ -1,6 +1,6 @@
 {
-  "name": "AMA Black Belt Prep",
-  "short_name": "BB Prep",
+  "name": "AMA Black Belt Gradings",
+  "short_name": "BB Gradings",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#ffffff",

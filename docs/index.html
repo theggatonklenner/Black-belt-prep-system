@@ -7,11 +7,11 @@
 <meta name="theme-color" content="#070a08">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="BB Prep">
+<meta name="apple-mobile-web-app-title" content="BB Gradings">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<title>Black Belt Prep</title>
+<title>Black Belt Gradings</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
@@ -349,7 +349,7 @@
 <header class="appbar">
   <div class="appbar-inner">
     <a class="home-btn" id="homeBtn" href="https://theggatonklenner.github.io/" aria-label="Back to AMA Toolkit" title="AMA Toolkit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h5v-6h4v6h5V9.5"/></svg></a>
-    <div class="brand"><img src="ama-logo.png" alt=""><div><small>Australian Martial Arts Academy</small><h1>Black Belt Prep</h1></div></div>
+    <div class="brand"><img src="ama-logo.png" alt=""><div><small>Australian Martial Arts Academy</small><h1>Black Belt Gradings</h1></div></div>
     <span class="pill" id="cyclePill" hidden><span class="dot"></span><span id="cyclePillText"></span></span>
   </div>
 </header>
@@ -384,7 +384,7 @@
 <section class="auth" id="noAccessView" hidden>
   <div class="card">
     <h2>No access yet</h2>
-    <p class="hint">You're signed in as <b id="noAccessEmail"></b>, but you haven't been given a role in Black Belt Prep. Ask an admin to add you under More &gt; Users.</p>
+    <p class="hint">You're signed in as <b id="noAccessEmail"></b>, but you haven't been given a role in Black Belt Gradings. Ask an admin to add you under More &gt; Users.</p>
     <button class="btn" id="noAccessSignOut">Sign out</button>
   </div>
 </section>
@@ -392,7 +392,7 @@
 <section class="auth" id="setupView" hidden>
   <div class="card">
     <h2>Almost there</h2>
-    <p class="hint">The database for Black Belt Prep isn't set up yet. Run <b>supabase/prep-setup.sql</b> in Supabase &gt; SQL Editor, then reload this page.</p>
+    <p class="hint">The database for Black Belt Gradings isn't set up yet. Run <b>supabase/prep-setup.sql</b> in Supabase &gt; SQL Editor, then reload this page.</p>
     <p class="hint" id="setupError"></p>
   </div>
 </section>
@@ -525,7 +525,7 @@
 <script>
 'use strict';
 /* =========================================================================
-   Black Belt Prep
+   Black Belt Gradings
    Reads and writes the prep_ tables in the AMA ID Cards Supabase project.
    Security is enforced by the database (supabase/prep-setup.sql); hiding a
    button here is only for convenience.
@@ -1376,7 +1376,7 @@ async function essayPdfBytes(cid, sid, tools) {
         const sc = Math.min(TW / im.w, (H - y - 18) / im.h);
         doc.addImage(im.data, 'JPEG', M + (TW - im.w * sc) / 2, y, im.w * sc, im.h * sc);
       } else if (ft === 'application/pdf' || /\.pdf$/i.test(fn)) attach = await blob.arrayBuffer();
-      else { room(14); doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...GREY); doc.text(`Also handed in a file: ${fn} (open it from Black Belt Prep).`, M, y + 4); y += 10; }
+      else { room(14); doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...GREY); doc.text(`Also handed in a file: ${fn} (open it from Black Belt Gradings).`, M, y + 4); y += 10; }
     } catch (er) { room(14); doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(...GREY); doc.text(`Also handed in a file: ${fn} (it could not be added here).`, M, y + 4); y += 10; }
   }
   if (!body.trim() && !e.file_path) { doc.setFont('helvetica', 'italic'); doc.setFontSize(11); doc.setTextColor(...GREY); doc.text('Nothing handed in yet.', M, y); y += 8; }
@@ -3778,10 +3778,10 @@ async function renderMore() {
       <p class="hint">Students must also be present at the sign-off (the last session of a cycle). The attendance requirement only informs the grading decision. It never marks anyone ready or eligible.</p>
       <div class="row"><button class="btn primary" type="submit">Save settings</button></div></form>
     <div class="card"><div class="row"><h3 class="grow">Users</h3><button class="btn sm" id="addUserBtn">Add user</button></div>
-      <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Prep.</p>
+      <p class="hint">Logins are shared with AMA ID Cards and created in Supabase. Roles here only control Black Belt Gradings.</p>
       <div id="userList" class="small muted">Loading...</div></div>
     <div class="card"><h3>Recent changes</h3><div id="auditList" class="small muted">Loading...</div></div>` : ''}
-    <p class="hint">Black Belt Prep · Stage 9 build</p>`;
+    <p class="hint">Black Belt Gradings · Stage 9 build</p>`;
   $('#signOutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(); };
   $$('#view-more [data-goto]').forEach(b => b.onclick = () => showView(b.dataset.goto));
   if (!admin) return;
