@@ -98,7 +98,6 @@
   <form class="card" id="form" hidden>
     <h2 id="hello"></h2>
     <p class="muted" id="intro"></p>
-    <div class="back" aria-hidden="true"><small>AMA black belts</small><b id="backYear"></b></div>
     <div class="field"><span id="sizeLbl" style="font-weight:600;font-size:15px;margin-bottom:6px">Size</span><div class="sizes" id="sizes" role="group" aria-labelledby="sizeLbl"></div></div>
     <div class="grid2">
       <div class="field"><label for="qty">How many</label><select id="qty"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
@@ -142,7 +141,6 @@ function draw() {
   show('form');
   $('#hello').textContent = `Congratulations${O.first ? ', ' + O.first : ''}!`;
   $('#intro').textContent = `Order your AMA ${O.year || ''} black belt polo${O.rank ? ' for your ' + O.rank : ''}. The back has the names of everyone who earned their Probationary Black Belt or a Dan in ${O.year || 'the year'}, including you.`;
-  $('#backYear').textContent = O.year || '';
   size = size || O.size;
   $('#sizes').innerHTML = O.sizes.map(s => `<button type="button" data-s="${esc(s)}" aria-pressed="${s === size}">${esc(s)}</button>`).join('');
   $('#sizes').querySelectorAll('button').forEach(b => b.onclick = () => { size = b.dataset.s; $('#err').hidden = true; draw(); });
