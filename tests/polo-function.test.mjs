@@ -9,7 +9,7 @@ import { createHmac } from 'node:crypto';
 const here = dirname(fileURLToPath(import.meta.url));
 const tmp = join(mkdtempSync(join(tmpdir(), 'polo-')), 'polo.mjs');
 writeFileSync(tmp, readFileSync(join(here, '../supabase/functions/polo/index.ts'), 'utf8'));
-const { handle, signatureOk, nameOk } = await import(pathToFileURL(tmp).href);
+const { handle, signatureOk } = await import(pathToFileURL(tmp).href);
 
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) { passed++; console.log('  pass  ' + m); } else { failed++; console.log('  FAIL  ' + m); } };
@@ -17,7 +17,7 @@ const ok = (c, m) => { if (c) { passed++; console.log('  pass  ' + m); } else { 
 const T1 = 'a'.repeat(64), T2 = 'b'.repeat(64), T3 = 'c'.repeat(64);
 const tables = {
   prep_polo_orders: [
-    { order_id: 'o1', student_id: 'S1', rank: '1st Dan Black Belt', token: T1, name_on_back: 'Kian Lee', size: null, qty: 1, price: null, amount: null, status: 'invited', stripe_session: null },
+    { order_id: 'o1', student_id: 'S1', year: 2026, rank: '1st Dan Black Belt', token: T1, name_on_back: 'Kian Lee', size: null, qty: 1, price: null, amount: null, status: 'invited', stripe_session: null },
     { order_id: 'o2', student_id: 'S2', rank: '2nd Dan', token: T2, name_on_back: 'Ava Brown', size: 'M', qty: 1, price: 45, amount: 45, status: 'paid', stripe_session: 'cs_old' },
     { order_id: 'o3', student_id: 'S3', rank: '1st Dan Black Belt', token: T3, name_on_back: 'Noah', size: null, qty: 1, status: 'cancelled' }],
   prep_polo_settings: [{ id: 1, price: 45, sizes: ['Kids 10', 'S', 'M', 'L'], is_open: true, note: 'About 4 weeks' }],
@@ -51,7 +51,7 @@ const o1 = () => tables.prep_polo_orders[0];
 
 console.log('The family\'s link');
 let r = await call({ action: 'info', token: T1 });
-ok(r.ok && r.first === 'Kian' && r.name_on_back === 'Kian Lee' && r.price === 45 && r.sizes.join() === 'Kids 10,S,M,L' && r.open && r.status === 'invited', 'a link shows the first name, the name for the back, the price and the sizes');
+ok(r.ok && r.first === 'Kian' && r.year === 2026 && r.price === 45 && r.sizes.join() === 'Kids 10,S,M,L' && r.open && r.status === 'invited', 'a link shows the first name, the year, the price and the sizes');
 ok(!JSON.stringify(r).includes('lee@family.test') && !('student_id' in r), '...and nothing private');
 ok((await call({ action: 'info', token: 'nope' })).status === 404 && (await call({ action: 'info', token: 'd'.repeat(64) })).status === 404, 'a wrong link is refused');
 ok((await call({ action: 'info', token: T3 })).status === 404, 'a cancelled order\'s link no longer works');
@@ -59,9 +59,6 @@ ok((await call({ action: 'info', token: T3 })).status === 404, 'a cancelled orde
 console.log('\nChecking out');
 r = await call({ action: 'checkout', token: T1, name_on_back: 'Kian Lee', size: 'XXL', qty: 1 });
 ok(!r.ok && /size/.test(r.error) && !calls.length, 'a size that isn\'t offered is refused');
-r = await call({ action: 'checkout', token: T1, name_on_back: '<script>', size: 'M', qty: 1 });
-ok(!r.ok && /24 letters/.test(r.error), 'the name on the back must be letters (up to 24)');
-ok(nameOk("Mary-Jane O'Neil") && nameOk('Zoë') && !nameOk('A'.repeat(25)) && !nameOk(''), 'names with hyphens, apostrophes and accents are fine');
 r = await call({ action: 'checkout', token: T1, name_on_back: 'Kian', size: 'M', qty: 9 });
 ok(!r.ok && /1 to 5/.test(r.error), 'between 1 and 5 shirts');
 r = await call({ action: 'checkout', token: T1, name_on_back: 'Kian', size: 'M', qty: 1 }, {});
@@ -70,13 +67,14 @@ tables.prep_polo_settings[0].is_open = false;
 r = await call({ action: 'checkout', token: T1, name_on_back: 'Kian', size: 'M', qty: 1 });
 ok(!r.ok && /closed/.test(r.error), 'when orders are closed, nobody can pay');
 tables.prep_polo_settings[0].is_open = true;
-r = await call({ action: 'checkout', token: T1, name_on_back: '  KIAN   LEE ', size: 'L', qty: 2 });
+r = await call({ action: 'checkout', token: T1, size: 'L', qty: 2 });
 ok(r.ok && r.url === 'https://checkout.stripe.com/c/pay/cs_test_1', 'checkout gives the Stripe payment page');
 const c = calls.find(x => x.path === '/v1/checkout/sessions' && x.method === 'POST').body;
 ok(c.get('line_items[0][price_data][unit_amount]') === '4500' && c.get('line_items[0][quantity]') === '2' && c.get('line_items[0][price_data][currency]') === 'aud', 'Stripe is asked for $45 AUD x 2');
 ok(c.get('metadata[order_id]') === 'o1' && c.get('client_reference_id') === 'o1' && c.get('customer_email') === 'lee@family.test', 'the payment carries the order (and the family\'s email for the receipt)');
 ok(c.get('success_url').endsWith('?paid=1#t=' + T1) && c.get('cancel_url').endsWith('#t=' + T1), 'Stripe sends them back to their link');
-ok(o1().status === 'pending' && o1().size === 'L' && o1().qty === 2 && o1().name_on_back === 'KIAN LEE' && o1().price === 45 && o1().stripe_session === 'cs_test_1', 'the size, number and name are saved before paying');
+ok(o1().status === 'pending' && o1().size === 'L' && o1().qty === 2 && o1().price === 45 && o1().stripe_session === 'cs_test_1', 'the size and number are saved before paying');
+ok(c.get('line_items[0][price_data][product_data][name]') === 'AMA 2026 black belt polo', 'Stripe shows it as the 2026 polo');
 
 console.log('\nPaid');
 r = await call({ action: 'info', token: T1 });

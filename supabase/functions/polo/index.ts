@@ -1,6 +1,6 @@
 // @ts-nocheck
-// Black Belt Prep: black belt polo orders. A family opens their personal link (polo/#t=<secret>), picks the size,
-// checks the name for the back and pays by card through Stripe Checkout. Stripe tells this function when the
+// Black Belt Prep: the year's black belt polo (the back has everyone who passed Probationary Black Belt or a Dan that
+// year). A family opens their personal link (polo/#t=<secret>), picks the size and how many, and pays by card through Stripe Checkout. Stripe tells this function when the
 // payment goes through and the order is marked paid with its size. Nobody signs in; the secret finds the order.
 //
 // Deploy in Supabase: Edge Functions > Deploy a new function > Via Editor, name it "polo", paste this whole file,
@@ -15,7 +15,7 @@
 //
 // Requests (POST JSON):
 //   { action: 'info', token }                                  the order on a family's link
-//   { action: 'checkout', token, name_on_back, size, qty }     save the choice and get the Stripe payment page
+//   { action: 'checkout', token, size, qty }                   save the choice and get the Stripe payment page
 //   Stripe's webhook (has a Stripe-Signature header)
 
 const STRIPE = 'https://api.stripe.com/v1';
@@ -28,7 +28,6 @@ const cors = {
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const fail = (msg, status = 400) => json({ ok: false, error: msg }, status);
 const tokenOk = t => /^[a-f0-9]{48,72}$/.test(String(t || ''));
-export const nameOk = n => { const t = String(n || '').trim(); return t.length >= 1 && t.length <= 24 && /^[\p{L}\p{M}' .-]+$/u.test(t); };
 const OPEN = ['invited', 'pending'];
 
 // Stripe's form encoding, with nested keys: { a: { b: 1 } } -> a[b]=1
@@ -91,12 +90,12 @@ export async function handle(req, db, env = {}, http = fetch) {
     // ---- Families ----
     let body = {}; try { body = JSON.parse(raw || '{}'); } catch (e) { /* not JSON */ }
     if (!tokenOk(body.token)) return fail('This link isn\'t right. Ask your instructor for a new one.', 404);
-    const { data: o } = await db.from('prep_polo_orders').select('order_id, student_id, rank, name_on_back, size, qty, price, amount, status, stripe_session, paid_at').eq('token', body.token).maybeSingle();
+    const { data: o } = await db.from('prep_polo_orders').select('order_id, student_id, year, rank, size, qty, price, amount, status, stripe_session, paid_at').eq('token', body.token).maybeSingle();
     if (!o || o.status === 'cancelled') return fail('This link isn\'t right. Ask your instructor for a new one.', 404);
     const { data: st } = await db.from('prep_polo_settings').select('price, sizes, is_open, note').eq('id', 1).maybeSingle();
     const { data: s } = await db.from('prep_students').select('full_name, contact_email').eq('student_id', o.student_id).maybeSingle();
     const price = st ? Number(st.price) : null;
-    const info = () => ({ ok: true, first: String((s && s.full_name) || '').trim().split(/\s+/)[0] || '', rank: o.rank, name_on_back: o.name_on_back, size: o.size, qty: o.qty,
+    const info = () => ({ ok: true, first: String((s && s.full_name) || '').trim().split(/\s+/)[0] || '', year: o.year, rank: o.rank, size: o.size, qty: o.qty,
       status: o.status, price: OPEN.includes(o.status) ? price : Number(o.price ?? price), amount: o.amount != null ? Number(o.amount) : null,
       sizes: (st && st.sizes) || [], open: !!(st && st.is_open), note: (st && st.note) || null, card: !!env.STRIPE_SECRET_KEY });
 
@@ -112,20 +111,19 @@ export async function handle(req, db, env = {}, http = fetch) {
     if (body.action !== 'checkout') return fail('Unknown action.');
     if (!OPEN.includes(o.status)) return json({ ...info(), ok: false, error: 'This polo is already paid for.' });
     if (!st || !st.is_open) return json({ ...info(), ok: false, error: 'Polo orders are closed at the moment. Please ask at the front desk.' });
-    const name = String(body.name_on_back || '').trim().replace(/\s+/g, ' '), size = String(body.size || ''), qty = Number(body.qty || 1);
-    if (!nameOk(name)) return fail('The name on the back can be up to 24 letters (spaces, hyphens and apostrophes are fine).');
+    const size = String(body.size || ''), qty = Number(body.qty || 1);
     if (!(st.sizes || []).includes(size)) return fail('Choose a size.');
     if (!Number.isInteger(qty) || qty < 1 || qty > 5) return fail('Choose how many (1 to 5).');
     if (!(price > 0)) return fail('The polo price isn\'t set yet. Please ask at the front desk.');
     if (!env.STRIPE_SECRET_KEY) return fail('Card payments aren\'t set up yet. Please ask at the front desk.', 409);
 
-    const { error: ue } = await db.from('prep_polo_orders').update({ name_on_back: name, size, qty, price, status: 'pending' }).eq('order_id', o.order_id);
+    const { error: ue } = await db.from('prep_polo_orders').update({ size, qty, price, status: 'pending' }).eq('order_id', o.order_id);
     if (ue) throw ue;
     const site = env.POLO_SITE || SITE;
     const sess = await stripe('/checkout/sessions', { method: 'POST', body: form({
-      mode: 'payment', client_reference_id: o.order_id, metadata: { order_id: o.order_id, student_id: o.student_id, size, name_on_back: name },
-      payment_intent_data: { metadata: { order_id: o.order_id, student_id: o.student_id }, description: `AMA black belt polo x${qty} (${size}, "${name}")` },
-      line_items: { 0: { quantity: qty, price_data: { currency: 'aud', unit_amount: Math.round(price * 100), product_data: { name: 'AMA black belt polo', description: `Size ${size}. Name on the back: ${name}` } } } },
+      mode: 'payment', client_reference_id: o.order_id, metadata: { order_id: o.order_id, student_id: o.student_id, year: o.year, size },
+      payment_intent_data: { metadata: { order_id: o.order_id, student_id: o.student_id }, description: `AMA ${o.year} black belt polo x${qty} (${size})` },
+      line_items: { 0: { quantity: qty, price_data: { currency: 'aud', unit_amount: Math.round(price * 100), product_data: { name: `AMA ${o.year} black belt polo`, description: `Size ${size}` } } } },
       ...(s && s.contact_email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.contact_email) ? { customer_email: s.contact_email } : {}),
       success_url: `${site}?paid=1#t=${body.token}`, cancel_url: `${site}#t=${body.token}` }) });
     await db.from('prep_polo_orders').update({ stripe_session: sess.id }).eq('order_id', o.order_id);

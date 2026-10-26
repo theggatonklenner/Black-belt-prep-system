@@ -98,9 +98,7 @@
   <form class="card" id="form" hidden>
     <h2 id="hello"></h2>
     <p class="muted" id="intro"></p>
-    <div class="back" aria-hidden="true"><small>On the back</small><b id="backPrev"></b></div>
-    <div class="field"><label for="name">Name on the back</label><input type="text" id="name" maxlength="24" autocomplete="off" required>
-      <p class="small muted">Up to 24 letters. Check the spelling: it is printed exactly as typed.</p></div>
+    <div class="back" aria-hidden="true"><small>AMA black belts</small><b id="backYear"></b></div>
     <div class="field"><span id="sizeLbl" style="font-weight:600;font-size:15px;margin-bottom:6px">Size</span><div class="sizes" id="sizes" role="group" aria-labelledby="sizeLbl"></div></div>
     <div class="grid2">
       <div class="field"><label for="qty">How many</label><select id="qty"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
@@ -136,16 +134,15 @@ function draw() {
   if (!['invited', 'pending'].includes(O.status)) {
     show('done');
     $('#doneHead').textContent = O.status === 'delivered' ? 'Your polo has been handed out' : 'Paid. Thank you!';
-    $('#doneWhat').innerHTML = `${O.qty > 1 ? O.qty + ' polos' : 'Polo'}, size <b>${esc(O.size)}</b>, with <b>${esc(O.name_on_back)}</b> on the back${O.amount != null ? ` · ${money(O.amount)} paid` : ''}.`;
+    $('#doneWhat').innerHTML = `${O.year ? esc(O.year) + ' polo' : 'Polo'}${O.qty > 1 ? ' x' + O.qty : ''}, size <b>${esc(O.size)}</b>${O.amount != null ? ` · ${money(O.amount)} paid` : ''}.`;
     $('#doneNote').textContent = O.status === 'ordered' ? 'It has been ordered and will be handed out at the academy.' : O.status === 'delivered' ? '' : (O.note || 'We will let you know when it arrives.');
     return;
   }
   if (!O.open) { $('#badWhy').textContent = 'Polo orders are closed at the moment. Please ask at the front desk.'; return show('bad'); }
   show('form');
   $('#hello').textContent = `Congratulations${O.first ? ', ' + O.first : ''}!`;
-  $('#intro').textContent = `Order your AMA black belt polo${O.rank ? ' for your ' + O.rank : ''}, with your name on the back.`;
-  if (!$('#name').value) $('#name').value = O.name_on_back || '';
-  $('#backPrev').textContent = $('#name').value || ' ';
+  $('#intro').textContent = `Order your AMA ${O.year || ''} black belt polo${O.rank ? ' for your ' + O.rank : ''}. The back has the names of everyone who earned their Probationary Black Belt or a Dan in ${O.year || 'the year'}, including you.`;
+  $('#backYear').textContent = O.year || '';
   size = size || O.size;
   $('#sizes').innerHTML = O.sizes.map(s => `<button type="button" data-s="${esc(s)}" aria-pressed="${s === size}">${esc(s)}</button>`).join('');
   $('#sizes').querySelectorAll('button').forEach(b => b.onclick = () => { size = b.dataset.s; $('#err').hidden = true; draw(); });
@@ -164,16 +161,13 @@ async function load() {
   }
   draw();
 }
-$('#name').oninput = () => { $('#backPrev').textContent = $('#name').value || ' '; };
 $('#qty').onchange = total;
 $('#form').onsubmit = async e => {
   e.preventDefault();
-  const name = $('#name').value.trim();
   const err = m => { $('#err').textContent = m; $('#err').hidden = false; };
   if (!size) return err('Choose a size.');
-  if (!name) return err('Type the name for the back.');
   $('#err').hidden = true; $('#go').disabled = true; $('#go').textContent = 'Opening the payment page...';
-  const r = await call({ action: 'checkout', name_on_back: name, size, qty: Number($('#qty').value) });
+  const r = await call({ action: 'checkout', size, qty: Number($('#qty').value) });
   if (r.ok && r.url) { location.href = r.url; return; }
   err(r.error || 'Something went wrong. Please try again.'); $('#go').disabled = false; $('#go').textContent = 'Pay by card';
 };

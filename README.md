@@ -97,12 +97,12 @@ EFC's Zapier app has no "find member" search, so Zapier sends members in and Sup
 - Zapier only sends members added after the Zap is turned on, so load existing members once from an Aquila export.
 - `supabase/prep-update-14.sql` links students to EFC. Each student has an EFC ref (EFC member number) and a parent or guardian name. A student links by themselves when exactly one EFC member has the same name (ignoring capitals and punctuation); blank mobile, email and parent name are then filled from EFC, and nothing typed in is overwritten. Linked students show an EFC badge (EFC? means the ref isn't in the EFC copy). Admins link the rest from the student record with Find in EFC. After loading new EFC data, run `select prep_efc_link();` (as an admin) to link and fill again.
 
-### Polo shirts (prep-update-15)
+### Polo shirts (prep-update-15 and 16)
 
-- `supabase/prep-update-15.sql` adds black belt polo orders (More > Polo shirts, for admins, grading and payments staff).
-- Everyone who passes a Dan grading is listed. Grading staff press **Make links for all** (or **Add someone else**) and **Text links**. Each family's link (`polo/#t=...`) shows their name for the back (the certificate name to start with), the sizes and the price.
-- The family checks the name, picks a size and how many, and pays by card on Stripe's page. The `polo` function marks the order paid with the size, straight away.
-- Staff see who has paid and the sizes to order, download the supplier list (name on back, size, quantity), then mark orders ordered and handed out. Payments staff can also record a polo paid by cash, EFTPOS or transfer. Only Stripe or payments staff can mark a polo paid.
+- `supabase/prep-update-15.sql` and `prep-update-16.sql` add the black belt polo (More > Polo shirts, for admins, grading and payments staff).
+- Each year has its own shirt. The back has the names of everyone who passed Probationary Black Belt or a Dan that year (the names list downloads as a CSV for the printer), and each of them can order one.
+- Grading staff choose the year, press **Make links for all** (or **Add someone else**) and **Text links**. Each family's link (`polo/#t=...`) only asks for the size and how many, then they pay by card on Stripe's page. The `polo` function marks the order paid with the size straight away.
+- Staff see who has paid and the sizes to order, download the supplier list (student, size, quantity), then mark orders ordered and handed out. Payments staff can also record a polo paid by cash, EFTPOS or transfer. Only Stripe or payments staff can mark a polo paid.
 - Admins set the price, sizes, whether orders are open and the text wording (Polo shirts > Settings).
 - Stripe setup (once):
   1. In Stripe, Developers > API keys: copy the Secret key. In Supabase, Edge Functions > Secrets, add `STRIPE_SECRET_KEY`.
