@@ -90,20 +90,24 @@ export async function handle(req, db, env = {}, http = fetch) {
     // ---- Families ----
     let body = {}; try { body = JSON.parse(raw || '{}'); } catch (e) { /* not JSON */ }
     if (!tokenOk(body.token)) return fail('This link isn\'t right. Ask your instructor for a new one.', 404);
-    const { data: o } = await db.from('prep_polo_orders').select('order_id, student_id, year, rank, size, qty, price, amount, status, stripe_session, paid_at').eq('token', body.token).maybeSingle();
+    const { data: o } = await db.from('prep_polo_orders').select('order_id, student_id, year, rank, size, qty, price, amount, status, stripe_session, stripe_payment, paid_at, paid_how').eq('token', body.token).maybeSingle();
     if (!o || o.status === 'cancelled') return fail('This link isn\'t right. Ask your instructor for a new one.', 404);
     const { data: st } = await db.from('prep_polo_settings').select('price, sizes, is_open, note').eq('id', 1).maybeSingle();
     const { data: s } = await db.from('prep_students').select('full_name, contact_email').eq('student_id', o.student_id).maybeSingle();
     const price = st ? Number(st.price) : null;
     const info = () => ({ ok: true, first: String((s && s.full_name) || '').trim().split(/\s+/)[0] || '', year: o.year, rank: o.rank, size: o.size, qty: o.qty,
       status: o.status, price: OPEN.includes(o.status) ? price : Number(o.price ?? price), amount: o.amount != null ? Number(o.amount) : null,
-      sizes: (st && st.sizes) || [], open: !!(st && st.is_open), note: (st && st.note) || null, card: !!env.STRIPE_SECRET_KEY });
+      sizes: (st && st.sizes) || [], open: !!(st && st.is_open), note: (st && st.note) || null, card: !!env.STRIPE_SECRET_KEY, paid_how: o.paid_how || null, receipt: o.receipt || null });
 
     if (body.action === 'info') {
       // Back from Stripe (or the webhook hasn't come yet): ask Stripe whether it was paid
       if (o.status === 'pending' && o.stripe_session && env.STRIPE_SECRET_KEY) {
         try { const sess = await stripe('/checkout/sessions/' + encodeURIComponent(o.stripe_session), { method: 'GET' });
-          if (await markPaid(sess)) { o.status = 'paid'; o.amount = (sess.amount_total || 0) / 100; } } catch (e) { console.error(e); }
+          if (await markPaid(sess)) { o.status = 'paid'; o.paid_how = 'stripe'; o.amount = (sess.amount_total || 0) / 100; o.stripe_payment = typeof sess.payment_intent === 'string' ? sess.payment_intent : (sess.payment_intent && sess.payment_intent.id) || null; } } catch (e) { console.error(e); }
+      }
+      // Paid by card: Stripe's receipt (from the payment's charge)
+      if (!OPEN.includes(o.status) && env.STRIPE_SECRET_KEY && String(o.stripe_payment || '').startsWith('pi_')) {
+        try { const pi = await stripe('/payment_intents/' + encodeURIComponent(o.stripe_payment) + '?expand[]=latest_charge', { method: 'GET' }); o.receipt = (pi.latest_charge && pi.latest_charge.receipt_url) || null; } catch (e) { console.error(e); }
       }
       return json(info());
     }
@@ -120,11 +124,12 @@ export async function handle(req, db, env = {}, http = fetch) {
     const { error: ue } = await db.from('prep_polo_orders').update({ size, qty, price, status: 'pending' }).eq('order_id', o.order_id);
     if (ue) throw ue;
     const site = env.POLO_SITE || SITE;
+    const email = s && s.contact_email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.contact_email) ? s.contact_email : null;
     const sess = await stripe('/checkout/sessions', { method: 'POST', body: form({
       mode: 'payment', client_reference_id: o.order_id, metadata: { order_id: o.order_id, student_id: o.student_id, year: o.year, size },
-      payment_intent_data: { metadata: { order_id: o.order_id, student_id: o.student_id }, description: `AMA ${o.year} black belt polo x${qty} (${size})` },
+      payment_intent_data: { metadata: { order_id: o.order_id, student_id: o.student_id }, description: `AMA ${o.year} black belt polo x${qty} (${size})`, ...(email ? { receipt_email: email } : {}) },
       line_items: { 0: { quantity: qty, price_data: { currency: 'aud', unit_amount: Math.round(price * 100), product_data: { name: `AMA ${o.year} black belt polo`, description: `Size ${size}` } } } },
-      ...(s && s.contact_email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.contact_email) ? { customer_email: s.contact_email } : {}),
+      ...(email ? { customer_email: email } : {}),
       success_url: `${site}?paid=1#t=${body.token}`, cancel_url: `${site}#t=${body.token}` }) });
     await db.from('prep_polo_orders').update({ stripe_session: sess.id }).eq('order_id', o.order_id);
     return json({ ok: true, url: sess.url });
